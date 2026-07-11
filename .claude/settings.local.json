@@ -32,7 +32,7 @@
       "Bash(dotnet sln *)",
       "Bash(echo \"exit: $?\")"
     ],
-    "defaultMode": "auto"
+    "defaultMode": "bypassPermissions"
   },
   "disabledMcpjsonServers": [
     "google-workspace",

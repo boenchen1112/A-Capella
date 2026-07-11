@@ -9,6 +9,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Acapella.App", "src\Acapell
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Acapella.Engine", "src\Acapella.Engine\Acapella.Engine.csproj", "{47E2EB9C-C354-4162-9280-AA8AE73BF283}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{AB8F3852-4A2D-4436-A69E-8568F6BF6E28}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Acapella.Engine.Tests", "tests\Acapella.Engine.Tests\Acapella.Engine.Tests.csproj", "{937DDB36-BD0D-4805-8861-3CDABEDD3EF6}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{011FDCDC-89D9-4550-8456-FEEAC7616B51}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HardwareChecks", "tools\HardwareChecks\HardwareChecks.csproj", "{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +34,19 @@ Global
 		{47E2EB9C-C354-4162-9280-AA8AE73BF283}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{47E2EB9C-C354-4162-9280-AA8AE73BF283}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{47E2EB9C-C354-4162-9280-AA8AE73BF283}.Release|Any CPU.Build.0 = Release|Any CPU
+		{937DDB36-BD0D-4805-8861-3CDABEDD3EF6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{937DDB36-BD0D-4805-8861-3CDABEDD3EF6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{937DDB36-BD0D-4805-8861-3CDABEDD3EF6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{937DDB36-BD0D-4805-8861-3CDABEDD3EF6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{50FCC77D-47CB-445F-AA8A-9EBC1638057E} = {CF34C53E-9DFC-4794-A0FF-CBFDE54F1848}
 		{47E2EB9C-C354-4162-9280-AA8AE73BF283} = {CF34C53E-9DFC-4794-A0FF-CBFDE54F1848}
+		{937DDB36-BD0D-4805-8861-3CDABEDD3EF6} = {AB8F3852-4A2D-4436-A69E-8568F6BF6E28}
+		{044C9C50-2B0E-4AD8-99A8-0D79E9C8B1A1} = {011FDCDC-89D9-4550-8456-FEEAC7616B51}
 	EndGlobalSection
 EndGlobal

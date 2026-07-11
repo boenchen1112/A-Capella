@@ -1,12 +1,53 @@
-﻿<Window x:Class="Acapella.App.MainWindow"
+<Window x:Class="Acapella.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Acapella.App"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Acapella" Height="500" Width="700">
+    <StackPanel Margin="10">
+        <TextBlock Text="Devices" FontWeight="Bold" Margin="0,0,0,4"/>
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Video In:" Margin="0,2"/>
+            <ComboBox Grid.Row="0" Grid.Column="1" x:Name="VideoDeviceCombo" Margin="4,2"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Audio In:" Margin="0,2"/>
+            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="AudioInDeviceCombo" Margin="4,2"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Audio Out:" Margin="0,2"/>
+            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="AudioOutDeviceCombo" Margin="4,2"/>
+        </Grid>
+        <Button x:Name="RefreshDevicesButton" Content="Refresh Devices" Click="RefreshDevicesButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
+        <Button x:Name="CalibrateButton" Content="Calibrate Latency (uses Audio In as loopback)" Click="CalibrateButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
+        <TextBlock x:Name="CalibrationResultText" Margin="0,0,0,8"/>
 
-    </Grid>
+        <TextBlock Text="Metronome" FontWeight="Bold" Margin="0,4,0,4"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <CheckBox x:Name="MetronomeToggle" Content="Enabled" VerticalAlignment="Center" Checked="MetronomeToggle_Changed" Unchecked="MetronomeToggle_Changed"/>
+            <TextBlock Text="BPM:" Margin="12,0,4,0" VerticalAlignment="Center"/>
+            <TextBox x:Name="BpmTextBox" Width="50" Text="120" TextChanged="BpmTextBox_TextChanged"/>
+        </StackPanel>
+
+        <TextBlock Text="Layers (max 4)" FontWeight="Bold" Margin="0,4,0,4"/>
+        <ListBox x:Name="LayersList" Height="100" SelectionChanged="LayersList_SelectionChanged"/>
+        <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
+            <Button x:Name="RecordLayerButton" Content="Record Layer" Click="RecordLayerButton_Click" Margin="0,0,4,0"/>
+            <Button x:Name="StopRecordButton" Content="Stop Recording" Click="StopRecordButton_Click" Margin="0,0,4,0"/>
+            <Button x:Name="UploadLayerButton" Content="Upload Layer..." Click="UploadLayerButton_Click"/>
+        </StackPanel>
+
+        <TextBlock Text="Manual Fine-Tune Offset (ms)" Margin="0,8,0,0"/>
+        <Slider x:Name="OffsetSlider" Minimum="-200" Maximum="200" TickFrequency="10" IsSnapToTickEnabled="False" ValueChanged="OffsetSlider_ValueChanged"/>
+        <TextBlock x:Name="OffsetValueText" Text="0 ms"/>
+
+        <TextBlock x:Name="StatusText" Margin="0,10,0,0" Foreground="DarkBlue"/>
+    </StackPanel>
 </Window>
