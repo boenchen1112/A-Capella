@@ -14,7 +14,24 @@
       "Bash(git commit*)",
       "Bash(git status*)",
       "Bash(git diff*)",
-      "Bash(git log*)"
+      "Bash(git log*)",
+      "Bash(dotnet build*)", 
+      "Bash(dotnet test*)", 
+      "Bash(dotnet add*)",
+      "Bash(dotnet run*)", 
+      "Bash(dotnet new*)",
+      "Bash(cmake*)", 
+      "Bash(ffmpeg*)", 
+      "Bash(winget install*)",
+      "Bash(git add*)", 
+      "Bash(git commit*)", 
+      "Bash(git status*)",
+      "Bash(git diff*)", 
+      "Bash(git log*)", 
+      "Bash(git mv*)",
+      "Bash(git restore*)", 
+      "Bash(git checkout*)", 
+      "Bash(git branch*)"
     ]
   }
 }
