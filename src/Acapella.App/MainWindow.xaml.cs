@@ -6,6 +6,7 @@ using Acapella.Engine.Devices;
 using Acapella.Engine.GuideTrack;
 using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
+using Acapella.Engine.Persistence;
 using Acapella.Engine.Project;
 using Acapella.Engine.Settings;
 using Acapella.Engine.Sync;
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "media");
 
     private readonly MixEngine _mixEngine = new();
+    private readonly ProjectPersistenceService _projectPersistence = new();
 
     private WasapiOut? _metronomeOutput;
     private WasapiOut? _previewOutput;
@@ -35,6 +37,7 @@ public partial class MainWindow : Window
     private List<DshowDeviceInfo> _dshowVideoDevices = new();
     private bool _isLoadingLayerControls;
     private SKBitmap? _compositedFrame;
+    private double? _lastCalibratedOffsetMs;
 
     public MainWindow()
     {
@@ -84,6 +87,7 @@ public partial class MainWindow : Window
         try
         {
             double offsetMs = _calibrator.CalibrateAndSave(outputDevice.Id, inputDevice.Id);
+            _lastCalibratedOffsetMs = offsetMs;
             CalibrationResultText.Text = $"Calibrated offset: {offsetMs:F1} ms";
         }
         catch (Exception ex)
@@ -339,5 +343,47 @@ public partial class MainWindow : Window
         canvas.Clear(SKColors.Black);
         if (_compositedFrame is not null)
             canvas.DrawBitmap(_compositedFrame, new SKRect(0, 0, e.Info.Width, e.Info.Height));
+    }
+
+    private void SaveProjectButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog { Filter = "Acapella project|*.acapella.json", DefaultExt = ".acapella.json" };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            double.TryParse(BpmTextBox.Text, out double bpm);
+            var dto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
+            _projectPersistence.SaveToFile(dto, dialog.FileName);
+            StatusText.Text = $"Project saved: {Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private void OpenProjectButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "Acapella project|*.acapella.json;*.json" };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var dto = _projectPersistence.LoadFromFile(dialog.FileName);
+            var (loadedLayers, bpm, latencyOffset) = _projectPersistence.FromDto(dto);
+
+            _layers.Restore(loadedLayers.Layers);
+            _lastCalibratedOffsetMs = latencyOffset;
+            BpmTextBox.Text = bpm.ToString("F0");
+            _metronome.Bpm = bpm;
+
+            RefreshLayersList();
+            StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({loadedLayers.Layers.Count} layer(s)).";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Open failed: {ex.Message}";
+        }
     }
 }

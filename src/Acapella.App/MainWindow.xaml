@@ -9,6 +9,12 @@
         Title="Acapella" Height="900" Width="700">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="10">
+        <TextBlock Text="Project" FontWeight="Bold" Margin="0,0,0,4"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="SaveProjectButton" Content="Save Project..." Click="SaveProjectButton_Click" Margin="0,0,4,0"/>
+            <Button x:Name="OpenProjectButton" Content="Open Project..." Click="OpenProjectButton_Click"/>
+        </StackPanel>
+
         <TextBlock Text="Devices" FontWeight="Bold" Margin="0,0,0,4"/>
         <Grid Margin="0,0,0,8">
             <Grid.ColumnDefinitions>

@@ -17,7 +17,15 @@ public class LayerModel
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 
-    /// <summary>Held in memory for the session (build plan Phase 3); full save/load is Phase 5.</summary>
+    /// <summary>Grid cell this layer occupies (per the Data Model Rule: layout id + per-layer cell
+    /// index, not hardcoded positions). Defaults to recording order, matching Layout2x2Provider.</summary>
+    public int CellIndex { get; set; }
+
+    /// <summary>Melodyne ARA archive key, keyed by (layerId, sourceAudioHash) once Phase 2A lands.
+    /// Null until then -- this field exists now so Phase 5's persistence format doesn't need to
+    /// change shape when Phase 2A adds it.</summary>
+    public string? AraArchiveKey { get; set; }
+
     public LayerMixParameters MixParameters { get; } = new();
 }
 
@@ -39,8 +47,20 @@ public class LayerCollection
             LayerId = _layers.Count,
             Kind = kind,
             SourcePath = sourcePath,
+            CellIndex = _layers.Count,
         };
         _layers.Add(layer);
         return layer;
+    }
+
+    /// <summary>Replaces the collection's contents wholesale -- used by project load.</summary>
+    public void Restore(IEnumerable<LayerModel> layers)
+    {
+        var list = layers.ToList();
+        if (list.Count > MaxLayers)
+            throw new InvalidOperationException($"Cannot exceed {MaxLayers} layers.");
+
+        _layers.Clear();
+        _layers.AddRange(list);
     }
 }
