@@ -41,7 +41,7 @@ public class LatencyCalibrator
 
         capture.DataAvailable += (s, e) =>
         {
-            var samples = BytesToFloatSamples(e.Buffer, e.BytesRecorded, captureFormat);
+            var samples = PcmConverter.BytesToFloatSamples(e.Buffer, e.BytesRecorded, captureFormat);
             captured.AddRange(samples);
         };
 
@@ -56,10 +56,8 @@ public class LatencyCalibrator
         capture.StopRecording();
         Thread.Sleep(100);
 
-        var capturedMono = DownmixToMono(captured.ToArray(), captureFormat.Channels);
-        var capturedResampled = captureFormat.SampleRate == sampleRate
-            ? capturedMono
-            : Resample(capturedMono, captureFormat.SampleRate, sampleRate);
+        var capturedMono = PcmConverter.DownmixToMono(captured.ToArray(), captureFormat.Channels);
+        var capturedResampled = PcmConverter.Resample(capturedMono, captureFormat.SampleRate, sampleRate);
 
         // Search for where the short click template best matches within the long captured
         // signal. Passing the short click as the "reference" keeps the inner correlation loop
@@ -73,51 +71,5 @@ public class LatencyCalibrator
         // true output-to-input round-trip latency rather than the raw click position.
         double offsetMs = offsetSamples * 1000.0 / sampleRate - 200.0;
         return offsetMs;
-    }
-
-    private static float[] BytesToFloatSamples(byte[] buffer, int bytesRecorded, WaveFormat format)
-    {
-        int bytesPerSample = format.BitsPerSample / 8;
-        int sampleCount = bytesRecorded / bytesPerSample;
-        var samples = new float[sampleCount];
-
-        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
-        {
-            Buffer.BlockCopy(buffer, 0, samples, 0, bytesRecorded);
-        }
-        else if (format.BitsPerSample == 16)
-        {
-            for (int i = 0; i < sampleCount; i++)
-                samples[i] = BitConverter.ToInt16(buffer, i * 2) / 32768f;
-        }
-
-        return samples;
-    }
-
-    private static float[] DownmixToMono(float[] samples, int channels)
-    {
-        if (channels <= 1) return samples;
-        var mono = new float[samples.Length / channels];
-        for (int i = 0; i < mono.Length; i++)
-        {
-            float sum = 0;
-            for (int c = 0; c < channels; c++)
-                sum += samples[i * channels + c];
-            mono[i] = sum / channels;
-        }
-        return mono;
-    }
-
-    private static float[] Resample(float[] samples, int fromRate, int toRate)
-    {
-        int newLength = (int)((long)samples.Length * toRate / fromRate);
-        var result = new float[newLength];
-        for (int i = 0; i < newLength; i++)
-        {
-            double srcPos = i * (double)fromRate / toRate;
-            int idx = (int)srcPos;
-            result[i] = idx < samples.Length ? samples[idx] : 0f;
-        }
-        return result;
     }
 }
