@@ -1,3 +1,5 @@
+using Acapella.Engine.Mix;
+
 namespace Acapella.Engine.Project;
 
 public enum LayerKind
@@ -14,6 +16,9 @@ public class LayerModel
     public required string SourcePath { get; set; }
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
+
+    /// <summary>Held in memory for the session (build plan Phase 3); full save/load is Phase 5.</summary>
+    public LayerMixParameters MixParameters { get; } = new();
 }
 
 public class LayerCollection

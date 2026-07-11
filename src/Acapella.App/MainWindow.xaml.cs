@@ -4,6 +4,7 @@ using Acapella.Engine.Capture;
 using Acapella.Engine.Devices;
 using Acapella.Engine.GuideTrack;
 using Acapella.Engine.Metronome;
+using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 using Acapella.Engine.Settings;
 using Acapella.Engine.Sync;
@@ -21,11 +22,15 @@ public partial class MainWindow : Window
     private readonly LayerCollection _layers = new();
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "media");
 
+    private readonly MixEngine _mixEngine = new();
+
     private WasapiOut? _metronomeOutput;
+    private WasapiOut? _previewOutput;
     private FfmpegCaptureSession? _activeCapture;
     private List<AudioDeviceInfo> _renderDevices = new();
     private List<AudioDeviceInfo> _captureDevices = new();
     private List<DshowDeviceInfo> _dshowVideoDevices = new();
+    private bool _isLoadingLayerControls;
 
     public MainWindow()
     {
@@ -196,6 +201,7 @@ public partial class MainWindow : Window
         {
             var layer = _layers.Layers[LayersList.SelectedIndex];
             OffsetSlider.Value = layer.ManualOffsetMs;
+            LoadLayerControls(layer.MixParameters);
         }
     }
 
@@ -205,6 +211,87 @@ public partial class MainWindow : Window
         if (LayersList.SelectedIndex >= 0 && LayersList.SelectedIndex < _layers.Layers.Count)
         {
             _layers.Layers[LayersList.SelectedIndex].ManualOffsetMs = OffsetSlider.Value;
+        }
+    }
+
+    private void LoadLayerControls(LayerMixParameters parameters)
+    {
+        _isLoadingLayerControls = true;
+        GainSlider.Value = parameters.GainDb;
+        PanSlider.Value = parameters.Pan;
+        LowEqSlider.Value = parameters.LowShelfGainDb;
+        MidEqSlider.Value = parameters.MidBellGainDb;
+        HighEqSlider.Value = parameters.HighShelfGainDb;
+        GateThresholdSlider.Value = parameters.NoiseGateThresholdDb;
+        MuteCheckBox.IsChecked = parameters.Mute;
+        SoloCheckBox.IsChecked = parameters.Solo;
+        PitchBackendCombo.SelectedIndex = (int)parameters.PitchBackend;
+        _isLoadingLayerControls = false;
+    }
+
+    private void MixParam_ValueChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isLoadingLayerControls) return;
+        if (LayersList.SelectedIndex < 0 || LayersList.SelectedIndex >= _layers.Layers.Count) return;
+
+        var parameters = _layers.Layers[LayersList.SelectedIndex].MixParameters;
+        parameters.GainDb = (float)GainSlider.Value;
+        parameters.Pan = (float)PanSlider.Value;
+        parameters.LowShelfGainDb = (float)LowEqSlider.Value;
+        parameters.MidBellGainDb = (float)MidEqSlider.Value;
+        parameters.HighShelfGainDb = (float)HighEqSlider.Value;
+        parameters.NoiseGateThresholdDb = (float)GateThresholdSlider.Value;
+        parameters.Mute = MuteCheckBox.IsChecked == true;
+        parameters.Solo = SoloCheckBox.IsChecked == true;
+        parameters.PitchBackend = (PitchBackendSelection)PitchBackendCombo.SelectedIndex;
+
+        GainValueText.Text = $"{parameters.GainDb:F1} dB";
+        PanValueText.Text = $"{parameters.Pan:F2}";
+        LowEqValueText.Text = $"{parameters.LowShelfGainDb:F1} dB";
+        MidEqValueText.Text = $"{parameters.MidBellGainDb:F1} dB";
+        HighEqValueText.Text = $"{parameters.HighShelfGainDb:F1} dB";
+        GateThresholdValueText.Text = $"{parameters.NoiseGateThresholdDb:F1} dB";
+    }
+
+    private void PreviewMixButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_previewOutput is not null)
+        {
+            _previewOutput.Stop();
+            _previewOutput.Dispose();
+            _previewOutput = null;
+            PreviewMixButton.Content = "Preview Mix";
+            StatusText.Text = "Preview stopped.";
+            return;
+        }
+
+        if (_layers.Layers.Count == 0 || AudioOutDeviceCombo.SelectedIndex < 0)
+        {
+            StatusText.Text = "Add at least one layer and select an audio output device first.";
+            return;
+        }
+
+        try
+        {
+            const int sampleRate = 44100;
+            var mixInputs = _layers.Layers
+                .Select(l => new MixLayerInput(l.LayerId, AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), sampleRate, l.MixParameters))
+                .ToList();
+
+            var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
+
+            var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
+            using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+            var device = enumerator.GetDevice(outputDevice.Id);
+            _previewOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
+            _previewOutput.Init(mix);
+            _previewOutput.Play();
+            PreviewMixButton.Content = "Stop Preview";
+            StatusText.Text = $"Previewing mix of {mixInputs.Count} layer(s).";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Preview failed: {ex.Message}";
         }
     }
 }

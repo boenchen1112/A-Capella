@@ -5,7 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Acapella.App"
         mc:Ignorable="d"
-        Title="Acapella" Height="500" Width="700">
+        Title="Acapella" Height="700" Width="700">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="10">
         <TextBlock Text="Devices" FontWeight="Bold" Margin="0,0,0,4"/>
         <Grid Margin="0,0,0,8">
@@ -48,6 +49,61 @@
         <Slider x:Name="OffsetSlider" Minimum="-200" Maximum="200" TickFrequency="10" IsSnapToTickEnabled="False" ValueChanged="OffsetSlider_ValueChanged"/>
         <TextBlock x:Name="OffsetValueText" Text="0 ms"/>
 
+        <TextBlock Text="Mixer — Selected Layer Channel Strip" FontWeight="Bold" Margin="0,10,0,4"/>
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Gain (dB):" Margin="0,2"/>
+            <Slider Grid.Row="0" Grid.Column="1" x:Name="GainSlider" Minimum="-60" Maximum="12" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GainValueText" Text="0 dB" Margin="4,2"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Pan:" Margin="0,2"/>
+            <Slider Grid.Row="1" Grid.Column="1" x:Name="PanSlider" Minimum="-1" Maximum="1" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="1" Grid.Column="2" x:Name="PanValueText" Text="0" Margin="4,2"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Low Shelf (dB):" Margin="0,2"/>
+            <Slider Grid.Row="2" Grid.Column="1" x:Name="LowEqSlider" Minimum="-24" Maximum="24" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="2" Grid.Column="2" x:Name="LowEqValueText" Text="0 dB" Margin="4,2"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Mid Bell (dB):" Margin="0,2"/>
+            <Slider Grid.Row="3" Grid.Column="1" x:Name="MidEqSlider" Minimum="-24" Maximum="24" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="3" Grid.Column="2" x:Name="MidEqValueText" Text="0 dB" Margin="4,2"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="High Shelf (dB):" Margin="0,2"/>
+            <Slider Grid.Row="4" Grid.Column="1" x:Name="HighEqSlider" Minimum="-24" Maximum="24" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="4" Grid.Column="2" x:Name="HighEqValueText" Text="0 dB" Margin="4,2"/>
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Gate Threshold (dB):" Margin="0,2"/>
+            <Slider Grid.Row="5" Grid.Column="1" x:Name="GateThresholdSlider" Minimum="-80" Maximum="0" ValueChanged="MixParam_ValueChanged" Margin="4,2"/>
+            <TextBlock Grid.Row="5" Grid.Column="2" x:Name="GateThresholdValueText" Text="-60 dB" Margin="4,2"/>
+
+            <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,4,0,0">
+                <CheckBox x:Name="MuteCheckBox" Content="Mute" Checked="MixParam_ValueChanged" Unchecked="MixParam_ValueChanged" Margin="0,0,12,0"/>
+                <CheckBox x:Name="SoloCheckBox" Content="Solo" Checked="MixParam_ValueChanged" Unchecked="MixParam_ValueChanged" Margin="0,0,12,0"/>
+                <TextBlock Text="Pitch:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <ComboBox x:Name="PitchBackendCombo" Width="140" SelectionChanged="MixParam_ValueChanged">
+                    <ComboBoxItem Content="None" IsSelected="True"/>
+                    <ComboBoxItem Content="Automatic (2B)"/>
+                    <ComboBoxItem Content="Manual/Melodyne (2A)"/>
+                </ComboBox>
+            </StackPanel>
+        </Grid>
+        <Button x:Name="PreviewMixButton" Content="Preview Mix" Click="PreviewMixButton_Click" Margin="0,4,0,4" HorizontalAlignment="Left"/>
+
         <TextBlock x:Name="StatusText" Margin="0,10,0,0" Foreground="DarkBlue"/>
     </StackPanel>
+    </ScrollViewer>
 </Window>
