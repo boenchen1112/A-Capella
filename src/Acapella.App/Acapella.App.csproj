@@ -4,6 +4,10 @@
     <ProjectReference Include="..\Acapella.Engine\Acapella.Engine.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>

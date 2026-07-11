@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using Acapella.Engine.Capture;
+using Acapella.Engine.Composite;
 using Acapella.Engine.Devices;
 using Acapella.Engine.GuideTrack;
 using Acapella.Engine.Metronome;
@@ -10,6 +11,8 @@ using Acapella.Engine.Settings;
 using Acapella.Engine.Sync;
 using Microsoft.Win32;
 using NAudio.Wave;
+using SkiaSharp;
+using SkiaSharp.Views.Desktop;
 
 namespace Acapella.App;
 
@@ -31,6 +34,7 @@ public partial class MainWindow : Window
     private List<AudioDeviceInfo> _captureDevices = new();
     private List<DshowDeviceInfo> _dshowVideoDevices = new();
     private bool _isLoadingLayerControls;
+    private SKBitmap? _compositedFrame;
 
     public MainWindow()
     {
@@ -293,5 +297,47 @@ public partial class MainWindow : Window
         {
             StatusText.Text = $"Preview failed: {ex.Message}";
         }
+    }
+
+    private void CompositePreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layers.Layers.Count == 0)
+        {
+            StatusText.Text = "Add at least one layer first.";
+            return;
+        }
+
+        try
+        {
+            const int cellWidth = 240;
+            const int cellHeight = 180;
+            const int canvasWidth = cellWidth * 2;
+            const int canvasHeight = cellHeight * 2;
+
+            var frames = _layers.Layers
+                .Select(l => l.Kind == LayerKind.UploadedAudioOnly
+                    ? PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight)
+                    : VideoFrameDecoder.DecodeFirstFrame(l.SourcePath, cellWidth, cellHeight) ?? PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight))
+                .ToList();
+
+            var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+            _compositedFrame?.Dispose();
+            _compositedFrame = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
+
+            CompositeCanvas.InvalidateVisual();
+            StatusText.Text = $"Composited preview of {frames.Count} layer(s).";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Composite preview failed: {ex.Message}";
+        }
+    }
+
+    private void CompositeCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
+    {
+        var canvas = e.Surface.Canvas;
+        canvas.Clear(SKColors.Black);
+        if (_compositedFrame is not null)
+            canvas.DrawBitmap(_compositedFrame, new SKRect(0, 0, e.Info.Width, e.Info.Height));
     }
 }

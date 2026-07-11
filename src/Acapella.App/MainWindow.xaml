@@ -5,7 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Acapella.App"
         mc:Ignorable="d"
-        Title="Acapella" Height="700" Width="700">
+        xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
+        Title="Acapella" Height="900" Width="700">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="10">
         <TextBlock Text="Devices" FontWeight="Bold" Margin="0,0,0,4"/>
@@ -102,6 +103,10 @@
             </StackPanel>
         </Grid>
         <Button x:Name="PreviewMixButton" Content="Preview Mix" Click="PreviewMixButton_Click" Margin="0,4,0,4" HorizontalAlignment="Left"/>
+
+        <TextBlock Text="Composited Preview (2x2 Grid)" FontWeight="Bold" Margin="0,10,0,4"/>
+        <Button x:Name="CompositePreviewButton" Content="Refresh Composite Preview" Click="CompositePreviewButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
+        <skia:SKElement x:Name="CompositeCanvas" Width="480" Height="360" HorizontalAlignment="Left" PaintSurface="CompositeCanvas_PaintSurface"/>
 
         <TextBlock x:Name="StatusText" Margin="0,10,0,0" Foreground="DarkBlue"/>
     </StackPanel>
