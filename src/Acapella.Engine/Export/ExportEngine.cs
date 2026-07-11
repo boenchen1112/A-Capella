@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Acapella.Engine.Composite;
+using Acapella.Engine.Ffmpeg;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 using SkiaSharp;

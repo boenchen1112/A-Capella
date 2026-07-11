@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Acapella.Engine.Ffmpeg;
 
 namespace Acapella.Engine.Mix;
 
@@ -22,6 +23,7 @@ public static class AudioDecoder
         psi.ArgumentList.Add("-");
 
         using var process = Process.Start(psi)!;
+        FfmpegProcessUtil.DrainStderrInBackground(process);
         using var ms = new MemoryStream();
         process.StandardOutput.BaseStream.CopyTo(ms);
         process.WaitForExit();

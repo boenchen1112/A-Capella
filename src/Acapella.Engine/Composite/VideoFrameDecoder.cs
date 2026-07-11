@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Acapella.Engine.Ffmpeg;
 using SkiaSharp;
 
 namespace Acapella.Engine.Composite;
@@ -24,6 +25,7 @@ public static class VideoFrameDecoder
         psi.ArgumentList.Add("-");
 
         using var process = Process.Start(psi)!;
+        FfmpegProcessUtil.DrainStderrInBackground(process);
         using var ms = new MemoryStream();
         process.StandardOutput.BaseStream.CopyTo(ms);
         process.WaitForExit();

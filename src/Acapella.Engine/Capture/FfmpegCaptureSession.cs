@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Acapella.Engine.Ffmpeg;
 
 namespace Acapella.Engine.Capture;
 
@@ -43,6 +44,8 @@ public class FfmpegCaptureSession : IDisposable
         psi.ArgumentList.Add(outputPath);
 
         _process = Process.Start(psi);
+        if (_process is not null)
+            FfmpegProcessUtil.DrainStderrInBackground(_process);
     }
 
     /// <summary>
@@ -73,6 +76,8 @@ public class FfmpegCaptureSession : IDisposable
         psi.ArgumentList.Add(outputPath);
 
         _process = Process.Start(psi);
+        if (_process is not null)
+            FfmpegProcessUtil.DrainStderrInBackground(_process);
     }
 
     public void Stop()
