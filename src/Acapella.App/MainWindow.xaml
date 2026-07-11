@@ -114,6 +114,9 @@
         <Button x:Name="CompositePreviewButton" Content="Refresh Composite Preview" Click="CompositePreviewButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
         <skia:SKElement x:Name="CompositeCanvas" Width="480" Height="360" HorizontalAlignment="Left" PaintSurface="CompositeCanvas_PaintSurface"/>
 
+        <TextBlock Text="Export" FontWeight="Bold" Margin="0,10,0,4"/>
+        <Button x:Name="ExportButton" Content="Export MP4..." Click="ExportButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
+
         <TextBlock x:Name="StatusText" Margin="0,10,0,0" Foreground="DarkBlue"/>
     </StackPanel>
     </ScrollViewer>

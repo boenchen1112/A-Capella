@@ -3,6 +3,7 @@ using System.Windows;
 using Acapella.Engine.Capture;
 using Acapella.Engine.Composite;
 using Acapella.Engine.Devices;
+using Acapella.Engine.Export;
 using Acapella.Engine.GuideTrack;
 using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
@@ -385,5 +386,37 @@ public partial class MainWindow : Window
         {
             StatusText.Text = $"Open failed: {ex.Message}";
         }
+    }
+
+    private void ExportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layers.Layers.Count == 0)
+        {
+            StatusText.Text = "Add at least one layer before exporting.";
+            return;
+        }
+
+        var dialog = new SaveFileDialog { Filter = "MP4 video|*.mp4", DefaultExt = ".mp4" };
+        if (dialog.ShowDialog() != true) return;
+
+        StatusText.Text = "Exporting...";
+        ExportButton.IsEnabled = false;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                new ExportEngine().Export(_layers, dialog.FileName);
+                Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => StatusText.Text = $"Export failed: {ex.Message}");
+            }
+            finally
+            {
+                Dispatcher.Invoke(() => ExportButton.IsEnabled = true);
+            }
+        });
     }
 }
