@@ -78,7 +78,7 @@ Test recordings and other captured audio/video are large binaries and don't belo
 **Installed:**
 - Git
 - Visual Studio 2022, "Desktop development with C++" workload (default components: MSVC Build Tools, Windows 11 SDK, CMake tools for Windows, vcpkg, AddressSanitizer)
-- Melodyne (via FL Studio's plugin install — tier and ARA capability not yet verified; verify during Phase 0/1 per the build plan's de-risking note, don't assume)
+- Melodyne (via FL Studio's plugin install). Phase 0 de-risk check confirmed: `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3` exists, file/product version 5.4.1.4. Tier and ARA-factory support not yet confirmed at runtime (requires loading it in a host) — that verification is deferred to Phase 2A's spike as planned; this check only confirms presence + version.
 
 **Not yet installed (install via winget/git when the phase that needs them starts, not preemptively):**
 - .NET SDK (`winget install Microsoft.DotNet.SDK.8`)
@@ -94,8 +94,10 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Pitch correction fallback: Rubber Band Library + a pitch-tracking library
 - Plugin hosting bridge (Phase 2A only): JUCE (C++) exposing a plain C ABI, called from C# via P/Invoke — not C++/CLI
 
-**Canonical commands** (update this list as they come to exist — e.g. once a solution file exists, add its build/test/run commands here so every session doesn't have to rediscover them):
-- *(none yet — add as Phase 0 scaffolding creates the solution)*
+**Canonical commands:**
+- Build: `dotnet build` (from repo root, builds `Acapella.sln`)
+- Run app: `dotnet run --project src/Acapella.App/Acapella.App.csproj`
+- Solution layout: `src/Acapella.App` (WPF UI project) references `src/Acapella.Engine` (class library for capture/sync/mix/composite/export logic)
 
 ## Reference
 

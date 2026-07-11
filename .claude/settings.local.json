@@ -1,10 +1,5 @@
 {
-  "disabledMcpjsonServers": [
-    "google-workspace",
-    "line-chat"
-  ],
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Bash(dotnet build*)",
       "Bash(dotnet test*)",
@@ -15,23 +10,32 @@
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
-      "Bash(dotnet build*)", 
-      "Bash(dotnet test*)", 
+      "Bash(dotnet build*)",
+      "Bash(dotnet test*)",
       "Bash(dotnet add*)",
-      "Bash(dotnet run*)", 
+      "Bash(dotnet run*)",
       "Bash(dotnet new*)",
-      "Bash(cmake*)", 
-      "Bash(ffmpeg*)", 
+      "Bash(cmake*)",
+      "Bash(ffmpeg*)",
       "Bash(winget install*)",
-      "Bash(git add*)", 
-      "Bash(git commit*)", 
+      "Bash(git add*)",
+      "Bash(git commit*)",
       "Bash(git status*)",
-      "Bash(git diff*)", 
-      "Bash(git log*)", 
+      "Bash(git diff*)",
+      "Bash(git log*)",
       "Bash(git mv*)",
-      "Bash(git restore*)", 
-      "Bash(git checkout*)", 
-      "Bash(git branch*)"
-    ]
-  }
+      "Bash(git restore*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(dotnet --version)",
+      "Read(//c/Program Files/Common Files/VST3/**)",
+      "Bash(dotnet sln *)",
+      "Bash(echo \"exit: $?\")"
+    ],
+    "defaultMode": "auto"
+  },
+  "disabledMcpjsonServers": [
+    "google-workspace",
+    "line-chat"
+  ]
 }

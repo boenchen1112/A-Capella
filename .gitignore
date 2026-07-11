@@ -1,0 +1,6 @@
+bin/
+obj/
+media/
+recordings/
+*.user
+.vs/
