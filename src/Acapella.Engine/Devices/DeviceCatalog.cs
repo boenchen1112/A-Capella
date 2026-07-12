@@ -33,6 +33,19 @@ public class DeviceCatalog
     }
 
     /// <summary>
+    /// The redesigned UI (see UI_Design_Spec.md) has no output-device picker anywhere -- the
+    /// Record dialog only exposes camera/mic, and there's no other device UI outside it. Guide
+    /// playback, latency calibration, and audio preview all resolve to the system's default
+    /// render endpoint instead of a user-chosen one.
+    /// </summary>
+    public AudioDeviceInfo GetDefaultRenderDevice()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        return new AudioDeviceInfo(device.ID, device.FriendlyName);
+    }
+
+    /// <summary>
     /// Lists dshow devices (video and audio) by parsing `ffmpeg -f dshow -list_devices true -i dummy` stderr output.
     /// </summary>
     public List<DshowDeviceInfo> GetDshowDevices()

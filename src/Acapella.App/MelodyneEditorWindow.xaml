@@ -1,0 +1,16 @@
+<Window x:Class="Acapella.App.MelodyneEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Melodyne" Height="220" Width="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <StackPanel Margin="16" VerticalAlignment="Center">
+        <TextBlock Text="Melodyne editor" FontWeight="Bold" FontSize="16" Margin="0,0,0,12"/>
+        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}">
+            Melodyne's hosted ARA editor window opens here once the VST3/ARA plugin-hosting
+            bridge (Phase 2A) is built. That phase hasn't started yet, so this is a placeholder --
+            selecting "Melodyne (manual)" records the choice, but there's no editor to open until
+            Phase 2A lands.
+        </TextBlock>
+        <Button Content="Close" Click="CloseButton_Click" HorizontalAlignment="Right" Margin="0,20,0,0"/>
+    </StackPanel>
+</Window>

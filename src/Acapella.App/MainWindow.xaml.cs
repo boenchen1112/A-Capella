@@ -1,17 +1,15 @@
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
-using Acapella.Engine.Capture;
+using System.Windows.Controls;
+using Acapella.App.ViewModels;
 using Acapella.Engine.Composite;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
-using Acapella.Engine.Ffmpeg;
-using Acapella.Engine.GuideTrack;
-using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Persistence;
 using Acapella.Engine.Project;
 using Acapella.Engine.Settings;
-using Acapella.Engine.Sync;
 using Microsoft.Win32;
 using NAudio.Wave;
 using SkiaSharp;
@@ -23,230 +21,105 @@ public partial class MainWindow : Window
 {
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
-    private readonly LatencyCalibrator _calibrator;
-    private readonly MetronomeEngine _metronome = new();
     private readonly LayerCollection _layers = new();
-    // L1: previously climbed 5 fixed ".." hops assuming bin/Debug/net8.0-windows depth, which
-    // breaks the moment the app runs from anywhere else. A directory next to the executable works
-    // regardless of how/where the app is launched.
+    // L1: a directory next to the executable works regardless of how/where the app is launched.
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
     private readonly MixEngine _mixEngine = new();
     private readonly ProjectPersistenceService _projectPersistence = new();
+    private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
 
-    private WasapiOut? _metronomeOutput;
     private WasapiOut? _previewOutput;
-    private FfmpegCaptureSession? _activeCapture;
-    private GuideTrackPlayer? _guideTrackPlayer;
-    private List<AudioDeviceInfo> _renderDevices = new();
-    private List<AudioDeviceInfo> _captureDevices = new();
-    private List<DshowDeviceInfo> _dshowVideoDevices = new();
-    private List<DshowDeviceInfo> _dshowAudioDevices = new();
-    private bool _isLoadingLayerControls;
     private SKBitmap? _compositedFrame;
     private double? _lastCalibratedOffsetMs;
+    // Metronome now lives only inside RecordSetupWindow (see UI_Design_Spec.md); this just carries
+    // the last-used BPM forward across dialogs and into project save/load.
+    private double _metronomeBpm = 120;
+    private string _dockSide = "Right";
+    private int _previewMixGeneration;
+    private int _compositeGeneration;
 
     public MainWindow()
     {
         InitializeComponent();
-        _calibrator = new LatencyCalibrator(_settingsService);
-        RefreshDevices();
+        TrackList.ItemsSource = _tracks;
+
+        _dockSide = _settingsService.Load().TrackPanelDock;
+        ApplyDockSide();
+        UpdateAddLayerButtonState();
     }
 
-    private void RefreshDevicesButton_Click(object sender, RoutedEventArgs e) => RefreshDevices();
+    // ----- Dock side toggle -----
 
-    private void RefreshDevices()
+    private void DockToggleButton_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            _renderDevices = _deviceCatalog.GetWasapiRenderDevices();
-            _captureDevices = _deviceCatalog.GetWasapiCaptureDevices();
-            var dshow = _deviceCatalog.GetDshowDevices();
-            _dshowVideoDevices = dshow.Where(d => d.IsVideo).ToList();
-            _dshowAudioDevices = dshow.Where(d => !d.IsVideo).ToList();
+        _dockSide = _dockSide == "Left" ? "Right" : "Left";
+        ApplyDockSide();
 
-            AudioOutDeviceCombo.ItemsSource = _renderDevices.Select(d => d.Name).ToList();
-            AudioInDeviceCombo.ItemsSource = _captureDevices.Select(d => d.Name).ToList();
-            VideoDeviceCombo.ItemsSource = _dshowVideoDevices.Select(d => d.Name).ToList();
-            DshowAudioDeviceCombo.ItemsSource = _dshowAudioDevices.Select(d => d.Name).ToList();
-
-            if (AudioOutDeviceCombo.Items.Count > 0) AudioOutDeviceCombo.SelectedIndex = 0;
-            if (AudioInDeviceCombo.Items.Count > 0) AudioInDeviceCombo.SelectedIndex = 0;
-            if (VideoDeviceCombo.Items.Count > 0) VideoDeviceCombo.SelectedIndex = 0;
-            if (DshowAudioDeviceCombo.Items.Count > 0) DshowAudioDeviceCombo.SelectedIndex = 0;
-
-            StatusText.Text = $"Found {_renderDevices.Count} output, {_captureDevices.Count} input, {_dshowVideoDevices.Count} video, {_dshowAudioDevices.Count} dshow audio devices.";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Device scan failed: {ex.Message}";
-        }
+        var settings = _settingsService.Load();
+        settings.TrackPanelDock = _dockSide;
+        _settingsService.Save(settings);
     }
 
-    private void CalibrateButton_Click(object sender, RoutedEventArgs e)
+    private void ApplyDockSide()
     {
-        if (AudioOutDeviceCombo.SelectedIndex < 0 || AudioInDeviceCombo.SelectedIndex < 0)
-        {
-            StatusText.Text = "Select an audio in/out device first.";
-            return;
-        }
-
-        var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-        var inputDevice = _captureDevices[AudioInDeviceCombo.SelectedIndex];
-
-        try
-        {
-            double offsetMs = _calibrator.CalibrateAndSave(outputDevice.Id, inputDevice.Id);
-            _lastCalibratedOffsetMs = offsetMs;
-            CalibrationResultText.Text = $"Calibrated offset: {offsetMs:F1} ms";
-        }
-        catch (Exception ex)
-        {
-            CalibrationResultText.Text = $"Calibration failed: {ex.Message}";
-        }
+        DockPanel.SetDock(TrackPanelBorder, _dockSide == "Left" ? Dock.Left : Dock.Right);
+        DockToggleButton.Content = _dockSide == "Left" ? "Dock right" : "Dock left";
     }
 
-    private void MetronomeToggle_Changed(object sender, RoutedEventArgs e)
-    {
-        // Locked scope: metronome is audible only during recording, not from toggle-on until app
-        // exit. This just arms/disarms it; actual playback starts/stops with the active capture
-        // in RecordLayerButton_Click / StopRecordButton_Click.
-        _metronome.Enabled = MetronomeToggle.IsChecked == true;
-    }
+    // ----- Track panel: add / record / upload -----
 
-    private void BpmTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    private void AddLayerButton_Click(object sender, RoutedEventArgs e)
     {
-        if (double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm))
-            _metronome.Bpm = bpm;
-    }
-
-    private void RecordLayerButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (VideoDeviceCombo.SelectedIndex < 0 || AudioInDeviceCombo.SelectedIndex < 0 || DshowAudioDeviceCombo.SelectedIndex < 0)
-        {
-            StatusText.Text = "Select a video and audio input device first.";
-            return;
-        }
-
-        if (_layers.Layers.Count >= LayerCollection.MaxLayers)
+        if (_tracks.Count >= LayerCollection.MaxLayers)
         {
             StatusText.Text = "Layer cap reached (4).";
             return;
         }
 
-        var videoDevice = _dshowVideoDevices[VideoDeviceCombo.SelectedIndex];
-        // WASAPI device drives calibration/latency lookup (SettingsService keys by WASAPI
-        // device id); the dshow device is what ffmpeg actually needs to open by name. The two
-        // namespaces frequently use different friendly names for the same physical device (e.g.
-        // "Microphone (Realtek(R) Audio)" vs "Microphone (Realtek High Definition Audio)"), so
-        // passing the WASAPI name to ffmpeg previously failed with "Could not find audio device".
-        var audioDevice = _captureDevices[AudioInDeviceCombo.SelectedIndex];
-        var dshowAudioDevice = _dshowAudioDevices[DshowAudioDeviceCombo.SelectedIndex];
-        int nextLayerId = _layers.Layers.Count;
-        string outputPath = Path.Combine(_mediaDir, $"layer{nextLayerId}.mkv");
+        var row = new LayerRowViewModel(_tracks.Count + 1) { IsExpanded = true };
+        row.AudioParamChanged += RebuildPreviewIfPlaying;
+        _tracks.Add(row);
+        UpdateAddLayerButtonState();
+    }
 
-        _activeCapture = new FfmpegCaptureSession();
-        double calibratedOffsetMs = 0;
+    private void UpdateAddLayerButtonState() =>
+        AddLayerButton.IsEnabled = _tracks.Count < LayerCollection.MaxLayers;
 
-        if (nextLayerId > 0 && AudioOutDeviceCombo.SelectedIndex >= 0)
+    private void RecordChoice_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+
+        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _metronomeBpm) { Owner = this };
+        bool? result = dialog.ShowDialog();
+        _metronomeBpm = dialog.Bpm;
+
+        if (result == true && dialog.CreatedLayer is not null)
         {
-            var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-            calibratedOffsetMs = _settingsService.GetLatencyOffsetMs(audioDevice.Id, outputDevice.Id) ?? 0;
-
-            const int sampleRate = 44100;
-            var mixInputs = _layers.Layers
-                .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
-                .ToList();
-            var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
-
-            // Capture starts first, then the guide plays immediately with no added delay (see
-            // GuideTrackPlayer / C4 fix) -- the round-trip latency captured here is stored on the
-            // new layer below and trimmed from its head at mix/export time instead.
-            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
-            _guideTrackPlayer = new GuideTrackPlayer();
-            _guideTrackPlayer.Play(outputDevice.Id, guideMix);
-
-            StatusText.Text = $"Recording layer {nextLayerId} with guide track (offset {calibratedOffsetMs:F1}ms)...";
-        }
-        else
-        {
-            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
-            StatusText.Text = $"Recording layer {nextLayerId}...";
-        }
-
-        var layer = _layers.Add(LayerKind.RecordedAV, outputPath);
-        layer.CalibratedOffsetMs = calibratedOffsetMs;
-        RefreshLayersList();
-
-        if (_metronome.Enabled && AudioOutDeviceCombo.SelectedIndex >= 0)
-        {
-            var metronomeOutputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-            using var metronomeEnumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
-            var metronomeDevice = metronomeEnumerator.GetDevice(metronomeOutputDevice.Id);
-            _metronomeOutput = new WasapiOut(metronomeDevice, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
-            _metronomeOutput.Init(_metronome);
-            _metronomeOutput.Play();
+            row.Layer = dialog.CreatedLayer;
+            row.IsExpanded = true;
+            RefreshCompositePreview();
+            StatusText.Text = $"Recorded {row.DisplayName}.";
         }
     }
 
-    private void StopRecordButton_Click(object sender, RoutedEventArgs e)
+    private void UploadChoice_Click(object sender, RoutedEventArgs e)
     {
-        bool wasRecording = _activeCapture is not null;
-
-        _activeCapture?.Stop();
-        string[] stderrTail = _activeCapture?.GetRecentStderrLines() ?? Array.Empty<string>();
-        _activeCapture?.Dispose();
-        _activeCapture = null;
-        _guideTrackPlayer?.Stop();
-        _guideTrackPlayer?.Dispose();
-        _guideTrackPlayer = null;
-        _metronomeOutput?.Stop();
-        _metronomeOutput?.Dispose();
-        _metronomeOutput = null;
-
-        // M6: RecordLayerButton_Click added the layer immediately after Start(), with no check
-        // that ffmpeg actually produced usable output (e.g. H3's dshow name mismatch would leave
-        // an empty/missing file). Verify the just-recorded layer's file has real duration before
-        // keeping it; if not, remove it and surface ffmpeg's tail diagnostics instead of leaving
-        // a zombie layer that would later throw or render silent/black in export.
-        if (wasRecording && _layers.Layers.Count > 0)
-        {
-            var lastLayer = _layers.Layers[^1];
-            if (!MediaProbe.HasNonzeroDuration(lastLayer.SourcePath))
-            {
-                _layers.RemoveLast();
-                RefreshLayersList();
-                string diagnostics = stderrTail.Length > 0 ? string.Join(" | ", stderrTail.TakeLast(3)) : "no ffmpeg diagnostics captured";
-                StatusText.Text = $"Recording failed, layer removed. {diagnostics}";
-                return;
-            }
-        }
-
-        StatusText.Text = "Recording stopped.";
-    }
-
-    private void UploadLayerButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_layers.Layers.Count >= LayerCollection.MaxLayers)
-        {
-            StatusText.Text = "Layer cap reached (4).";
-            return;
-        }
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
 
         var dialog = new OpenFileDialog
         {
             Filter = "Media files|*.mp4;*.mov;*.mkv;*.wav;*.mp3;*.m4a|All files|*.*"
         };
+        if (dialog.ShowDialog() != true) return;
 
-        if (dialog.ShowDialog() == true)
-        {
-            var kind = IsAudioOnlyExtension(Path.GetExtension(dialog.FileName))
-                ? LayerKind.UploadedAudioOnly
-                : LayerKind.UploadedVideo;
-            _layers.Add(kind, dialog.FileName);
-            RefreshLayersList();
-            StatusText.Text = $"Uploaded layer: {Path.GetFileName(dialog.FileName)}";
-        }
+        var kind = IsAudioOnlyExtension(Path.GetExtension(dialog.FileName))
+            ? LayerKind.UploadedAudioOnly
+            : LayerKind.UploadedVideo;
+        row.Layer = _layers.Add(kind, dialog.FileName);
+        row.IsExpanded = true;
+        RefreshCompositePreview();
+        StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
     }
 
     private static bool IsAudioOnlyExtension(string ext) =>
@@ -254,115 +127,54 @@ public partial class MainWindow : Window
         ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
         ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase);
 
-    private void RefreshLayersList()
+    private void EditMelodyne_Click(object sender, RoutedEventArgs e)
     {
-        LayersList.ItemsSource = _layers.Layers
-            .Select(l => $"Layer {l.LayerId}: {l.Kind} — {Path.GetFileName(l.SourcePath)}")
-            .ToList();
+        new MelodyneEditorWindow { Owner = this }.ShowDialog();
     }
 
-    private void LayersList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void RestoreTracksFromLayers()
     {
-        if (LayersList.SelectedIndex >= 0 && LayersList.SelectedIndex < _layers.Layers.Count)
+        _tracks.Clear();
+        int slot = 1;
+        foreach (var layer in _layers.Layers)
         {
-            var layer = _layers.Layers[LayersList.SelectedIndex];
-            OffsetSlider.Value = layer.ManualOffsetMs;
-            LoadLayerControls(layer.MixParameters);
+            var row = new LayerRowViewModel(slot++) { Layer = layer };
+            row.AudioParamChanged += RebuildPreviewIfPlaying;
+            _tracks.Add(row);
         }
+        UpdateAddLayerButtonState();
     }
 
-    private void OffsetSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        OffsetValueText.Text = $"{OffsetSlider.Value:F0} ms";
-        if (LayersList.SelectedIndex >= 0 && LayersList.SelectedIndex < _layers.Layers.Count)
-        {
-            _layers.Layers[LayersList.SelectedIndex].ManualOffsetMs = OffsetSlider.Value;
-        }
+    // ----- Audio preview (explicit transport, not the "live" visual refresh -- see spec) -----
 
-        RebuildPreviewIfPlaying();
-    }
-
-    private void LoadLayerControls(LayerMixParameters parameters)
-    {
-        _isLoadingLayerControls = true;
-        GainSlider.Value = parameters.GainDb;
-        PanSlider.Value = parameters.Pan;
-        LowEqSlider.Value = parameters.LowShelfGainDb;
-        MidEqSlider.Value = parameters.MidBellGainDb;
-        HighEqSlider.Value = parameters.HighShelfGainDb;
-        GateThresholdSlider.Value = parameters.NoiseGateThresholdDb;
-        MuteCheckBox.IsChecked = parameters.Mute;
-        SoloCheckBox.IsChecked = parameters.Solo;
-        PitchBackendCombo.SelectedIndex = (int)parameters.PitchBackend;
-        _isLoadingLayerControls = false;
-    }
-
-    private void MixParam_ValueChanged(object sender, RoutedEventArgs e)
-    {
-        if (_isLoadingLayerControls) return;
-        if (LayersList.SelectedIndex < 0 || LayersList.SelectedIndex >= _layers.Layers.Count) return;
-
-        var parameters = _layers.Layers[LayersList.SelectedIndex].MixParameters;
-        parameters.GainDb = (float)GainSlider.Value;
-        parameters.Pan = (float)PanSlider.Value;
-        parameters.LowShelfGainDb = (float)LowEqSlider.Value;
-        parameters.MidBellGainDb = (float)MidEqSlider.Value;
-        parameters.HighShelfGainDb = (float)HighEqSlider.Value;
-        parameters.NoiseGateThresholdDb = (float)GateThresholdSlider.Value;
-        parameters.Mute = MuteCheckBox.IsChecked == true;
-        parameters.Solo = SoloCheckBox.IsChecked == true;
-        parameters.PitchBackend = (PitchBackendSelection)PitchBackendCombo.SelectedIndex;
-
-        GainValueText.Text = $"{parameters.GainDb:F1} dB";
-        PanValueText.Text = $"{parameters.Pan:F2}";
-        LowEqValueText.Text = $"{parameters.LowShelfGainDb:F1} dB";
-        MidEqValueText.Text = $"{parameters.MidBellGainDb:F1} dB";
-        HighEqValueText.Text = $"{parameters.HighShelfGainDb:F1} dB";
-        GateThresholdValueText.Text = $"{parameters.NoiseGateThresholdDb:F1} dB";
-
-        RebuildPreviewIfPlaying();
-    }
-
-    private void PreviewMixButton_Click(object sender, RoutedEventArgs e)
+    private void PreviewPlayButton_Click(object sender, RoutedEventArgs e)
     {
         if (_previewOutput is not null)
         {
             _previewOutput.Stop();
             _previewOutput.Dispose();
             _previewOutput = null;
-            PreviewMixButton.Content = "Preview Mix";
+            PreviewPlayButton.Content = "Play mix";
             StatusText.Text = "Preview stopped.";
             return;
         }
 
-        if (_layers.Layers.Count == 0 || AudioOutDeviceCombo.SelectedIndex < 0)
+        if (_layers.Layers.Count == 0)
         {
-            StatusText.Text = "Add at least one layer and select an audio output device first.";
+            StatusText.Text = "Add at least one layer first.";
             return;
         }
 
         StartOrRebuildPreviewMix();
     }
 
-    /// <summary>
-    /// Regression fix for M3: the mix graph was previously built once per Preview click, so a
-    /// slider change mutated LayerMixParameters but nothing re-read them until preview was
-    /// stopped and restarted. Cheapest honest fix per the audit: while preview is already
-    /// playing, rebuild the whole graph from current parameters and swap it in. Not glitch-free
-    /// during a rapid slider drag (each tick restarts playback from the top), but correctly
-    /// audible after every change, which is what mattered.
-    /// </summary>
+    /// <summary>M3: while preview is already playing, rebuild the whole graph from current
+    /// parameters and swap it in so a slider change is audible without a manual restart.</summary>
     private void RebuildPreviewIfPlaying()
     {
         if (_previewOutput is null) return;
         StartOrRebuildPreviewMix();
     }
-
-    // L8: decode + pitch correction for every layer ran synchronously on the UI thread on every
-    // preview (re)build, which M3 made frequent (every slider tick while playing) -- seconds-long
-    // freezes. Moved to a background task; a generation counter discards a stale rebuild's result
-    // if a newer one (e.g. from a fast slider drag) has already superseded it.
-    private int _previewMixGeneration;
 
     private void StartOrRebuildPreviewMix()
     {
@@ -388,27 +200,24 @@ public partial class MainWindow : Window
                     _previewOutput?.Stop();
                     _previewOutput?.Dispose();
 
-                    var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
+                    var outputDevice = _deviceCatalog.GetDefaultRenderDevice();
                     using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
                     var device = enumerator.GetDevice(outputDevice.Id);
                     var newOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
                     newOutput.Init(mix);
-                    // M5: ArraySampleProvider now signals end-of-stream (returns 0) instead of
-                    // padding with infinite silence, so preview genuinely finishes -- reset the
-                    // button/status when that happens rather than leaving it stuck on "Stop
-                    // Preview" forever. Guard by reference identity since Stop()/rebuild can also
-                    // fire this event for an instance that's already been superseded.
+                    // M5: ArraySampleProvider signals end-of-stream instead of padding with
+                    // infinite silence, so preview genuinely finishes on its own.
                     newOutput.PlaybackStopped += (s, e) => Dispatcher.Invoke(() =>
                     {
                         if (!ReferenceEquals(_previewOutput, newOutput)) return;
                         _previewOutput.Dispose();
                         _previewOutput = null;
-                        PreviewMixButton.Content = "Preview Mix";
+                        PreviewPlayButton.Content = "Play mix";
                         StatusText.Text = "Preview finished.";
                     });
                     _previewOutput = newOutput;
                     newOutput.Play();
-                    PreviewMixButton.Content = "Stop Preview";
+                    PreviewPlayButton.Content = "Stop preview";
                     StatusText.Text = $"Previewing mix of {mixInputs.Count} layer(s).";
                 });
             }
@@ -423,26 +232,25 @@ public partial class MainWindow : Window
         });
     }
 
-    private void CompositePreviewButton_Click(object sender, RoutedEventArgs e)
+    // ----- Visual composite preview: auto-refreshes on source changes, no manual button (spec) -----
+
+    private void RefreshCompositePreview()
     {
         if (_layers.Layers.Count == 0)
         {
-            StatusText.Text = "Add at least one layer first.";
+            _compositedFrame?.Dispose();
+            _compositedFrame = null;
+            CompositeCanvas.InvalidateVisual();
             return;
         }
 
-        // L8: decoding one frame per layer spawns up to 4 ffmpeg processes synchronously on the
-        // UI thread, freezing it for the duration. Move the decode+composite work to a background
-        // thread and only touch UI state (bitmap swap, InvalidateVisual, status text) back on the
-        // dispatcher.
-        CompositePreviewButton.IsEnabled = false;
-        StatusText.Text = "Compositing preview...";
+        int generation = ++_compositeGeneration;
         var layersSnapshot = _layers.Layers.ToList();
 
         Task.Run(() =>
         {
-            const int cellWidth = 240;
-            const int cellHeight = 180;
+            const int cellWidth = 320;
+            const int cellHeight = 240;
             const int canvasWidth = cellWidth * 2;
             const int canvasHeight = cellHeight * 2;
 
@@ -459,23 +267,22 @@ public partial class MainWindow : Window
 
                 Dispatcher.Invoke(() =>
                 {
-                    // L2: the per-layer decoded frame bitmaps were never disposed after
-                    // compositing into the output bitmap -- a leak on every click.
+                    if (generation != _compositeGeneration) { composited.Dispose(); return; }
+
+                    // L2: dispose the previous composited bitmap, not just the per-layer frames.
                     _compositedFrame?.Dispose();
                     _compositedFrame = composited;
                     CompositeCanvas.InvalidateVisual();
-                    StatusText.Text = $"Composited preview of {frames.Count} layer(s).";
                 });
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => StatusText.Text = $"Composite preview failed: {ex.Message}");
+                Dispatcher.Invoke(() => StatusText.Text = $"Preview render failed: {ex.Message}");
             }
             finally
             {
                 foreach (var frame in frames)
                     frame.Dispose();
-                Dispatcher.Invoke(() => CompositePreviewButton.IsEnabled = true);
             }
         });
     }
@@ -488,6 +295,8 @@ public partial class MainWindow : Window
             canvas.DrawBitmap(_compositedFrame, new SKRect(0, 0, e.Info.Width, e.Info.Height));
     }
 
+    // ----- Project save/load/export -----
+
     private void SaveProjectButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SaveFileDialog { Filter = "Acapella project|*.acapella.json", DefaultExt = ".acapella.json" };
@@ -495,12 +304,9 @@ public partial class MainWindow : Window
 
         try
         {
-            double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm);
-            var dto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
-            // L7: DefaultExt=".acapella.json" (a multi-segment extension) doesn't reliably stop
-            // SaveFileDialog from appending it again when the user already typed an extension,
-            // producing "name.acapella.json.acapella.json". Enforce the suffix explicitly instead
-            // of relying on the dialog's own extension logic.
+            var dto = _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs);
+            // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
+            // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
             string filePath = dialog.FileName.EndsWith(".acapella.json", StringComparison.OrdinalIgnoreCase)
                 ? dialog.FileName
                 : dialog.FileName + ".acapella.json";
@@ -525,10 +331,10 @@ public partial class MainWindow : Window
 
             _layers.Restore(loadedLayers.Layers);
             _lastCalibratedOffsetMs = latencyOffset;
-            BpmTextBox.Text = bpm.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
-            _metronome.Bpm = bpm;
+            _metronomeBpm = bpm;
 
-            RefreshLayersList();
+            RestoreTracksFromLayers();
+            RefreshCompositePreview();
             StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({loadedLayers.Layers.Count} layer(s)).";
         }
         catch (Exception ex)
@@ -551,13 +357,9 @@ public partial class MainWindow : Window
         StatusText.Text = "Exporting...";
         ExportButton.IsEnabled = false;
 
-        // M7: Export previously read the live _layers/MixParameters directly from a background
-        // task while the UI thread could still add layers or move sliders mid-export -- a data
-        // race with only the Export button disabled to (incompletely) discourage it. Snapshot via
-        // a DTO round-trip (already used for project save/load, so it's already a proven deep
-        // copy) and export that snapshot instead of the live, still-editable state.
-        double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm);
-        var snapshotDto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
+        // M7: snapshot via a DTO round-trip so a mid-export layer/parameter edit can't race the
+        // background export task's read of live state.
+        var snapshotDto = _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs);
         var (snapshotLayers, _, _) = _projectPersistence.FromDto(snapshotDto);
 
         Task.Run(() =>
