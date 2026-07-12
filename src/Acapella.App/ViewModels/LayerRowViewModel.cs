@@ -6,20 +6,25 @@ using Acapella.Engine.Project;
 namespace Acapella.App.ViewModels;
 
 /// <summary>
-/// One row in the track panel's accordion list (see UI_Design_Spec.md). Wraps a LayerModel once
-/// a source is attached; Layer is null for a freshly added row still in the Record/Upload choice
-/// state. Mix-parameter properties write straight through to the wrapped LayerModel and notify
-/// AudioParamChanged so the caller can rebuild an in-progress audio preview -- they deliberately
-/// do NOT trigger the visual composite refresh, since none of them change what a frame looks
-/// like (see MainWindow's RefreshCompositePreview call sites instead).
+/// One row in the Editor screen's track sidebar (see UI_Design_Spec.md v2). Wraps a LayerModel
+/// once a source is attached; Layer is null for a freshly added row still in the Record/Upload
+/// choice state. Mix-parameter properties write straight through to the wrapped LayerModel and
+/// notify LiveParamChanged so the caller can refresh the live preview -- FX/pan/mute/solo changes
+/// don't move pixels, but the preview transport plays audio too, so they still need a refresh
+/// while playing (see MainWindow's debounced RefreshPreviewLive).
+///
+/// v2 removes the standalone manual-offset ("Sync") slider from the UI entirely -- trim now
+/// covers the Editor screen's in/out need, and LayerModel.CalibratedOffsetMs (automatic
+/// round-trip latency correction) stays wired under the hood via GetShiftMs regardless of what
+/// the UI exposes. ManualOffsetMs is intentionally left at its default (0) since v2 gives the
+/// user no control to change it.
 /// </summary>
 public class LayerRowViewModel : INotifyPropertyChanged
 {
     private LayerModel? _layer;
-    private bool _isExpanded;
 
     public event PropertyChangedEventHandler? PropertyChanged;
-    public event Action? AudioParamChanged;
+    public event Action? LiveParamChanged;
 
     public LayerRowViewModel(int slotNumber)
     {
@@ -41,12 +46,6 @@ public class LayerRowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SourceStateLabel));
             RefreshMixDisplayProperties();
         }
-    }
-
-    public bool IsExpanded
-    {
-        get => _isExpanded;
-        set { _isExpanded = value; OnPropertyChanged(nameof(IsExpanded)); }
     }
 
     public bool HasSource => _layer is not null;
@@ -71,59 +70,133 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     private LayerMixParameters? Params => _layer?.MixParameters;
 
-    public float GainDb
+    // ----- Trim (Editor screen) -----
+
+    public double TrimStartMs
     {
-        get => Params?.GainDb ?? 0f;
-        set { if (Params is null) return; Params.GainDb = value; OnPropertyChanged(nameof(GainDb)); OnPropertyChanged(nameof(GainDisplay)); AudioParamChanged?.Invoke(); }
+        get => _layer?.TrimStartMs ?? 0;
+        set { if (_layer is null) return; _layer.TrimStartMs = Math.Max(0, value); OnPropertyChanged(nameof(TrimStartMs)); LiveParamChanged?.Invoke(); }
     }
-    public string GainDisplay => $"{GainDb:F1} dB";
+
+    /// <summary>Text-editable end trim: empty/unparseable means "to the end of the source"
+    /// (null TrimEndMs).</summary>
+    public string TrimEndText
+    {
+        get => _layer?.TrimEndMs?.ToString("F0") ?? "";
+        set
+        {
+            if (_layer is null) return;
+            _layer.TrimEndMs = double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms) ? ms : null;
+            OnPropertyChanged(nameof(TrimEndText));
+            LiveParamChanged?.Invoke();
+        }
+    }
+
+    // ----- Pan / mute / solo (Mixing screen top strip) -----
 
     public float Pan
     {
         get => Params?.Pan ?? 0f;
-        set { if (Params is null) return; Params.Pan = value; OnPropertyChanged(nameof(Pan)); OnPropertyChanged(nameof(PanDisplay)); AudioParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.Pan = value; OnPropertyChanged(nameof(Pan)); OnPropertyChanged(nameof(PanDisplay)); LiveParamChanged?.Invoke(); }
     }
     public string PanDisplay => $"{Pan:F2}";
+
+    public bool Mute
+    {
+        get => Params?.Mute ?? false;
+        set { if (Params is null) return; Params.Mute = value; OnPropertyChanged(nameof(Mute)); LiveParamChanged?.Invoke(); }
+    }
+
+    public bool Solo
+    {
+        get => Params?.Solo ?? false;
+        set { if (Params is null) return; Params.Solo = value; OnPropertyChanged(nameof(Solo)); LiveParamChanged?.Invoke(); }
+    }
+
+    // ----- EQ subtab -----
 
     public float LowShelfGainDb
     {
         get => Params?.LowShelfGainDb ?? 0f;
-        set { if (Params is null) return; Params.LowShelfGainDb = value; OnPropertyChanged(nameof(LowShelfGainDb)); OnPropertyChanged(nameof(LowEqDisplay)); AudioParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.LowShelfGainDb = value; OnPropertyChanged(nameof(LowShelfGainDb)); OnPropertyChanged(nameof(LowEqDisplay)); LiveParamChanged?.Invoke(); }
     }
     public string LowEqDisplay => $"{LowShelfGainDb:F1} dB";
 
     public float MidBellGainDb
     {
         get => Params?.MidBellGainDb ?? 0f;
-        set { if (Params is null) return; Params.MidBellGainDb = value; OnPropertyChanged(nameof(MidBellGainDb)); OnPropertyChanged(nameof(MidEqDisplay)); AudioParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.MidBellGainDb = value; OnPropertyChanged(nameof(MidBellGainDb)); OnPropertyChanged(nameof(MidEqDisplay)); LiveParamChanged?.Invoke(); }
     }
     public string MidEqDisplay => $"{MidBellGainDb:F1} dB";
 
     public float HighShelfGainDb
     {
         get => Params?.HighShelfGainDb ?? 0f;
-        set { if (Params is null) return; Params.HighShelfGainDb = value; OnPropertyChanged(nameof(HighShelfGainDb)); OnPropertyChanged(nameof(HighEqDisplay)); AudioParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.HighShelfGainDb = value; OnPropertyChanged(nameof(HighShelfGainDb)); OnPropertyChanged(nameof(HighEqDisplay)); LiveParamChanged?.Invoke(); }
     }
     public string HighEqDisplay => $"{HighShelfGainDb:F1} dB";
+
+    // ----- Noise gate subtab -----
 
     public float NoiseGateThresholdDb
     {
         get => Params?.NoiseGateThresholdDb ?? -60f;
-        set { if (Params is null) return; Params.NoiseGateThresholdDb = value; OnPropertyChanged(nameof(NoiseGateThresholdDb)); OnPropertyChanged(nameof(GateDisplay)); AudioParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.NoiseGateThresholdDb = value; OnPropertyChanged(nameof(NoiseGateThresholdDb)); OnPropertyChanged(nameof(GateDisplay)); LiveParamChanged?.Invoke(); }
     }
     public string GateDisplay => $"{NoiseGateThresholdDb:F1} dB";
 
-    public bool Mute
+    public float NoiseGateReleaseMs
     {
-        get => Params?.Mute ?? false;
-        set { if (Params is null) return; Params.Mute = value; OnPropertyChanged(nameof(Mute)); AudioParamChanged?.Invoke(); }
+        get => Params?.NoiseGateReleaseMs ?? 100f;
+        set { if (Params is null) return; Params.NoiseGateReleaseMs = value; OnPropertyChanged(nameof(NoiseGateReleaseMs)); OnPropertyChanged(nameof(GateReleaseDisplay)); LiveParamChanged?.Invoke(); }
+    }
+    public string GateReleaseDisplay => $"{NoiseGateReleaseMs:F0} ms";
+
+    // ----- Compressor subtab (new FX, user-approved scope change) -----
+
+    public bool CompressorEnabled
+    {
+        get => Params?.CompressorEnabled ?? false;
+        set { if (Params is null) return; Params.CompressorEnabled = value; OnPropertyChanged(nameof(CompressorEnabled)); LiveParamChanged?.Invoke(); }
     }
 
-    public bool Solo
+    public float CompressorThresholdDb
     {
-        get => Params?.Solo ?? false;
-        set { if (Params is null) return; Params.Solo = value; OnPropertyChanged(nameof(Solo)); AudioParamChanged?.Invoke(); }
+        get => Params?.CompressorThresholdDb ?? -18f;
+        set { if (Params is null) return; Params.CompressorThresholdDb = value; OnPropertyChanged(nameof(CompressorThresholdDb)); OnPropertyChanged(nameof(CompressorThresholdDisplay)); LiveParamChanged?.Invoke(); }
     }
+    public string CompressorThresholdDisplay => $"{CompressorThresholdDb:F1} dB";
+
+    public float CompressorRatio
+    {
+        get => Params?.CompressorRatio ?? 2f;
+        set { if (Params is null) return; Params.CompressorRatio = value; OnPropertyChanged(nameof(CompressorRatio)); OnPropertyChanged(nameof(CompressorRatioDisplay)); LiveParamChanged?.Invoke(); }
+    }
+    public string CompressorRatioDisplay => $"{CompressorRatio:F1}:1";
+
+    // ----- Limiter subtab (new FX, user-approved scope change) -----
+
+    public bool LimiterEnabled
+    {
+        get => Params?.LimiterEnabled ?? false;
+        set { if (Params is null) return; Params.LimiterEnabled = value; OnPropertyChanged(nameof(LimiterEnabled)); LiveParamChanged?.Invoke(); }
+    }
+
+    public float LimiterCeilingDb
+    {
+        get => Params?.LimiterCeilingDb ?? -0.3f;
+        set { if (Params is null) return; Params.LimiterCeilingDb = value; OnPropertyChanged(nameof(LimiterCeilingDb)); OnPropertyChanged(nameof(LimiterCeilingDisplay)); LiveParamChanged?.Invoke(); }
+    }
+    public string LimiterCeilingDisplay => $"{LimiterCeilingDb:F1} dB";
+
+    public float LimiterGainDb
+    {
+        get => Params?.LimiterGainDb ?? 0f;
+        set { if (Params is null) return; Params.LimiterGainDb = value; OnPropertyChanged(nameof(LimiterGainDb)); OnPropertyChanged(nameof(LimiterGainDisplay)); LiveParamChanged?.Invoke(); }
+    }
+    public string LimiterGainDisplay => $"{LimiterGainDb:F1} dB";
+
+    // ----- Melodyne subtab -----
 
     public int PitchBackendIndex
     {
@@ -134,33 +207,43 @@ public class LayerRowViewModel : INotifyPropertyChanged
             Params.PitchBackend = (PitchBackendSelection)value;
             OnPropertyChanged(nameof(PitchBackendIndex));
             OnPropertyChanged(nameof(ShowMelodyneButton));
-            AudioParamChanged?.Invoke();
+            LiveParamChanged?.Invoke();
         }
     }
 
     public bool ShowMelodyneButton => Params?.PitchBackend == PitchBackendSelection.Manual2A;
 
-    public double ManualOffsetMs
+    /// <summary>Studio (overall) gain, kept from v1 -- the spec doesn't call it out as living in
+    /// a specific subtab, but it's a core mix control, not one of the visualized FX stages, so it
+    /// lives alongside pan/mute/solo in the Mixing screen's top strip.</summary>
+    public float GainDb
     {
-        get => _layer?.ManualOffsetMs ?? 0;
-        set { if (_layer is null) return; _layer.ManualOffsetMs = value; OnPropertyChanged(nameof(ManualOffsetMs)); OnPropertyChanged(nameof(OffsetDisplay)); AudioParamChanged?.Invoke(); }
+        get => Params?.GainDb ?? 0f;
+        set { if (Params is null) return; Params.GainDb = value; OnPropertyChanged(nameof(GainDb)); OnPropertyChanged(nameof(GainDisplay)); LiveParamChanged?.Invoke(); }
     }
-    public string OffsetDisplay => $"{ManualOffsetMs:F0} ms";
+    public string GainDisplay => $"{GainDb:F1} dB";
 
     /// <summary>Refreshes every display-bound property after Layer is swapped wholesale (e.g. a
     /// recording/upload just attached, or a project was reopened) so bound controls pick up the
     /// new source's stored values instead of stale defaults.</summary>
     private void RefreshMixDisplayProperties()
     {
+        OnPropertyChanged(nameof(TrimStartMs)); OnPropertyChanged(nameof(TrimEndText));
         OnPropertyChanged(nameof(GainDb)); OnPropertyChanged(nameof(GainDisplay));
         OnPropertyChanged(nameof(Pan)); OnPropertyChanged(nameof(PanDisplay));
         OnPropertyChanged(nameof(LowShelfGainDb)); OnPropertyChanged(nameof(LowEqDisplay));
         OnPropertyChanged(nameof(MidBellGainDb)); OnPropertyChanged(nameof(MidEqDisplay));
         OnPropertyChanged(nameof(HighShelfGainDb)); OnPropertyChanged(nameof(HighEqDisplay));
         OnPropertyChanged(nameof(NoiseGateThresholdDb)); OnPropertyChanged(nameof(GateDisplay));
+        OnPropertyChanged(nameof(NoiseGateReleaseMs)); OnPropertyChanged(nameof(GateReleaseDisplay));
+        OnPropertyChanged(nameof(CompressorEnabled));
+        OnPropertyChanged(nameof(CompressorThresholdDb)); OnPropertyChanged(nameof(CompressorThresholdDisplay));
+        OnPropertyChanged(nameof(CompressorRatio)); OnPropertyChanged(nameof(CompressorRatioDisplay));
+        OnPropertyChanged(nameof(LimiterEnabled));
+        OnPropertyChanged(nameof(LimiterCeilingDb)); OnPropertyChanged(nameof(LimiterCeilingDisplay));
+        OnPropertyChanged(nameof(LimiterGainDb)); OnPropertyChanged(nameof(LimiterGainDisplay));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
         OnPropertyChanged(nameof(PitchBackendIndex)); OnPropertyChanged(nameof(ShowMelodyneButton));
-        OnPropertyChanged(nameof(ManualOffsetMs)); OnPropertyChanged(nameof(OffsetDisplay));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>

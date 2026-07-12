@@ -13,89 +13,48 @@
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
         <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis"/>
 
+        <!-- Editor screen: one sidebar row per layer. Minimal per UI_Design_Spec v2, just
+             source-in (Record/Upload) or trim + "Open Mixing"; all FX live on Screen 2. -->
         <DataTemplate x:Key="TrackRowTemplate" DataType="{x:Type vm:LayerRowViewModel}">
-            <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
-                <Expander.Header>
-                    <StackPanel Orientation="Horizontal" Margin="2">
+            <Border Background="{StaticResource RowBrush}" CornerRadius="4" Margin="0,0,0,8" Padding="10">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <TextBlock Text="{Binding IconGlyph}" FontSize="15" Width="22" VerticalAlignment="Center"/>
                         <StackPanel Orientation="Vertical" Margin="6,0,0,0">
                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
                             <TextBlock Text="{Binding SourceStateLabel}" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
                         </StackPanel>
                     </StackPanel>
-                </Expander.Header>
 
-                <Grid Margin="8,8,8,10">
                     <!-- No source yet: Record / Upload choice. -->
                     <StackPanel Orientation="Horizontal" Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}">
                         <Button Content="Record" Style="{StaticResource AccentButton}" Click="RecordChoice_Click" Margin="0,0,8,0" Padding="16,6"/>
                         <Button Content="Upload" Click="UploadChoice_Click" Padding="16,6"/>
                     </StackPanel>
 
-                    <!-- Source attached: tweak controls only. -->
+                    <!-- Source attached: trim + open mixing only. -->
                     <StackPanel Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <CheckBox Content="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Margin="0,0,16,0"/>
-                            <CheckBox Content="Solo" IsChecked="{Binding Solo, Mode=TwoWay}"/>
-                        </StackPanel>
-
-                        <TextBlock Text="Pitch correction" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        <ComboBox SelectedIndex="{Binding PitchBackendIndex, Mode=TwoWay}" Margin="0,2,0,2">
-                            <ComboBoxItem Content="None"/>
-                            <ComboBoxItem Content="Native automatic"/>
-                            <ComboBoxItem Content="Melodyne manual"/>
-                        </ComboBox>
-                        <Button Content="Edit in Melodyne..." Click="EditMelodyne_Click"
-                                Visibility="{Binding ShowMelodyneButton, Converter={StaticResource BoolToVis}}"
-                                HorizontalAlignment="Left" Margin="0,2,0,6"/>
-
-                        <Grid Margin="0,6,0,0">
+                        <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition/><RowDefinition/><RowDefinition/>
-                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-                            </Grid.RowDefinitions>
-
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Gain" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="0" Grid.Column="1" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GainDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Pan" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="1" Grid.Column="1" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding PanDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Low EQ" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="2" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding LowEqDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Mid EQ" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="3" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="3" Grid.Column="2" Text="{Binding MidEqDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="High EQ" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="4" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding HighEqDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Gate" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="5" Grid.Column="1" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="5" Grid.Column="2" Text="{Binding GateDisplay}" Margin="4,2" FontSize="11"/>
-
-                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Sync" VerticalAlignment="Center"/>
-                            <Slider Grid.Row="6" Grid.Column="1" Minimum="-200" Maximum="200" Value="{Binding ManualOffsetMs, Mode=TwoWay}" Margin="6,2"/>
-                            <TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding OffsetDisplay}" Margin="4,2" FontSize="11"/>
+                            <TextBlock Grid.Column="0" Text="Trim start (ms)" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                            <TextBox Grid.Column="1" Text="{Binding TrimStartMs, Mode=TwoWay}" Margin="4,0,10,0"/>
+                            <TextBlock Grid.Column="2" Text="end (ms, blank = to end)" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                            <TextBox Grid.Column="3" Text="{Binding TrimEndText, Mode=TwoWay}" Margin="4,0,0,0"/>
                         </Grid>
+                        <Button Content="Open mixing" Click="OpenMixing_Click" HorizontalAlignment="Left" Padding="14,6"/>
                     </StackPanel>
-                </Grid>
-            </Expander>
+                </StackPanel>
+            </Border>
         </DataTemplate>
     </Window.Resources>
 
     <DockPanel>
-        <!-- Top bar -->
+        <!-- Top bar (both screens) -->
         <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -115,45 +74,197 @@
             <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedTextBrush}"/>
         </Border>
 
-        <!-- Track panel + Preview panel, dockable left/right (see UI_Design_Spec.md). Dock side
-             of TrackPanelBorder is set in code-behind (ApplyDockSide) rather than fixed here. -->
-        <DockPanel>
-            <Border x:Name="TrackPanelBorder" DockPanel.Dock="Right" Width="360"
-                    Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
-                <DockPanel Margin="10">
-                    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+        <Grid>
+            <!-- ===================== Screen 1: Editor ===================== -->
+            <DockPanel x:Name="EditorScreen">
+                <Border DockPanel.Dock="Right" Width="340"
+                        Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
+                    <DockPanel Margin="10">
+                        <TextBlock DockPanel.Dock="Top" Text="Tracks" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Button x:Name="AddLayerButton" DockPanel.Dock="Bottom" Content="+ Add layer" Click="AddLayerButton_Click" Margin="0,8,0,0"/>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource TrackRowTemplate}"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+
+                <Border Background="{StaticResource WindowBrush}">
+                    <DockPanel Margin="16">
+                        <TextBlock DockPanel.Dock="Top" Text="Preview" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                        <!-- Transport bar -->
+                        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
+                                <Button x:Name="RestartButton" Content="⏮ Restart" Click="RestartButton_Click" Margin="0,0,6,0" Padding="10,5"/>
+                                <Button x:Name="PlayStopButton" Content="▶ Play" Click="PlayStopButton_Click" Padding="10,5" Margin="0,0,6,0"/>
+                                <Button x:Name="ZoomOutButton" Content="Zoom −" Click="ZoomOutButton_Click" Padding="10,5" Margin="0,0,4,0"/>
+                                <Button x:Name="ZoomInButton" Content="Zoom +" Click="ZoomInButton_Click" Padding="10,5"/>
+                            </StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TimeReadoutText" Grid.Column="0" Text="0:00 / 0:00" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
+                                <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="28">
+                                    <Slider x:Name="TimelineSlider" Minimum="0" Maximum="1000" Value="0"
+                                            Width="640"
+                                            PreviewMouseDown="TimelineSlider_PreviewMouseDown"
+                                            PreviewMouseUp="TimelineSlider_PreviewMouseUp"
+                                            ValueChanged="TimelineSlider_ValueChanged"
+                                            VerticalAlignment="Center"/>
+                                </ScrollViewer>
+                            </Grid>
+                        </StackPanel>
+
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="480" PaintSurface="CompositeCanvas_PaintSurface"/>
+                        </Border>
+                    </DockPanel>
+                </Border>
+            </DockPanel>
+
+            <!-- ===================== Screen 2: Mixing ===================== -->
+            <DockPanel x:Name="MixingScreen" Visibility="Collapsed">
+                <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+                    <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Tracks" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <Button x:Name="DockToggleButton" Grid.Column="1" Content="Dock left" Click="DockToggleButton_Click" Padding="8,3"/>
-                    </Grid>
-
-                    <Button x:Name="AddLayerButton" DockPanel.Dock="Bottom" Content="+ Add layer" Click="AddLayerButton_Click" Margin="0,8,0,0"/>
-
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource TrackRowTemplate}"/>
-                    </ScrollViewer>
-                </DockPanel>
-            </Border>
-
-            <Border Background="{StaticResource WindowBrush}">
-                <DockPanel Margin="16">
-                    <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Preview" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <Button x:Name="PreviewPlayButton" Grid.Column="1" Content="Play mix" Click="PreviewPlayButton_Click" Padding="14,5"/>
+                        <Button Grid.Column="0" Content="← Back to editor" Click="BackToEditor_Click" Margin="0,0,16,0"/>
+                        <TextBlock Grid.Column="1" x:Name="MixingHeaderText" Text="Mixing — Layer" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
                     </Grid>
+                </Border>
 
-                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="480" PaintSurface="CompositeCanvas_PaintSurface"/>
-                    </Border>
-                </DockPanel>
-            </Border>
-        </DockPanel>
+                <!-- Top strip: pan / mute / solo / studio gain, apply regardless of subtab. -->
+                <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="16,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <StackPanel x:Name="MixingTopStripPanel" Orientation="Horizontal">
+                        <CheckBox Content="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                        <CheckBox Content="Solo" IsChecked="{Binding Solo, Mode=TwoWay}" Margin="0,0,24,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="Gain" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <Slider Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}" Width="120" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding GainDisplay}" VerticalAlignment="Center" Margin="4,0,24,0" FontSize="11"/>
+                        <TextBlock Text="Pan" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <Slider Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Width="120" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding PanDisplay}" VerticalAlignment="Center" Margin="4,0,0,0" FontSize="11"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Subtab selector -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,10,16,0">
+                    <Button x:Name="LimiterTabButton" Content="Limiter" Click="SubtabButton_Click" Padding="14,6" Margin="0,0,4,0"/>
+                    <Button x:Name="CompressorTabButton" Content="Compressor" Click="SubtabButton_Click" Padding="14,6" Margin="0,0,4,0"/>
+                    <Button x:Name="NoiseGateTabButton" Content="Noise gate" Click="SubtabButton_Click" Padding="14,6" Margin="0,0,4,0"/>
+                    <Button x:Name="EqTabButton" Content="EQ" Click="SubtabButton_Click" Padding="14,6" Margin="0,0,4,0"/>
+                    <Button x:Name="MelodyneTabButton" Content="Melodyne" Click="SubtabButton_Click" Padding="14,6"/>
+                </StackPanel>
+
+                <Border Background="{StaticResource WindowBrush}" Margin="16">
+                    <Grid x:Name="MixingContentGrid">
+                        <!-- Limiter -->
+                        <StackPanel x:Name="LimiterPanel" Margin="16">
+                            <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
+                                <Grid>
+                                    <Line X1="10" Y1="20" X2="610" Y2="20" Stroke="{StaticResource AccentBrush}" StrokeThickness="2" StrokeDashArray="4,2" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="0,10,0,0"/>
+                                    <TextBlock Text="Ceiling" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="10,26,0,0" VerticalAlignment="Top"/>
+                                    <Path Data="M10,100 L60,100 L90,30 L120,100 L200,100 L230,20 L260,100 L400,100 L430,15 L460,100 L610,100"
+                                          Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,0,10,0"/>
+                                </Grid>
+                            </Border>
+                            <CheckBox Content="Enabled" IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Margin="0,0,0,10"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Ceiling" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-12" Maximum="0" Value="{Binding LimiterCeilingDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LimiterCeilingDisplay}" FontSize="11" Margin="4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Gain" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="1" Grid.Column="1" Minimum="-12" Maximum="24" Value="{Binding LimiterGainDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding LimiterGainDisplay}" FontSize="11" Margin="4"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Compressor -->
+                        <StackPanel x:Name="CompressorPanel" Margin="16" Visibility="Collapsed">
+                            <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
+                                <Path Data="M10,100 L300,60 L610,10" Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,10,10,10"/>
+                            </Border>
+                            <CheckBox Content="Enabled" IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Margin="0,0,0,10"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-60" Maximum="0" Value="{Binding CompressorThresholdDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding CompressorThresholdDisplay}" FontSize="11" Margin="4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Ratio" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="1" Grid.Column="1" Minimum="1" Maximum="20" Value="{Binding CompressorRatio, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding CompressorRatioDisplay}" FontSize="11" Margin="4"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Noise gate -->
+                        <StackPanel x:Name="NoiseGatePanel" Margin="16" Visibility="Collapsed">
+                            <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
+                                <Path Data="M10,100 L200,100 L230,20 L400,20 L430,100 L610,100" Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,10,10,10"/>
+                            </Border>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GateDisplay}" FontSize="11" Margin="4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="1" Grid.Column="1" Minimum="10" Maximum="500" Value="{Binding NoiseGateReleaseMs, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding GateReleaseDisplay}" FontSize="11" Margin="4"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- EQ -->
+                        <StackPanel x:Name="EqPanel" Margin="16" Visibility="Collapsed">
+                            <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
+                                <Path Data="M10,60 C150,60 150,20 300,20 C450,20 450,90 610,90" Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,10,10,10"/>
+                            </Border>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Low" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LowEqDisplay}" FontSize="11" Margin="4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Mid" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="1" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding MidEqDisplay}" FontSize="11" Margin="4"/>
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="High" VerticalAlignment="Center"/>
+                                <Slider Grid.Row="2" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Margin="8,4"/>
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding HighEqDisplay}" FontSize="11" Margin="4"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Melodyne -->
+                        <StackPanel x:Name="MelodynePanel" Margin="16" Visibility="Collapsed">
+                            <TextBlock Text="Pitch correction" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                            <ComboBox SelectedIndex="{Binding PitchBackendIndex, Mode=TwoWay}" Margin="0,2,0,10" Width="220" HorizontalAlignment="Left">
+                                <ComboBoxItem Content="None"/>
+                                <ComboBoxItem Content="Native automatic"/>
+                                <ComboBoxItem Content="Melodyne manual"/>
+                            </ComboBox>
+                            <Button Content="Edit in Melodyne..." Click="EditMelodyne_Click"
+                                    Visibility="{Binding ShowMelodyneButton, Converter={StaticResource BoolToVis}}"
+                                    HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"/>
+                            <TextBlock Text="Selecting Melodyne manual and clicking Edit opens Melodyne's own hosted editor in a separate window (nothing is duplicated here)."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,10,0,0" MaxWidth="400" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </DockPanel>
+        </Grid>
     </DockPanel>
 </Window>
