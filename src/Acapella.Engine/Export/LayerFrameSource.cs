@@ -57,7 +57,9 @@ public class VideoFrameStreamSource : ILayerFrameSource
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
-        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale={width}:{height},fps={fps}");
+        // Letterbox instead of stretching: preserve source aspect ratio, pad the remainder black
+        // (see VideoFrameDecoder for the same fix on the single-frame preview path).
+        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={fps}");
         psi.ArgumentList.Add("-");
 
         _process = Process.Start(psi);

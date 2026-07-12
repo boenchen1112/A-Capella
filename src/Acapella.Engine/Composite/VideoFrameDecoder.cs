@@ -21,7 +21,10 @@ public static class VideoFrameDecoder
         psi.ArgumentList.Add("-vframes"); psi.ArgumentList.Add("1");
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
-        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale={width}:{height}");
+        // Plain scale=w:h stretches the source to the cell's aspect ratio, distorting anything
+        // that isn't already that shape (e.g. a 16:9 webcam feed into a non-16:9 cell). Letterbox
+        // instead: scale down preserving aspect ratio, then pad the remainder with black.
+        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black");
         psi.ArgumentList.Add("-");
 
         using var process = Process.Start(psi)!;
