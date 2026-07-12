@@ -49,6 +49,12 @@ public class ExportEngine
             totalRead += n;
         }
 
+        // MixEngine's fixed 1/sqrt(N) headroom scale is a statistical heuristic, not a hard peak
+        // limiter -- correlated layers can still exceed full scale, which the AAC encode would
+        // hard-clip. The full mixdown buffer is available here (unlike live preview), so
+        // peak-normalize as a guarantee.
+        PeakNormalizer.NormalizeIfClipping(mixedSamples);
+
         string tempWavPath = Path.Combine(Path.GetTempPath(), $"acapella-export-audio-{Guid.NewGuid()}.wav");
         WavFileWriter.WriteStereoFloat(tempWavPath, mixedSamples, sampleRate);
 

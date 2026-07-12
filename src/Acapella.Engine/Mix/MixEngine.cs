@@ -26,7 +26,11 @@ public class MixEngine
             mixer.AddMixerInput(BuildLayerChain(layer, anySolo, outputSampleRate));
         }
 
-        return mixer;
+        // MixingSampleProvider just sums its inputs; 2+ vocal layers near full scale would
+        // exceed +-1.0 and hard-clip on the AAC/WAV encode. A fixed 1/sqrt(N) headroom scale is
+        // enough to keep the common case under 0dBFS without needing a full limiter for v1.
+        float headroomGain = layers.Count > 0 ? (float)(1.0 / Math.Sqrt(layers.Count)) : 1f;
+        return new VolumeSampleProvider(mixer) { Volume = headroomGain };
     }
 
     public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)
