@@ -33,19 +33,31 @@ public class LimiterSampleProvider : ISampleProvider
     public int Read(float[] buffer, int offset, int count)
     {
         int read = _source.Read(buffer, offset, count);
+        int channels = _source.WaveFormat.Channels;
 
-        for (int i = 0; i < read; i++)
+        // Stereo-linked envelope (audit B6): processing interleaved L,R,L,R samples with one
+        // envelope state per-sample used to give adjacent samples of different channels different
+        // gains -- stereo image wobble and added distortion, worst with hard panning (this sits
+        // after PanningSampleProvider in the chain). One gain decision per channel-frame, applied
+        // identically to every channel in that frame, keeps the stereo image intact.
+        for (int frameStart = 0; frameStart + channels <= read; frameStart += channels)
         {
-            float sample = buffer[offset + i] * _makeupLinear;
-            float absSample = Math.Abs(sample);
+            float peakAbs = 0f;
+            for (int ch = 0; ch < channels; ch++)
+            {
+                float sample = buffer[offset + frameStart + ch] * _makeupLinear;
+                buffer[offset + frameStart + ch] = sample;
+                peakAbs = Math.Max(peakAbs, Math.Abs(sample));
+            }
 
-            float targetGain = absSample > _ceilingLinear ? _ceilingLinear / absSample : 1f;
+            float targetGain = peakAbs > _ceilingLinear ? _ceilingLinear / peakAbs : 1f;
             _gain = targetGain < _gain
                 ? _attackCoeff * _gain + (1 - _attackCoeff) * targetGain
                 : _releaseCoeff * _gain + (1 - _releaseCoeff) * targetGain;
             _gain = Math.Min(1f, _gain);
 
-            buffer[offset + i] = sample * _gain;
+            for (int ch = 0; ch < channels; ch++)
+                buffer[offset + frameStart + ch] *= _gain;
         }
 
         return read;
