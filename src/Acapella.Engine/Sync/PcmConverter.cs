@@ -14,10 +14,29 @@ public static class PcmConverter
         {
             Buffer.BlockCopy(buffer, 0, samples, 0, bytesRecorded);
         }
-        else if (format.BitsPerSample == 16)
+        else if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 16)
         {
             for (int i = 0; i < sampleCount; i++)
                 samples[i] = BitConverter.ToInt16(buffer, i * 2) / 32768f;
+        }
+        else if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 24)
+        {
+            for (int i = 0; i < sampleCount; i++)
+            {
+                int offset = i * 3;
+                int value = buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
+                if ((value & 0x800000) != 0) value |= unchecked((int)0xFF000000); // sign-extend
+                samples[i] = value / 8388608f;
+            }
+        }
+        else if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 32)
+        {
+            for (int i = 0; i < sampleCount; i++)
+                samples[i] = BitConverter.ToInt32(buffer, i * 4) / 2147483648f;
+        }
+        else
+        {
+            throw new NotSupportedException($"Unsupported capture format: {format.Encoding}, {format.BitsPerSample}-bit.");
         }
 
         return samples;

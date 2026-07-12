@@ -39,8 +39,25 @@ public class LatencyCalibrator
         using var capture = new WasapiCapture(inputDevice);
         var captureFormat = capture.WaveFormat;
 
+        // A fixed 200ms sleep before Play() previously stood in for "capture has actually
+        // started" -- but the capture stream's real t=0 is whenever WASAPI delivers its first
+        // buffer, not whenever StartRecording() returns, and device activation delay plus sleep
+        // timer inaccuracy (~15ms typical) could eat most of the acceptance tolerance. Timestamp
+        // the real relationship instead: the elapsed time at the first DataAvailable callback vs.
+        // the elapsed time right before Play() is called. Bounded with a timeout (not an
+        // unconditional busy-wait) so a device that never raises DataAvailable fails loudly
+        // instead of hanging forever.
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        double? captureStartElapsedMs = null;
+        using var firstBufferSignal = new ManualResetEventSlim(false);
+
         capture.DataAvailable += (s, e) =>
         {
+            if (captureStartElapsedMs is null)
+            {
+                captureStartElapsedMs = stopwatch.Elapsed.TotalMilliseconds;
+                firstBufferSignal.Set();
+            }
             var samples = PcmConverter.BytesToFloatSamples(e.Buffer, e.BytesRecorded, captureFormat);
             captured.AddRange(samples);
         };
@@ -49,7 +66,10 @@ public class LatencyCalibrator
         output.Init(ToneGenerator.ToSampleProvider(click, sampleRate));
 
         capture.StartRecording();
-        Thread.Sleep(200);
+        if (!firstBufferSignal.Wait(TimeSpan.FromSeconds(5)))
+            throw new InvalidOperationException($"Capture device '{loopbackInputDeviceId}' never delivered an audio buffer within 5s.");
+
+        double preRollMs = stopwatch.Elapsed.TotalMilliseconds - captureStartElapsedMs!.Value;
         output.Play();
         Thread.Sleep(2200);
         output.Stop();
@@ -67,9 +87,10 @@ public class LatencyCalibrator
         int maxLagSamples = Math.Min(capturedResampled.Length, sampleRate * 1);
         int offsetSamples = CrossCorrelator.FindOffsetSamples(click, capturedResampled, maxLagSamples);
 
-        // Subtract the deliberate pre-roll (capture started 200ms before playback) to get the
-        // true output-to-input round-trip latency rather than the raw click position.
-        double offsetMs = offsetSamples * 1000.0 / sampleRate - 200.0;
+        // Subtract the measured pre-roll (real elapsed time between capture actually starting
+        // and playback starting) to get the true output-to-input round-trip latency rather than
+        // the raw click position.
+        double offsetMs = offsetSamples * 1000.0 / sampleRate - preRollMs;
         return offsetMs;
     }
 }
