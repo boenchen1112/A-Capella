@@ -25,13 +25,16 @@
                 <RowDefinition/>
                 <RowDefinition/>
                 <RowDefinition/>
+                <RowDefinition/>
             </Grid.RowDefinitions>
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Video In:" Margin="0,2"/>
             <ComboBox Grid.Row="0" Grid.Column="1" x:Name="VideoDeviceCombo" Margin="4,2"/>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="Audio In:" Margin="0,2"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Audio In (calibration/WASAPI):" Margin="0,2"/>
             <ComboBox Grid.Row="1" Grid.Column="1" x:Name="AudioInDeviceCombo" Margin="4,2"/>
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="Audio Out:" Margin="0,2"/>
-            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="AudioOutDeviceCombo" Margin="4,2"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Audio In (recording device):" Margin="0,2"/>
+            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="DshowAudioDeviceCombo" Margin="4,2"/>
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Audio Out:" Margin="0,2"/>
+            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="AudioOutDeviceCombo" Margin="4,2"/>
         </Grid>
         <Button x:Name="RefreshDevicesButton" Content="Refresh Devices" Click="RefreshDevicesButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>
         <Button x:Name="CalibrateButton" Content="Calibrate Latency (uses Audio In as loopback)" Click="CalibrateButton_Click" Margin="0,0,0,4" HorizontalAlignment="Left"/>

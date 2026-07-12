@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private List<AudioDeviceInfo> _renderDevices = new();
     private List<AudioDeviceInfo> _captureDevices = new();
     private List<DshowDeviceInfo> _dshowVideoDevices = new();
+    private List<DshowDeviceInfo> _dshowAudioDevices = new();
     private bool _isLoadingLayerControls;
     private SKBitmap? _compositedFrame;
     private double? _lastCalibratedOffsetMs;
@@ -58,16 +59,19 @@ public partial class MainWindow : Window
             _captureDevices = _deviceCatalog.GetWasapiCaptureDevices();
             var dshow = _deviceCatalog.GetDshowDevices();
             _dshowVideoDevices = dshow.Where(d => d.IsVideo).ToList();
+            _dshowAudioDevices = dshow.Where(d => !d.IsVideo).ToList();
 
             AudioOutDeviceCombo.ItemsSource = _renderDevices.Select(d => d.Name).ToList();
             AudioInDeviceCombo.ItemsSource = _captureDevices.Select(d => d.Name).ToList();
             VideoDeviceCombo.ItemsSource = _dshowVideoDevices.Select(d => d.Name).ToList();
+            DshowAudioDeviceCombo.ItemsSource = _dshowAudioDevices.Select(d => d.Name).ToList();
 
             if (AudioOutDeviceCombo.Items.Count > 0) AudioOutDeviceCombo.SelectedIndex = 0;
             if (AudioInDeviceCombo.Items.Count > 0) AudioInDeviceCombo.SelectedIndex = 0;
             if (VideoDeviceCombo.Items.Count > 0) VideoDeviceCombo.SelectedIndex = 0;
+            if (DshowAudioDeviceCombo.Items.Count > 0) DshowAudioDeviceCombo.SelectedIndex = 0;
 
-            StatusText.Text = $"Found {_renderDevices.Count} output, {_captureDevices.Count} input, {_dshowVideoDevices.Count} video devices.";
+            StatusText.Text = $"Found {_renderDevices.Count} output, {_captureDevices.Count} input, {_dshowVideoDevices.Count} video, {_dshowAudioDevices.Count} dshow audio devices.";
         }
         catch (Exception ex)
         {
@@ -121,7 +125,7 @@ public partial class MainWindow : Window
 
     private void RecordLayerButton_Click(object sender, RoutedEventArgs e)
     {
-        if (VideoDeviceCombo.SelectedIndex < 0 || AudioInDeviceCombo.SelectedIndex < 0)
+        if (VideoDeviceCombo.SelectedIndex < 0 || AudioInDeviceCombo.SelectedIndex < 0 || DshowAudioDeviceCombo.SelectedIndex < 0)
         {
             StatusText.Text = "Select a video and audio input device first.";
             return;
@@ -134,7 +138,13 @@ public partial class MainWindow : Window
         }
 
         var videoDevice = _dshowVideoDevices[VideoDeviceCombo.SelectedIndex];
+        // WASAPI device drives calibration/latency lookup (SettingsService keys by WASAPI
+        // device id); the dshow device is what ffmpeg actually needs to open by name. The two
+        // namespaces frequently use different friendly names for the same physical device (e.g.
+        // "Microphone (Realtek(R) Audio)" vs "Microphone (Realtek High Definition Audio)"), so
+        // passing the WASAPI name to ffmpeg previously failed with "Could not find audio device".
         var audioDevice = _captureDevices[AudioInDeviceCombo.SelectedIndex];
+        var dshowAudioDevice = _dshowAudioDevices[DshowAudioDeviceCombo.SelectedIndex];
         int nextLayerId = _layers.Layers.Count;
         string outputPath = Path.Combine(_mediaDir, $"layer{nextLayerId}.mkv");
 
@@ -155,7 +165,7 @@ public partial class MainWindow : Window
             // Capture starts first, then the guide plays immediately with no added delay (see
             // GuideTrackPlayer / C4 fix) -- the round-trip latency captured here is stored on the
             // new layer below and trimmed from its head at mix/export time instead.
-            _activeCapture.Start(videoDevice.Name, audioDevice.Name, outputPath);
+            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
             _guideTrackPlayer = new GuideTrackPlayer();
             _guideTrackPlayer.Play(outputDevice.Id, guideMix);
 
@@ -163,7 +173,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            _activeCapture.Start(videoDevice.Name, audioDevice.Name, outputPath);
+            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
             StatusText.Text = $"Recording layer {nextLayerId}...";
         }
 
