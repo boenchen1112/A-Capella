@@ -56,7 +56,12 @@ public static class AvSyncAnalyzer
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("gray");
-        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add("scale=64:64");
+        // ffmpeg decodes at the stream's native rate by default, not frameRate -- without
+        // forcing it via -vf fps=, dividing the frame index by a caller-supplied frameRate
+        // (default 30.0) silently miscalculates the flash time for any real capture that isn't
+        // exactly 30fps (29.97/15/variable are all common), which is exactly what this check
+        // exists to verify.
+        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale=64:64,fps={frameRate.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         psi.ArgumentList.Add("-");
 
         using var process = Process.Start(psi)!;
