@@ -2,7 +2,8 @@ using NAudio.Wave;
 
 namespace Acapella.Engine.Mix;
 
-/// <summary>Feeds a fixed mono float[] buffer as an ISampleProvider; loops silently past the end.</summary>
+/// <summary>Feeds a fixed mono float[] buffer as an ISampleProvider, returning 0 once exhausted
+/// (standard ISampleProvider end-of-stream signal) rather than padding with infinite silence.</summary>
 public class ArraySampleProvider : ISampleProvider
 {
     private readonly float[] _samples;
@@ -18,20 +19,13 @@ public class ArraySampleProvider : ISampleProvider
 
     public int Read(float[] buffer, int offset, int count)
     {
-        int written = 0;
-        while (written < count)
-        {
-            if (_position >= _samples.Length)
-            {
-                buffer[offset + written] = 0f;
-            }
-            else
-            {
-                buffer[offset + written] = _samples[_position];
-                _position++;
-            }
-            written++;
-        }
-        return written;
+        int available = _samples.Length - _position;
+        if (available <= 0)
+            return 0;
+
+        int toCopy = Math.Min(available, count);
+        Array.Copy(_samples, _position, buffer, offset, toCopy);
+        _position += toCopy;
+        return toCopy;
     }
 }

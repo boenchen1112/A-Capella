@@ -349,9 +349,23 @@ public partial class MainWindow : Window
             var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
             using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
             var device = enumerator.GetDevice(outputDevice.Id);
-            _previewOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
-            _previewOutput.Init(mix);
-            _previewOutput.Play();
+            var newOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
+            newOutput.Init(mix);
+            // M5: ArraySampleProvider now signals end-of-stream (returns 0) instead of padding
+            // with infinite silence, so preview genuinely finishes -- reset the button/status
+            // when that happens rather than leaving it stuck on "Stop Preview" forever. Guard by
+            // reference identity since Stop()/rebuild can also fire this event for an instance
+            // that's already been superseded.
+            newOutput.PlaybackStopped += (s, e) => Dispatcher.Invoke(() =>
+            {
+                if (!ReferenceEquals(_previewOutput, newOutput)) return;
+                _previewOutput.Dispose();
+                _previewOutput = null;
+                PreviewMixButton.Content = "Preview Mix";
+                StatusText.Text = "Preview finished.";
+            });
+            _previewOutput = newOutput;
+            newOutput.Play();
             PreviewMixButton.Content = "Stop Preview";
             StatusText.Text = $"Previewing mix of {mixInputs.Count} layer(s).";
         }
