@@ -63,6 +63,25 @@ public class SimulatedRealtimeAudioSink : IPreviewAudioSink
     public void Dispose() => Stop();
 }
 
+/// <summary>Counts overlapping Play/Stop calls so a stress test can assert the engine never lets
+/// two sink playbacks run concurrently (audit B1).</summary>
+public class CountingAudioSink : IPreviewAudioSink
+{
+    private int _activeCount;
+    public int MaxObservedConcurrentPlays;
+
+    public void Play(ISampleProvider mix)
+    {
+        int active = Interlocked.Increment(ref _activeCount);
+        int prevMax;
+        do { prevMax = MaxObservedConcurrentPlays; } while (active > prevMax && Interlocked.CompareExchange(ref MaxObservedConcurrentPlays, active, prevMax) != prevMax);
+    }
+
+    public void Stop() => Interlocked.Decrement(ref _activeCount);
+    public void Dispose() => Stop();
+    public int ActiveCount => Volatile.Read(ref _activeCount);
+}
+
 public class PreviewPlaybackEngineTests
 {
     // VideoFrameStreamSource.Dispose() kills the ffmpeg process, but the OS can take a moment to
@@ -264,6 +283,52 @@ public class PreviewPlaybackEngineTests
 
             engine.Stop();
             lock (frameLock) { latest?.Dispose(); }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Regression test for audit B1: MainWindow calls SetLayers/Seek/Play/Stop from
+    /// several different threads (debounced refresh, transport clicks, the engine's own
+    /// frame-loop thread on natural stop). 50 rapid interleaved calls from parallel tasks must not
+    /// throw (no disposed-source race, no null-ref) and must end with the sink never having had
+    /// more than one concurrent Play active.</summary>
+    [Fact]
+    public void ConcurrentSeekSetLayersPlayStop_DoesNotThrowAndNeverDoublePlaysSink()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var sink = new CountingAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink);
+            engine.FrameReady += bmp => bmp.Dispose();
+            engine.SetLayers(layers.Layers);
+
+            var rng = new Random(42);
+            var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(() =>
+            {
+                switch (i % 4)
+                {
+                    case 0: engine.SetLayers(layers.Layers); break;
+                    case 1: engine.Seek(rng.NextDouble() * 1000); break;
+                    case 2: engine.Play(); break;
+                    case 3: engine.Stop(); break;
+                }
+            })).ToArray();
+
+            Exception? thrown = Record.Exception(() => Task.WaitAll(tasks, TimeSpan.FromSeconds(30)));
+            Assert.Null(thrown);
+
+            engine.Stop();
+
+            Assert.True(sink.MaxObservedConcurrentPlays <= 1,
+                $"Expected at most one concurrent sink Play, observed {sink.MaxObservedConcurrentPlays}.");
         }
         finally
         {

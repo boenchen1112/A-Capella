@@ -69,17 +69,13 @@ public class WasapiPreviewAudioSink : IPreviewAudioSink
 /// Audio and video are decoded fresh on every Play/Seek (not continuously re-decoded during
 /// playback) since that mirrors the existing preview-mix rebuild pattern and stays well within
 /// the measured throughput headroom for a discrete transport action.
-/// </summary>
-/// Real-time synced audio+video playback of the composited project, for the Editor screen's
-/// preview transport (UI_Design_Spec v2): Restart / Play-Stop / scrub, updating live as
-/// trim/source/FX change. A throughput spike (see tools/HardwareChecks "previewspike") measured
-/// ~230fps for on-the-fly 4-layer decode+composite at 320x240 cells -- well above the 30fps
-/// playback target -- so this drives VideoFrameStreamSource + Compositor directly per frame
-/// rather than pre-rendering a proxy file.
 ///
-/// Audio and video are decoded fresh on every Play/Seek (not continuously re-decoded during
-/// playback) since that mirrors the existing preview-mix rebuild pattern and stays well within
-/// the measured throughput headroom for a discrete transport action.
+/// All public operations (SetLayers/Play/Stop/Seek) are serialized through a single dedicated
+/// command thread (audit B1): MainWindow calls into this engine from several places --
+/// a debounced live-refresh, transport button clicks, both via Task.Run -- and without
+/// serialization, overlapping calls could interleave a Stop and a Play, dispose frame sources out
+/// from under an in-flight render, or start two audio sinks at once. Routing every call through
+/// one queue makes each operation atomic relative to the others.
 /// </summary>
 public class PreviewPlaybackEngine : IDisposable
 {
@@ -98,6 +94,13 @@ public class PreviewPlaybackEngine : IDisposable
     private Thread? _frameLoopThread;
     private volatile bool _stopRequested;
 
+    // Single-threaded command queue (audit B1): every public operation below enqueues work here
+    // instead of running inline, so SetLayers/Play/Stop/Seek from any caller thread never
+    // interleave. Core methods call each other directly (never via Enqueue) to avoid a command
+    // waiting on itself.
+    private readonly System.Collections.Concurrent.BlockingCollection<Action> _commandQueue = new();
+    private readonly Thread _commandThread;
+
     public event Action<SKBitmap>? FrameReady;
     public event Action? PlaybackStopped;
 
@@ -114,12 +117,38 @@ public class PreviewPlaybackEngine : IDisposable
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
         _audioSink = audioSink ?? new WasapiPreviewAudioSink();
+
+        _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
+        _commandThread.Start();
+    }
+
+    private void RunCommandLoop()
+    {
+        foreach (var command in _commandQueue.GetConsumingEnumerable())
+            command();
+    }
+
+    private void Enqueue(Action action)
+    {
+        using var done = new ManualResetEventSlim(false);
+        Exception? error = null;
+        _commandQueue.Add(() =>
+        {
+            try { action(); }
+            catch (Exception ex) { error = ex; }
+            finally { done.Set(); }
+        });
+        done.Wait();
+        if (error is not null)
+            throw new AggregateException(error);
     }
 
     /// <summary>Rebinds the layer set this engine plays. Callers should call this whenever
     /// sources/trim/FX change, then Seek(PositionMs) to refresh the visible frame at the same
     /// spot (the caller decides whether that also means "keep playing").</summary>
-    public void SetLayers(IReadOnlyList<LayerModel> layers)
+    public void SetLayers(IReadOnlyList<LayerModel> layers) => Enqueue(() => SetLayersCore(layers));
+
+    private void SetLayersCore(IReadOnlyList<LayerModel> layers)
     {
         _layers = layers.ToList();
         DurationMs = ComputeDurationMs();
@@ -150,7 +179,9 @@ public class PreviewPlaybackEngine : IDisposable
         return shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
     }
 
-    public void Play()
+    public void Play() => Enqueue(PlayCore);
+
+    private void PlayCore()
     {
         if (IsPlaying || _layers.Count == 0) return;
         StartFrameSources(PositionMs);
@@ -286,7 +317,9 @@ public class PreviewPlaybackEngine : IDisposable
         return tracked;
     }
 
-    public void Stop()
+    public void Stop() => Enqueue(StopCore);
+
+    private void StopCore()
     {
         _stopRequested = true;
         _frameLoopThread?.Join(2000);
@@ -311,18 +344,21 @@ public class PreviewPlaybackEngine : IDisposable
 
     /// <summary>Seeks to positionMs. If currently playing, restarts playback from the new
     /// position; if paused, renders a single static composited frame at that position so
-    /// scrubbing while stopped still updates the preview.</summary>
-    public void Seek(double positionMs)
+    /// scrubbing while stopped still updates the preview. Atomic relative to concurrent
+    /// Play/Stop/SetLayers calls (audit B1) since it runs entirely on the command thread.</summary>
+    public void Seek(double positionMs) => Enqueue(() => SeekCore(positionMs));
+
+    private void SeekCore(double positionMs)
     {
         positionMs = Math.Clamp(positionMs, 0, DurationMs);
         bool wasPlaying = IsPlaying;
-        if (IsPlaying) Stop();
+        if (IsPlaying) StopCore();
 
         PositionMs = positionMs;
 
         if (wasPlaying)
         {
-            Play();
+            PlayCore();
         }
         else if (_layers.Count > 0)
         {
@@ -335,6 +371,8 @@ public class PreviewPlaybackEngine : IDisposable
     public void Dispose()
     {
         Stop();
+        _commandQueue.CompleteAdding();
+        _commandThread.Join();
         _audioSink.Dispose();
     }
 }
