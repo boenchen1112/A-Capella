@@ -9,7 +9,8 @@ public enum PitchBackendSelection
 
 /// <summary>
 /// Per-layer mix parameters, held in memory for the session (full save/load is Phase 5).
-/// Fixed processing order applied by MixEngine: pitch correction -> noise gate -> EQ -> pan -> gain.
+/// Fixed processing order applied by MixEngine:
+/// pitch correction -> noise gate -> compressor -> EQ -> pan -> gain -> limiter.
 /// </summary>
 public class LayerMixParameters
 {
@@ -26,6 +27,14 @@ public class LayerMixParameters
 
     public float NoiseGateThresholdDb { get; set; } = -60f;
     public float NoiseGateReleaseMs { get; set; } = 100f;
+
+    public bool CompressorEnabled { get; set; } = false;
+    public float CompressorThresholdDb { get; set; } = -18f;
+    public float CompressorRatio { get; set; } = 2f;
+
+    public bool LimiterEnabled { get; set; } = false;
+    public float LimiterCeilingDb { get; set; } = -0.3f;
+    public float LimiterGainDb { get; set; } = 0f;
 
     public PitchBackendSelection PitchBackend { get; set; } = PitchBackendSelection.None;
 }

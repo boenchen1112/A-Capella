@@ -30,6 +30,12 @@ public class LayerDto
     public string SourcePath { get; set; } = "";
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
+
+    /// <summary>Trim in/out points (ms from the start of the source), added for UI_Design_Spec v2's
+    /// Editor-screen trim control. Null TrimEndMs means "to the end of the source".</summary>
+    public double TrimStartMs { get; set; }
+    public double? TrimEndMs { get; set; }
+
     public string? AraArchiveKey { get; set; }
     public MixParametersDto MixParameters { get; set; } = new();
 }
@@ -45,5 +51,11 @@ public class MixParametersDto
     public float HighShelfGainDb { get; set; }
     public float NoiseGateThresholdDb { get; set; } = -60f;
     public float NoiseGateReleaseMs { get; set; } = 100f;
+    public bool CompressorEnabled { get; set; }
+    public float CompressorThresholdDb { get; set; } = -18f;
+    public float CompressorRatio { get; set; } = 2f;
+    public bool LimiterEnabled { get; set; }
+    public float LimiterCeilingDb { get; set; } = -0.3f;
+    public float LimiterGainDb { get; set; }
     public string PitchBackend { get; set; } = "None";
 }

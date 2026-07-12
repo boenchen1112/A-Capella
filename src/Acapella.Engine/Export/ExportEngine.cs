@@ -28,7 +28,9 @@ public class ExportEngine
 
         var decodedAudio = layers.Layers.ToDictionary(
             l => l.LayerId,
-            l => AudioShiftHelper.ApplyShift(Mix.AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate, _ffmpegPath), l.GetShiftMs(), sampleRate));
+            l => AudioShiftHelper.ApplyShift(
+                TrimHelper.ApplyTrim(Mix.AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
+                l.GetShiftMs(), sampleRate));
 
         int maxSamples = decodedAudio.Values.Max(a => a.Length);
         if (maxSamples == 0)
@@ -111,7 +113,7 @@ public class ExportEngine
         if (layer.Kind == LayerKind.UploadedAudioOnly)
             return new StaticFrameSource(PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight));
 
-        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, layer.GetShiftMs(), _ffmpegPath);
+        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, layer.GetShiftMs(), _ffmpegPath, layer.TrimStartMs, layer.TrimEndMs);
     }
 
     private static void WriteBitmapPixels(Stream stdin, SKBitmap bitmap, byte[] buffer)

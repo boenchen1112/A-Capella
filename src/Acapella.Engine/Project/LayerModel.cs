@@ -17,6 +17,13 @@ public class LayerModel
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 
+    /// <summary>Trim in/out points, in ms from the start of SourcePath -- independent of sync
+    /// (GetShiftMs): trim defines which portion of the source plays, sync shifts it in time
+    /// relative to the other layers. Added for UI_Design_Spec v2's Editor-screen trim control.
+    /// Null TrimEndMs means "play to the end of the source".</summary>
+    public double TrimStartMs { get; set; }
+    public double? TrimEndMs { get; set; }
+
     /// <summary>Grid cell this layer occupies (per the Data Model Rule: layout id + per-layer cell
     /// index, not hardcoded positions). Defaults to recording order, matching Layout2x2Provider.</summary>
     public int CellIndex { get; set; }

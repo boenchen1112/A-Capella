@@ -29,8 +29,11 @@ public class VideoFrameStreamSource : ILayerFrameSource
     /// LayerModel.GetShiftMs): negative skips ahead into the layer's own footage (-ss before
     /// -i), positive holds the initial placeholder frame for the equivalent number of frames
     /// before decoding starts, so video stays aligned with its own layer's shifted audio.
+    /// trimStartMs/trimEndMs mirror LayerModel.TrimStartMs/TrimEndMs (TrimHelper's audio
+    /// equivalent): trimStartMs adds to the -ss skip, trimEndMs bounds playback via -t so the
+    /// source exhausts (and freezes on its last frame, per GetNextFrame) at the trim-out point.
     /// </summary>
-    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg")
+    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg", double trimStartMs = 0, double? trimEndMs = null)
     {
         _width = width;
         _height = height;
@@ -48,13 +51,20 @@ public class VideoFrameStreamSource : ILayerFrameSource
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        if (shiftMs < 0)
+
+        double skipSeconds = trimStartMs / 1000.0 + (shiftMs < 0 ? -shiftMs / 1000.0 : 0);
+        if (skipSeconds > 0)
         {
-            double skipSeconds = -shiftMs / 1000.0;
             psi.ArgumentList.Add("-ss");
             psi.ArgumentList.Add(skipSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
+        if (trimEndMs is double trimEnd)
+        {
+            double durationSeconds = Math.Max(0, trimEnd - trimStartMs) / 1000.0;
+            psi.ArgumentList.Add("-t");
+            psi.ArgumentList.Add(durationSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
         // Letterbox instead of stretching: preserve source aspect ratio, pad the remainder black

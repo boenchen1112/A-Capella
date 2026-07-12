@@ -57,6 +57,8 @@ public class ProjectPersistenceService
         SourcePath = layer.SourcePath,
         CalibratedOffsetMs = layer.CalibratedOffsetMs,
         ManualOffsetMs = layer.ManualOffsetMs,
+        TrimStartMs = layer.TrimStartMs,
+        TrimEndMs = layer.TrimEndMs,
         AraArchiveKey = layer.AraArchiveKey,
         MixParameters = ToMixParametersDto(layer.MixParameters),
     };
@@ -70,6 +72,8 @@ public class ProjectPersistenceService
             SourcePath = dto.SourcePath,
             CalibratedOffsetMs = dto.CalibratedOffsetMs,
             ManualOffsetMs = dto.ManualOffsetMs,
+            TrimStartMs = dto.TrimStartMs,
+            TrimEndMs = dto.TrimEndMs,
             CellIndex = dto.CellIndex,
             AraArchiveKey = dto.AraArchiveKey,
         };
@@ -88,6 +92,12 @@ public class ProjectPersistenceService
         HighShelfGainDb = p.HighShelfGainDb,
         NoiseGateThresholdDb = p.NoiseGateThresholdDb,
         NoiseGateReleaseMs = p.NoiseGateReleaseMs,
+        CompressorEnabled = p.CompressorEnabled,
+        CompressorThresholdDb = p.CompressorThresholdDb,
+        CompressorRatio = p.CompressorRatio,
+        LimiterEnabled = p.LimiterEnabled,
+        LimiterCeilingDb = p.LimiterCeilingDb,
+        LimiterGainDb = p.LimiterGainDb,
         PitchBackend = p.PitchBackend.ToString(),
     };
 
@@ -102,6 +112,12 @@ public class ProjectPersistenceService
         target.HighShelfGainDb = dto.HighShelfGainDb;
         target.NoiseGateThresholdDb = dto.NoiseGateThresholdDb;
         target.NoiseGateReleaseMs = dto.NoiseGateReleaseMs;
+        target.CompressorEnabled = dto.CompressorEnabled;
+        target.CompressorThresholdDb = dto.CompressorThresholdDb;
+        target.CompressorRatio = dto.CompressorRatio;
+        target.LimiterEnabled = dto.LimiterEnabled;
+        target.LimiterCeilingDb = dto.LimiterCeilingDb;
+        target.LimiterGainDb = dto.LimiterGainDb;
         target.PitchBackend = Enum.Parse<PitchBackendSelection>(dto.PitchBackend);
     }
 }

@@ -47,13 +47,20 @@ public class MixEngine
             chain = new WdlResamplingSampleProvider(chain, outputSampleRate);
 
         chain = new NoiseGateSampleProvider(chain, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs);
+
+        if (parameters.CompressorEnabled)
+            chain = new CompressorSampleProvider(chain, parameters.CompressorThresholdDb, parameters.CompressorRatio);
+
         chain = new ThreeBandEqSampleProvider(chain, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb);
 
         var panned = new PanningSampleProvider(chain) { Pan = parameters.Pan };
 
         bool effectiveMute = parameters.Mute || (anySolo && !parameters.Solo);
         float linearGain = effectiveMute ? 0f : DbToLinear(parameters.GainDb);
-        var withGain = new VolumeSampleProvider(panned) { Volume = linearGain };
+        ISampleProvider withGain = new VolumeSampleProvider(panned) { Volume = linearGain };
+
+        if (parameters.LimiterEnabled)
+            withGain = new LimiterSampleProvider(withGain, parameters.LimiterCeilingDb, parameters.LimiterGainDb);
 
         return withGain;
     }

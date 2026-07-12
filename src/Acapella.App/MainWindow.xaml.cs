@@ -188,7 +188,9 @@ public partial class MainWindow : Window
             {
                 const int sampleRate = 44100;
                 var mixInputs = layersSnapshot
-                    .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
+                    .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(
+                        TrimHelper.ApplyTrim(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.TrimStartMs, l.TrimEndMs, sampleRate),
+                        l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
                     .ToList();
 
                 var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
