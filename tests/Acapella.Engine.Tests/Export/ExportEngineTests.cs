@@ -102,4 +102,80 @@ public class ExportEngineTests
                 Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    /// <summary>
+    /// Regression test for a real color-channel-swap bug: Compositor created its output bitmap
+    /// with the platform default color type (Bgra8888 on Windows), then ExportEngine piped those
+    /// raw bytes into ffmpeg declared as rgba -- every exported frame had red and blue swapped.
+    /// GetPixel-based assertions are color-type-aware and cannot catch this; this test decodes the
+    /// actual exported raw bytes to prove the byte order on disk is correct.
+    /// </summary>
+    [Fact]
+    public void Export_SolidRedFixture_OutputFrameIsRedDominant()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-export-color-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string video = Path.Combine(tempDir, "red.mp4");
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            RunFfmpeg("-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=10:d=1",
+                      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1",
+                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", video);
+
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video);
+
+            var exportEngine = new ExportEngine();
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100);
+
+            byte[] frameBytes = DecodeFirstRawFrame(outputPath, 64, 64);
+
+            // The single layer occupies only the top-left quadrant (2x2 grid layout with 1
+            // layer); sample a pixel inside that cell rather than averaging the whole frame,
+            // which is otherwise mostly black background.
+            int width = 64;
+            int x = 16, y = 16;
+            int pixelIndex = (y * width + x) * 4;
+            byte r = frameBytes[pixelIndex];
+            byte g = frameBytes[pixelIndex + 1];
+            byte b = frameBytes[pixelIndex + 2];
+
+            Assert.True(r > 150, $"Expected red-dominant pixel, got r={r}, g={g}, b={b}");
+            Assert.True(r > b + 50, $"Red should dominate blue, got r={r}, b={b}");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static byte[] DecodeFirstRawFrame(string mediaPath, int width, int height)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
+        psi.ArgumentList.Add("-vframes"); psi.ArgumentList.Add("1");
+        psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
+        psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
+        psi.ArgumentList.Add("-");
+
+        using var process = Process.Start(psi)!;
+        using var ms = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(ms);
+        process.WaitForExit();
+
+        var bytes = ms.ToArray();
+        int expectedSize = width * height * 4;
+        Assert.True(bytes.Length >= expectedSize, "Failed to decode a raw frame from exported output.");
+        return bytes[..expectedSize];
+    }
 }

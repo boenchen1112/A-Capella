@@ -12,7 +12,7 @@ public static class Compositor
 {
     public static SKBitmap Composite(int canvasWidth, int canvasHeight, IReadOnlyList<SKBitmap> frames, IReadOnlyList<SKRect> cellRects)
     {
-        var output = new SKBitmap(canvasWidth, canvasHeight);
+        var output = new SKBitmap(new SKImageInfo(canvasWidth, canvasHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul));
         using var canvas = new SKCanvas(output);
         canvas.Clear(SKColors.Black);
 
