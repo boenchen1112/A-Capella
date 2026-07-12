@@ -67,56 +67,44 @@ else
     Console.WriteLine($"Audio transient at {audioT:F3}s, video flash at {videoT:F3}s, offset {avOffsetMs:F1} ms -> {(Math.Abs(avOffsetMs) < 50 ? "PASS" : "FAIL")}");
 }
 
-Console.WriteLine("\n--- Check 4: Guide-track delayed playback accuracy (drives cross-layer ±20ms alignment) ---");
+Console.WriteLine("\n--- Check 4: Guide-track playback starts promptly with no added delay ---");
 {
+    // GuideTrackPlayer.Play() no longer sleeps before starting playback (see C4 fix): adding a
+    // delay here made cross-layer misalignment worse, since the performer's own round-trip
+    // output+input latency already delays what lands in the recording. The round-trip is instead
+    // captured as CalibratedOffsetMs and trimmed from the recorded layer's head at mix/export
+    // time (LayerModel.GetShiftMs / AudioShiftHelper) -- not simulated here. This check just
+    // verifies onset is prompt (bounded by normal WasapiOut init + I/O latency), which guards
+    // against a delay creeping back in.
     const int sampleRate = 44100;
 
-    // Differential measurement: fixed overhead (WasapiOut.Init, output pipeline latency) is
-    // identical for both runs, so comparing onset(delay) - onset(0) isolates the accuracy of
-    // GuideTrackPlayer's Sleep-based delay itself, which is the thing this check needs to
-    // verify -- an absolute onset time also bakes in Init/pipeline latency that has nothing to
-    // do with whether the requested delay was applied correctly.
-    double MeasureOnsetMs(double delayMs)
+    using var enumerator = new MMDeviceEnumerator();
+    var loopback = enumerator.GetDevice(loopbackDevice.Id);
+    var captured = new List<float>();
+    using var capture = new WasapiCapture(loopback);
+    var captureFormat = capture.WaveFormat;
+    capture.DataAvailable += (s, e) =>
     {
-        using var enumerator = new MMDeviceEnumerator();
-        var loopback = enumerator.GetDevice(loopbackDevice.Id);
-        var captured = new List<float>();
-        using var capture = new WasapiCapture(loopback);
-        var captureFormat = capture.WaveFormat;
-        capture.DataAvailable += (s, e) =>
-        {
-            var samples = PcmConverter.BytesToFloatSamples(e.Buffer, e.BytesRecorded, captureFormat);
-            captured.AddRange(samples);
-        };
+        var samples = PcmConverter.BytesToFloatSamples(e.Buffer, e.BytesRecorded, captureFormat);
+        captured.AddRange(samples);
+    };
 
-        var click = ToneGenerator.GenerateClick(sampleRate);
-        var guideAudio = ToneGenerator.ToSampleProvider(click, sampleRate);
+    var click = ToneGenerator.GenerateClick(sampleRate);
+    var guideAudio = ToneGenerator.ToSampleProvider(click, sampleRate);
 
-        using var guidePlayer = new GuideTrackPlayer();
-        capture.StartRecording();
-        guidePlayer.PlayDelayed(outputDevice.Id, guideAudio, delayMs);
-        Thread.Sleep(1500);
-        capture.StopRecording();
-        Thread.Sleep(100);
+    using var guidePlayer = new GuideTrackPlayer();
+    capture.StartRecording();
+    guidePlayer.Play(outputDevice.Id, guideAudio);
+    Thread.Sleep(1500);
+    capture.StopRecording();
+    Thread.Sleep(100);
 
-        var mono = PcmConverter.DownmixToMono(captured.ToArray(), captureFormat.Channels);
-        var resampled = PcmConverter.Resample(mono, captureFormat.SampleRate, sampleRate);
-        int maxLagSamples = Math.Min(resampled.Length, sampleRate * 2);
-        int onsetSample = CrossCorrelator.FindOffsetSamples(click, resampled, maxLagSamples);
-        return onsetSample * 1000.0 / sampleRate;
-    }
-
-    double requestedDelayMs = offset2; // reuse the calibrated offset from Check 1
-    double baselineOnsetMs = MeasureOnsetMs(0);
-    double delayedOnsetMs = MeasureOnsetMs(requestedDelayMs);
-    double appliedDelayMs = delayedOnsetMs - baselineOnsetMs;
-    double error = Math.Abs(appliedDelayMs - requestedDelayMs);
-    // This differential compares onsets from two separate loopback captures, each carrying its
-    // own independent ~20ms WASAPI buffer-quantization jitter (see Check 1), so up to ~40ms of
-    // combined noise is expected here even when the delay mechanism is exactly correct. The
-    // real ±20ms acceptance bar (build plan Phase 1) applies to a single recorded layer's
-    // alignment against its guide, not this two-run differential proxy.
-    Console.WriteLine($"Baseline onset: {baselineOnsetMs:F1} ms, delayed onset: {delayedOnsetMs:F1} ms, applied delay: {appliedDelayMs:F1} ms (requested {requestedDelayMs:F1} ms), error: {error:F1} ms -> {(error < 50 ? "PASS" : "FAIL")}");
+    var mono = PcmConverter.DownmixToMono(captured.ToArray(), captureFormat.Channels);
+    var resampled = PcmConverter.Resample(mono, captureFormat.SampleRate, sampleRate);
+    int maxLagSamples = Math.Min(resampled.Length, sampleRate * 2);
+    int onsetSample = CrossCorrelator.FindOffsetSamples(click, resampled, maxLagSamples);
+    double onsetMs = onsetSample * 1000.0 / sampleRate;
+    Console.WriteLine($"Guide onset: {onsetMs:F1} ms (no delay requested) -> {(onsetMs < 500 ? "PASS" : "FAIL")}");
 }
 
 Console.WriteLine("\n--- Check 5: Metronome isolation from recording pipeline (structural) ---");

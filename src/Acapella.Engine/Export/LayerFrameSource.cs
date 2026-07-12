@@ -22,13 +22,23 @@ public class VideoFrameStreamSource : ILayerFrameSource
     private readonly int _height;
     private SKBitmap _lastFrame;
     private bool _exhausted;
+    private int _framesToHold;
 
-    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, string ffmpegPath = "ffmpeg")
+    /// <summary>
+    /// shiftMs mirrors the same sync shift applied to this layer's audio (see
+    /// LayerModel.GetShiftMs): negative skips ahead into the layer's own footage (-ss before
+    /// -i), positive holds the initial placeholder frame for the equivalent number of frames
+    /// before decoding starts, so video stays aligned with its own layer's shifted audio.
+    /// </summary>
+    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg")
     {
         _width = width;
         _height = height;
         _frameBuffer = new byte[width * height * 4];
         _lastFrame = CreateSolidFrame(width, height, SKColors.Black);
+
+        if (shiftMs > 0)
+            _framesToHold = (int)Math.Round(shiftMs / 1000.0 * fps);
 
         var psi = new ProcessStartInfo
         {
@@ -38,6 +48,12 @@ public class VideoFrameStreamSource : ILayerFrameSource
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+        if (shiftMs < 0)
+        {
+            double skipSeconds = -shiftMs / 1000.0;
+            psi.ArgumentList.Add("-ss");
+            psi.ArgumentList.Add(skipSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
@@ -54,6 +70,12 @@ public class VideoFrameStreamSource : ILayerFrameSource
 
     public SKBitmap GetNextFrame()
     {
+        if (_framesToHold > 0)
+        {
+            _framesToHold--;
+            return _lastFrame;
+        }
+
         if (!_exhausted && _stdout is not null)
         {
             int totalRead = 0;

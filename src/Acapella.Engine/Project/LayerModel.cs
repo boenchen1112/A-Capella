@@ -27,6 +27,11 @@ public class LayerModel
     public string? AraArchiveKey { get; set; }
 
     public LayerMixParameters MixParameters { get; } = new();
+
+    /// <summary>Total sync shift to apply at mix/preview/export time. Positive delays this
+    /// layer's audio/video (padding/holding); negative trims from its head (calibration removes
+    /// recording round-trip latency, manual is a signed user nudge on top of that).</summary>
+    public double GetShiftMs() => ManualOffsetMs - CalibratedOffsetMs;
 }
 
 public class LayerCollection

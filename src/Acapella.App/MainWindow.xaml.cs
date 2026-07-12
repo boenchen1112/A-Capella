@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private WasapiOut? _metronomeOutput;
     private WasapiOut? _previewOutput;
     private FfmpegCaptureSession? _activeCapture;
+    private GuideTrackPlayer? _guideTrackPlayer;
     private List<AudioDeviceInfo> _renderDevices = new();
     private List<AudioDeviceInfo> _captureDevices = new();
     private List<DshowDeviceInfo> _dshowVideoDevices = new();
@@ -138,25 +139,36 @@ public partial class MainWindow : Window
         string outputPath = Path.Combine(_mediaDir, $"layer{nextLayerId}.mkv");
 
         _activeCapture = new FfmpegCaptureSession();
+        double calibratedOffsetMs = 0;
 
         if (nextLayerId > 0 && AudioOutDeviceCombo.SelectedIndex >= 0)
         {
             var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-            double? offsetMs = _settingsService.GetLatencyOffsetMs(audioDevice.Id, outputDevice.Id);
-            StatusText.Text = $"Recording layer {nextLayerId} with guide track (offset {offsetMs ?? 0:F1}ms)...";
-            // Guide-track playback of prior layers is driven from the layer's stored source
-            // audio via GuideTrackPlayer at composite/mix time in later phases; Phase 1 wires
-            // the offset lookup so it's available, without a full mixed-guide signal yet since
-            // there's no mixing engine before Phase 3.
+            calibratedOffsetMs = _settingsService.GetLatencyOffsetMs(audioDevice.Id, outputDevice.Id) ?? 0;
+
+            const int sampleRate = 44100;
+            var mixInputs = _layers.Layers
+                .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
+                .ToList();
+            var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
+
+            // Capture starts first, then the guide plays immediately with no added delay (see
+            // GuideTrackPlayer / C4 fix) -- the round-trip latency captured here is stored on the
+            // new layer below and trimmed from its head at mix/export time instead.
+            _activeCapture.Start(videoDevice.Name, audioDevice.Name, outputPath);
+            _guideTrackPlayer = new GuideTrackPlayer();
+            _guideTrackPlayer.Play(outputDevice.Id, guideMix);
+
+            StatusText.Text = $"Recording layer {nextLayerId} with guide track (offset {calibratedOffsetMs:F1}ms)...";
         }
         else
         {
+            _activeCapture.Start(videoDevice.Name, audioDevice.Name, outputPath);
             StatusText.Text = $"Recording layer {nextLayerId}...";
         }
 
-        _activeCapture.Start(videoDevice.Name, audioDevice.Name, outputPath);
-
         var layer = _layers.Add(LayerKind.RecordedAV, outputPath);
+        layer.CalibratedOffsetMs = calibratedOffsetMs;
         RefreshLayersList();
     }
 
@@ -165,6 +177,9 @@ public partial class MainWindow : Window
         _activeCapture?.Stop();
         _activeCapture?.Dispose();
         _activeCapture = null;
+        _guideTrackPlayer?.Stop();
+        _guideTrackPlayer?.Dispose();
+        _guideTrackPlayer = null;
         StatusText.Text = "Recording stopped.";
     }
 
@@ -284,7 +299,7 @@ public partial class MainWindow : Window
         {
             const int sampleRate = 44100;
             var mixInputs = _layers.Layers
-                .Select(l => new MixLayerInput(l.LayerId, AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), sampleRate, l.MixParameters))
+                .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
                 .ToList();
 
             var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
