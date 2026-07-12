@@ -104,17 +104,10 @@ public partial class MainWindow : Window
 
     private void MetronomeToggle_Changed(object sender, RoutedEventArgs e)
     {
+        // Locked scope: metronome is audible only during recording, not from toggle-on until app
+        // exit. This just arms/disarms it; actual playback starts/stops with the active capture
+        // in RecordLayerButton_Click / StopRecordButton_Click.
         _metronome.Enabled = MetronomeToggle.IsChecked == true;
-
-        if (_metronome.Enabled && _metronomeOutput is null && AudioOutDeviceCombo.SelectedIndex >= 0)
-        {
-            var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-            using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
-            var device = enumerator.GetDevice(outputDevice.Id);
-            _metronomeOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
-            _metronomeOutput.Init(_metronome);
-            _metronomeOutput.Play();
-        }
     }
 
     private void BpmTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -180,6 +173,16 @@ public partial class MainWindow : Window
         var layer = _layers.Add(LayerKind.RecordedAV, outputPath);
         layer.CalibratedOffsetMs = calibratedOffsetMs;
         RefreshLayersList();
+
+        if (_metronome.Enabled && AudioOutDeviceCombo.SelectedIndex >= 0)
+        {
+            var metronomeOutputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
+            using var metronomeEnumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+            var metronomeDevice = metronomeEnumerator.GetDevice(metronomeOutputDevice.Id);
+            _metronomeOutput = new WasapiOut(metronomeDevice, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
+            _metronomeOutput.Init(_metronome);
+            _metronomeOutput.Play();
+        }
     }
 
     private void StopRecordButton_Click(object sender, RoutedEventArgs e)
@@ -190,6 +193,9 @@ public partial class MainWindow : Window
         _guideTrackPlayer?.Stop();
         _guideTrackPlayer?.Dispose();
         _guideTrackPlayer = null;
+        _metronomeOutput?.Stop();
+        _metronomeOutput?.Dispose();
+        _metronomeOutput = null;
         StatusText.Text = "Recording stopped.";
     }
 
