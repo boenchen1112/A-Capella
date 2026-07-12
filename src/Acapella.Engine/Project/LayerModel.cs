@@ -39,6 +39,16 @@ public class LayerModel
     /// layer's audio/video (padding/holding); negative trims from its head (calibration removes
     /// recording round-trip latency, manual is a signed user nudge on top of that).</summary>
     public double GetShiftMs() => ManualOffsetMs - CalibratedOffsetMs;
+
+    /// <summary>A key that uniquely determines this layer's exact post-trim/shift decoded audio
+    /// content, for caches keyed on "has the input actually changed" (e.g. PitchCorrectionCache,
+    /// audit B3). Two calls return the same key iff the source file is unchanged (by mtime) and
+    /// trim/shift are unchanged.</summary>
+    public string SourceCacheKey()
+    {
+        long mtimeTicks = File.Exists(SourcePath) ? File.GetLastWriteTimeUtc(SourcePath).Ticks : 0;
+        return $"{SourcePath}|{mtimeTicks}|{TrimStartMs}|{TrimEndMs}|{GetShiftMs()}";
+    }
 }
 
 public class LayerCollection

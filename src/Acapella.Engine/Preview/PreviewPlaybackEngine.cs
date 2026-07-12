@@ -302,7 +302,7 @@ public class PreviewPlaybackEngine : IDisposable
         var mixInputs = _layers
             .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(
                 TrimHelper.ApplyTrim(AudioDecodeCache.GetOrDecode(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
-                l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
+                l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters, l.SourceCacheKey()))
             .ToList();
 
         var mix = _mixEngine.BuildMix(mixInputs, sampleRate);

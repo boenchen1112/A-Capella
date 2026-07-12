@@ -4,7 +4,10 @@ using NAudio.Wave.SampleProviders;
 
 namespace Acapella.Engine.Mix;
 
-public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerMixParameters Parameters);
+/// <summary>SourceKey, if provided, must uniquely determine Samples' exact content (e.g. source
+/// path + mtime + trim + shift) -- it's used to cache automatic pitch correction across rebuilds
+/// (audit B3). Null disables that cache (correction always runs fresh).</summary>
+public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerMixParameters Parameters, string? SourceKey = null);
 
 /// <summary>
 /// Builds the live mixed preview: for each layer, applies the fixed chain
@@ -38,7 +41,7 @@ public class MixEngine
         var parameters = layer.Parameters;
 
         float[] processedSamples = parameters.PitchBackend == PitchBackendSelection.Automatic2B
-            ? AutomaticBackend.Correct(layer.Samples, layer.SampleRate)
+            ? PitchCorrectionCache.GetOrCorrect(AutomaticBackend, layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate)
             : layer.Samples;
 
         ISampleProvider chain = new ArraySampleProvider(processedSamples, layer.SampleRate);

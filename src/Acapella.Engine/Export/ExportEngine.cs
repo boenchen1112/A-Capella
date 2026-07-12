@@ -47,7 +47,7 @@ public class ExportEngine
             throw new InvalidOperationException("No decodable media found in any layer.");
 
         var mixInputs = layers.Layers
-            .Select(l => new MixLayerInput(l.LayerId, decodedAudio[l.LayerId], sampleRate, l.MixParameters))
+            .Select(l => new MixLayerInput(l.LayerId, decodedAudio[l.LayerId], sampleRate, l.MixParameters, l.SourceCacheKey()))
             .ToList();
         var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
 
