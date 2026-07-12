@@ -57,6 +57,12 @@ public class RecentStderrBuffer
     private readonly Queue<string> _lines;
     private readonly int _maxLines;
 
+    /// <summary>Signaled the first time a line looks like ffmpeg's default per-frame progress
+    /// output ("frame=    1 fps=..."), i.e. capture has actually started producing frames -- not
+    /// just that the process launched (audit B4: dshow device init takes 0.5-2s after the process
+    /// starts, so "process launched" and "capture started" are different moments).</summary>
+    public ManualResetEventSlim CaptureStarted { get; } = new(false);
+
     public RecentStderrBuffer(int maxLines)
     {
         _maxLines = maxLines;
@@ -71,6 +77,9 @@ public class RecentStderrBuffer
             while (_lines.Count > _maxLines)
                 _lines.Dequeue();
         }
+
+        if (!CaptureStarted.IsSet && line.TrimStart().StartsWith("frame=", StringComparison.OrdinalIgnoreCase))
+            CaptureStarted.Set();
     }
 
     public string[] GetLines()

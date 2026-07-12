@@ -24,6 +24,15 @@ public class FfmpegCaptureSession : IDisposable
     /// too full / frame dropped" warnings -- available after Stop() for surfacing diagnostics.</summary>
     public string[] GetRecentStderrLines() => _stderrTail?.GetLines() ?? Array.Empty<string>();
 
+    /// <summary>Blocks until ffmpeg's stderr shows the first per-frame progress line (capture is
+    /// actually producing frames), or the timeout elapses. dshow device init after Start()
+    /// returns takes 0.5-2s and is variable (audit B4); a caller that starts guide-track playback
+    /// immediately after Start() returns -- rather than after this -- has the recorded file's t=0
+    /// begin at an unmeasured, variable time after the guide already started, breaking cross-layer
+    /// sync alignment differently every take. Returns false (caller should proceed anyway rather
+    /// than hang indefinitely) if no progress line appears before the timeout.</summary>
+    public bool WaitForCaptureStarted(TimeSpan timeout) => _stderrTail?.CaptureStarted.Wait(timeout) ?? false;
+
     public void Start(string videoDeviceName, string audioDeviceName, string outputPath)
     {
         if (IsRunning)

@@ -140,6 +140,7 @@ public partial class RecordSetupWindow : Window
 
         _activeCapture = new FfmpegCaptureSession();
         double calibratedOffsetMs = 0;
+        _pendingGuideReferenceMono = null;
 
         if (nextLayerId > 0)
         {
@@ -156,10 +157,21 @@ public partial class RecordSetupWindow : Window
                 .ToList();
             var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
 
-            // C4: capture starts first, guide plays immediately with zero added delay; the
-            // round-trip latency is stored on the new layer and trimmed from its head at
-            // mix/preview/export time instead (see LayerModel.GetShiftMs).
+            // A second, independent provider graph built from the same mixInputs (BuildMix's
+            // ArraySampleProvider reads don't mutate the underlying float[] arrays, so this is
+            // safe to render separately without disturbing the one actually being played) so
+            // StopRecording can cross-correlate the just-recorded mic audio against exactly what
+            // the singer heard, without consuming the live playback stream (audit B4's post-take
+            // fallback).
+            _pendingGuideReferenceMono = RenderMonoReference(_mixEngine.BuildMix(mixInputs, sampleRate));
+
+            // C4: capture starts first so the guide is never delayed by it; but the guide must
+            // not start until dshow capture is actually producing frames (audit B4) -- otherwise
+            // the recorded file's t=0 begins at an unmeasured, variable point (0.5-2s, dshow
+            // device init) after the guide already started, and CalibratedOffsetMs (measured over
+            // a WASAPI Stereo-Mix loopback, a different path) can't account for that.
             _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
+            _activeCapture.WaitForCaptureStarted(TimeSpan.FromSeconds(3));
             _guideTrackPlayer = new GuideTrackPlayer();
             _guideTrackPlayer.Play(_outputDevice.Id, guideMix);
 
@@ -194,6 +206,74 @@ public partial class RecordSetupWindow : Window
     private int _pendingLayerId;
     private string _pendingOutputPath = "";
     private double _pendingCalibratedOffsetMs;
+    private float[]? _pendingGuideReferenceMono;
+
+    private static float[] RenderMonoReference(NAudio.Wave.ISampleProvider stereoMix)
+    {
+        // Read in even-sized (frame-aligned) chunks so every chunk holds whole L/R pairs.
+        var mono = new List<float>();
+        var chunk = new float[8192];
+        int n;
+        while ((n = stereoMix.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            int pairCount = n / 2;
+            for (int i = 0; i < pairCount; i++)
+                mono.Add((chunk[i * 2] + chunk[i * 2 + 1]) / 2f);
+        }
+        return mono.ToArray();
+    }
+
+    /// <summary>Audit B4's post-take fallback: refine the settings-based CalibratedOffsetMs by
+    /// cross-correlating the just-recorded mic audio against the guide track it was played
+    /// against. Catches whatever the wait-for-first-frame fix (RecordButton_Click) didn't fully
+    /// account for -- but only trusts the result when the correlation confidence clears a
+    /// threshold, since a headphone-wearing singer's mic picks up no guide bleed at all and would
+    /// otherwise correlate on noise.</summary>
+    private double MeasureCalibratedOffsetMs(string recordedPath, double fallbackOffsetMs)
+    {
+        if (_pendingGuideReferenceMono is null || _pendingGuideReferenceMono.Length == 0)
+            return fallbackOffsetMs;
+
+        const int sampleRate = 44100;
+        float[] recordedMono;
+        try
+        {
+            recordedMono = AudioDecoder.DecodeToMonoFloat(recordedPath, sampleRate);
+        }
+        catch
+        {
+            return fallbackOffsetMs;
+        }
+        if (recordedMono.Length == 0)
+            return fallbackOffsetMs;
+
+        // Decimate before searching: latency estimation doesn't need sample-accurate resolution
+        // (~1ms is plenty), and a naive full-resolution correlation over several seconds of audio
+        // at a multi-second lag search would turn this post-recording step into a multi-second
+        // UI-blocking stall.
+        const int decimateFactor = 44; // ~1kHz effective rate at a 44.1kHz source.
+        const int windowSeconds = 5;
+        var reference = Decimate(_pendingGuideReferenceMono, sampleRate, decimateFactor, windowSeconds);
+        var signal = Decimate(recordedMono, sampleRate, decimateFactor, windowSeconds);
+        int maxLagDecimated = 2 * sampleRate / decimateFactor; // +-2s of round-trip latency headroom.
+
+        var (lagDecimated, confidence) = CrossCorrelator.FindOffsetSamplesWithConfidence(reference, signal, maxLagDecimated);
+
+        const double confidenceThreshold = 0.2;
+        if (confidence < confidenceThreshold)
+            return fallbackOffsetMs;
+
+        return lagDecimated * decimateFactor * 1000.0 / sampleRate;
+    }
+
+    private static float[] Decimate(float[] samples, int sampleRate, int decimateFactor, int windowSeconds)
+    {
+        int limit = Math.Min(samples.Length, windowSeconds * sampleRate);
+        var result = new float[limit / decimateFactor];
+        for (int i = 0; i < result.Length; i++)
+            result[i] = samples[i * decimateFactor];
+        return result;
+    }
 
     private void StopRecording()
     {
@@ -224,7 +304,7 @@ public partial class RecordSetupWindow : Window
         }
 
         var layer = _layers.Add(LayerKind.RecordedAV, _pendingOutputPath);
-        layer.CalibratedOffsetMs = _pendingCalibratedOffsetMs;
+        layer.CalibratedOffsetMs = MeasureCalibratedOffsetMs(_pendingOutputPath, _pendingCalibratedOffsetMs);
         CreatedLayer = layer;
         DialogResult = true;
         Close();
