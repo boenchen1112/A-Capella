@@ -26,7 +26,10 @@ public partial class MainWindow : Window
     private readonly LatencyCalibrator _calibrator;
     private readonly MetronomeEngine _metronome = new();
     private readonly LayerCollection _layers = new();
-    private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "media");
+    // L1: previously climbed 5 fixed ".." hops assuming bin/Debug/net8.0-windows depth, which
+    // breaks the moment the app runs from anywhere else. A directory next to the executable works
+    // regardless of how/where the app is launched.
+    private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
     private readonly MixEngine _mixEngine = new();
     private readonly ProjectPersistenceService _projectPersistence = new();
@@ -113,7 +116,7 @@ public partial class MainWindow : Window
 
     private void BpmTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
-        if (double.TryParse(BpmTextBox.Text, out double bpm))
+        if (double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm))
             _metronome.Bpm = bpm;
     }
 
@@ -355,47 +358,69 @@ public partial class MainWindow : Window
         StartOrRebuildPreviewMix();
     }
 
+    // L8: decode + pitch correction for every layer ran synchronously on the UI thread on every
+    // preview (re)build, which M3 made frequent (every slider tick while playing) -- seconds-long
+    // freezes. Moved to a background task; a generation counter discards a stale rebuild's result
+    // if a newer one (e.g. from a fast slider drag) has already superseded it.
+    private int _previewMixGeneration;
+
     private void StartOrRebuildPreviewMix()
     {
-        try
+        int generation = ++_previewMixGeneration;
+        var layersSnapshot = _layers.Layers.ToList();
+        StatusText.Text = "Building preview mix...";
+
+        Task.Run(() =>
         {
-            const int sampleRate = 44100;
-            var mixInputs = _layers.Layers
-                .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
-                .ToList();
-
-            var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
-
-            _previewOutput?.Stop();
-            _previewOutput?.Dispose();
-
-            var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
-            using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
-            var device = enumerator.GetDevice(outputDevice.Id);
-            var newOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
-            newOutput.Init(mix);
-            // M5: ArraySampleProvider now signals end-of-stream (returns 0) instead of padding
-            // with infinite silence, so preview genuinely finishes -- reset the button/status
-            // when that happens rather than leaving it stuck on "Stop Preview" forever. Guard by
-            // reference identity since Stop()/rebuild can also fire this event for an instance
-            // that's already been superseded.
-            newOutput.PlaybackStopped += (s, e) => Dispatcher.Invoke(() =>
+            try
             {
-                if (!ReferenceEquals(_previewOutput, newOutput)) return;
-                _previewOutput.Dispose();
-                _previewOutput = null;
-                PreviewMixButton.Content = "Preview Mix";
-                StatusText.Text = "Preview finished.";
-            });
-            _previewOutput = newOutput;
-            newOutput.Play();
-            PreviewMixButton.Content = "Stop Preview";
-            StatusText.Text = $"Previewing mix of {mixInputs.Count} layer(s).";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Preview failed: {ex.Message}";
-        }
+                const int sampleRate = 44100;
+                var mixInputs = layersSnapshot
+                    .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
+                    .ToList();
+
+                var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (generation != _previewMixGeneration) return; // superseded by a newer rebuild
+
+                    _previewOutput?.Stop();
+                    _previewOutput?.Dispose();
+
+                    var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
+                    using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+                    var device = enumerator.GetDevice(outputDevice.Id);
+                    var newOutput = new WasapiOut(device, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
+                    newOutput.Init(mix);
+                    // M5: ArraySampleProvider now signals end-of-stream (returns 0) instead of
+                    // padding with infinite silence, so preview genuinely finishes -- reset the
+                    // button/status when that happens rather than leaving it stuck on "Stop
+                    // Preview" forever. Guard by reference identity since Stop()/rebuild can also
+                    // fire this event for an instance that's already been superseded.
+                    newOutput.PlaybackStopped += (s, e) => Dispatcher.Invoke(() =>
+                    {
+                        if (!ReferenceEquals(_previewOutput, newOutput)) return;
+                        _previewOutput.Dispose();
+                        _previewOutput = null;
+                        PreviewMixButton.Content = "Preview Mix";
+                        StatusText.Text = "Preview finished.";
+                    });
+                    _previewOutput = newOutput;
+                    newOutput.Play();
+                    PreviewMixButton.Content = "Stop Preview";
+                    StatusText.Text = $"Previewing mix of {mixInputs.Count} layer(s).";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (generation != _previewMixGeneration) return;
+                    StatusText.Text = $"Preview failed: {ex.Message}";
+                });
+            }
+        });
     }
 
     private void CompositePreviewButton_Click(object sender, RoutedEventArgs e)
@@ -406,30 +431,53 @@ public partial class MainWindow : Window
             return;
         }
 
-        try
+        // L8: decoding one frame per layer spawns up to 4 ffmpeg processes synchronously on the
+        // UI thread, freezing it for the duration. Move the decode+composite work to a background
+        // thread and only touch UI state (bitmap swap, InvalidateVisual, status text) back on the
+        // dispatcher.
+        CompositePreviewButton.IsEnabled = false;
+        StatusText.Text = "Compositing preview...";
+        var layersSnapshot = _layers.Layers.ToList();
+
+        Task.Run(() =>
         {
             const int cellWidth = 240;
             const int cellHeight = 180;
             const int canvasWidth = cellWidth * 2;
             const int canvasHeight = cellHeight * 2;
 
-            var frames = _layers.Layers
+            var frames = layersSnapshot
                 .Select(l => l.Kind == LayerKind.UploadedAudioOnly
                     ? PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight)
                     : VideoFrameDecoder.DecodeFirstFrame(l.SourcePath, cellWidth, cellHeight) ?? PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight))
                 .ToList();
 
-            var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
-            _compositedFrame?.Dispose();
-            _compositedFrame = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
+            try
+            {
+                var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+                var composited = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
 
-            CompositeCanvas.InvalidateVisual();
-            StatusText.Text = $"Composited preview of {frames.Count} layer(s).";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Composite preview failed: {ex.Message}";
-        }
+                Dispatcher.Invoke(() =>
+                {
+                    // L2: the per-layer decoded frame bitmaps were never disposed after
+                    // compositing into the output bitmap -- a leak on every click.
+                    _compositedFrame?.Dispose();
+                    _compositedFrame = composited;
+                    CompositeCanvas.InvalidateVisual();
+                    StatusText.Text = $"Composited preview of {frames.Count} layer(s).";
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => StatusText.Text = $"Composite preview failed: {ex.Message}");
+            }
+            finally
+            {
+                foreach (var frame in frames)
+                    frame.Dispose();
+                Dispatcher.Invoke(() => CompositePreviewButton.IsEnabled = true);
+            }
+        });
     }
 
     private void CompositeCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
@@ -447,10 +495,17 @@ public partial class MainWindow : Window
 
         try
         {
-            double.TryParse(BpmTextBox.Text, out double bpm);
+            double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm);
             var dto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
-            _projectPersistence.SaveToFile(dto, dialog.FileName);
-            StatusText.Text = $"Project saved: {Path.GetFileName(dialog.FileName)}";
+            // L7: DefaultExt=".acapella.json" (a multi-segment extension) doesn't reliably stop
+            // SaveFileDialog from appending it again when the user already typed an extension,
+            // producing "name.acapella.json.acapella.json". Enforce the suffix explicitly instead
+            // of relying on the dialog's own extension logic.
+            string filePath = dialog.FileName.EndsWith(".acapella.json", StringComparison.OrdinalIgnoreCase)
+                ? dialog.FileName
+                : dialog.FileName + ".acapella.json";
+            _projectPersistence.SaveToFile(dto, filePath);
+            StatusText.Text = $"Project saved: {Path.GetFileName(filePath)}";
         }
         catch (Exception ex)
         {
@@ -470,7 +525,7 @@ public partial class MainWindow : Window
 
             _layers.Restore(loadedLayers.Layers);
             _lastCalibratedOffsetMs = latencyOffset;
-            BpmTextBox.Text = bpm.ToString("F0");
+            BpmTextBox.Text = bpm.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
             _metronome.Bpm = bpm;
 
             RefreshLayersList();
@@ -501,7 +556,7 @@ public partial class MainWindow : Window
         // race with only the Export button disabled to (incompletely) discourage it. Snapshot via
         // a DTO round-trip (already used for project save/load, so it's already a proven deep
         // copy) and export that snapshot instead of the live, still-editable state.
-        double.TryParse(BpmTextBox.Text, out double bpm);
+        double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm);
         var snapshotDto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
         var (snapshotLayers, _, _) = _projectPersistence.FromDto(snapshotDto);
 

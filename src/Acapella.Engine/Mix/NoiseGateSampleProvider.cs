@@ -33,6 +33,8 @@ public class NoiseGateSampleProvider : ISampleProvider
             float absSample = Math.Abs(sample);
 
             // Simple envelope follower
+            // TODO(polish): 0.99 decay is sample-rate dependent and attack is instant -- flagged
+            // for the [human] mix check-in if the gate sounds off, not fixed now (v1 acceptable).
             _envelope = absSample > _envelope ? absSample : _envelope * 0.99f;
 
             float targetGain = _envelope >= _thresholdLinear ? 1f : 0f;

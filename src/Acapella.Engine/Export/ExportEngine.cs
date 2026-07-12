@@ -76,11 +76,15 @@ public class ExportEngine
                 var stdin = encodeProcess.StandardInput.BaseStream;
                 FfmpegProcessUtil.DrainStderrInBackground(encodeProcess);
 
+                // L3: hoisted out of the per-frame loop -- every composited frame is the same
+                // fixed size, so there's no need to allocate a new byte[] on every iteration.
+                var pixelBuffer = new byte[width * height * 4];
+
                 for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++)
                 {
                     var frames = frameSources.Select(s => s.GetNextFrame()).ToList();
                     using var composite = Compositor.Composite(width, height, frames, cellRects);
-                    WriteBitmapPixels(stdin, composite);
+                    WriteBitmapPixels(stdin, composite, pixelBuffer);
                 }
 
                 stdin.Close();
@@ -110,11 +114,17 @@ public class ExportEngine
         return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, layer.GetShiftMs(), _ffmpegPath);
     }
 
-    private static void WriteBitmapPixels(Stream stdin, SKBitmap bitmap)
+    private static void WriteBitmapPixels(Stream stdin, SKBitmap bitmap, byte[] buffer)
     {
+        // L3: the raw copy assumes rows are tightly packed (RowBytes == width*4); true today for
+        // every Rgba8888 bitmap this pipeline creates, but assert it so that assumption is
+        // explicit instead of silently corrupting frames if that ever changes.
+        int expectedRowBytes = bitmap.Width * 4;
+        if (bitmap.RowBytes != expectedRowBytes)
+            throw new InvalidOperationException($"Expected tightly packed Rgba8888 rows ({expectedRowBytes} bytes), got RowBytes={bitmap.RowBytes}.");
+
         var pixels = bitmap.GetPixels();
         int byteCount = bitmap.ByteCount;
-        var buffer = new byte[byteCount];
         System.Runtime.InteropServices.Marshal.Copy(pixels, buffer, 0, byteCount);
         stdin.Write(buffer, 0, byteCount);
     }
