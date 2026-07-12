@@ -17,17 +17,32 @@ public interface IPreviewAudioSink : IDisposable
 {
     void Play(ISampleProvider mix);
     void Stop();
+
+    /// <summary>True if this sink actually pulls samples from the stream passed to Play() at
+    /// real-time pace (a real audio device, or a test sink that simulates one). When true, a
+    /// PositionTrackingSampleProvider wrapped around that stream reports genuine elapsed audio
+    /// time and PreviewPlaybackEngine slaves its frame clock to it (audit A2). Defaults to false
+    /// so a no-op fake (nothing ever pulls the stream) falls back to a wall-clock stopwatch
+    /// instead of a position that would never advance.</summary>
+    bool DrivesRealtime => false;
 }
 
 /// <summary>Default sink: the system's default render device via WasapiOut.</summary>
 public class WasapiPreviewAudioSink : IPreviewAudioSink
 {
     private WasapiOut? _output;
+    private readonly string? _deviceId;
+
+    public WasapiPreviewAudioSink(string? deviceId = null) => _deviceId = deviceId;
+
+    public bool DrivesRealtime => true;
 
     public void Play(ISampleProvider mix)
     {
         using var enumerator = new MMDeviceEnumerator();
-        var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        var device = _deviceId is not null
+            ? enumerator.GetDevice(_deviceId)
+            : enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         _output = new WasapiOut(device, AudioClientShareMode.Shared, false, 50);
         _output.Init(mix);
         _output.Play();
@@ -139,50 +154,83 @@ public class PreviewPlaybackEngine : IDisposable
     {
         if (IsPlaying || _layers.Count == 0) return;
         StartFrameSources(PositionMs);
-        StartAudio(PositionMs);
+
+        var sources = _frameSources!;
+        // Prime every source's first frame before starting audio/clock (audit A2): decoding the
+        // first frame of 4 freshly spawned ffmpeg processes can take hundreds of ms, and starting
+        // the clock first meant the video was already behind by that amount before frame 1 of the
+        // catch-up loop even ran.
+        var lastFrames = new SKBitmap[sources.Count];
+        var consumedFrames = new int[sources.Count];
+        for (int i = 0; i < sources.Count; i++)
+        {
+            lastFrames[i] = sources[i].GetNextFrame();
+            consumedFrames[i] = 1;
+        }
+        RenderComposite(lastFrames);
+
+        double startPositionMs = PositionMs;
+        var positionTracker = StartAudio(startPositionMs);
+        bool useAudioClock = _audioSink.DrivesRealtime;
 
         IsPlaying = true;
         _stopRequested = false;
-        double startPositionMs = PositionMs;
         var clock = System.Diagnostics.Stopwatch.StartNew();
 
-        _frameLoopThread = new Thread(() => FrameLoop(clock, startPositionMs)) { IsBackground = true };
+        _frameLoopThread = new Thread(() => FrameLoop(clock, positionTracker, useAudioClock, startPositionMs, sources, lastFrames, consumedFrames)) { IsBackground = true };
         _frameLoopThread.Start();
     }
 
-    private void FrameLoop(System.Diagnostics.Stopwatch clock, double startPositionMs)
+    /// <summary>Chases a target frame index derived from the playback clock rather than assuming
+    /// one loop iteration equals one frame (audit A1): any iteration slower than one frame
+    /// interval (slow ffmpeg pipe read, UI marshaling, GC) used to permanently push video behind
+    /// audio since nothing ever caught video back up. Here, each pass pulls (and discards) frames
+    /// until the per-source consumed count reaches the clock-derived target, rendering only the
+    /// last frame pulled -- so a slow iteration drops frames instead of falling behind forever.
+    /// When a source is already caught up (or ahead, e.g. a shorter/frozen layer), no frame is
+    /// pulled that pass and its last-known frame is reused.</summary>
+    private void FrameLoop(System.Diagnostics.Stopwatch clock, PositionTrackingSampleProvider? positionTracker, bool useAudioClock, double startPositionMs, IReadOnlyList<ILayerFrameSource> sources, SKBitmap[] lastFrames, int[] consumedFrames)
     {
-        var sources = _frameSources!;
-        double frameIntervalMs = 1000.0 / _fps;
-
         while (!_stopRequested)
         {
-            double elapsed = clock.Elapsed.TotalMilliseconds;
-            PositionMs = startPositionMs + elapsed;
+            double elapsedMs = useAudioClock && positionTracker is not null
+                ? positionTracker.PositionMs
+                : clock.Elapsed.TotalMilliseconds;
+            PositionMs = Math.Min(startPositionMs + elapsedMs, DurationMs);
+            int targetFrameIndex = (int)(elapsedMs / 1000.0 * _fps);
 
-            if (PositionMs >= DurationMs)
+            for (int i = 0; i < sources.Count; i++)
             {
-                PositionMs = DurationMs;
-                RenderCurrentFrame(sources);
-                break;
+                while (consumedFrames[i] <= targetFrameIndex)
+                {
+                    lastFrames[i] = sources[i].GetNextFrame();
+                    consumedFrames[i]++;
+                }
             }
 
-            RenderCurrentFrame(sources);
+            RenderComposite(lastFrames);
 
-            double nextFrameAt = elapsed + frameIntervalMs;
-            int sleepMs = (int)(nextFrameAt - clock.Elapsed.TotalMilliseconds);
-            if (sleepMs > 0) Thread.Sleep(sleepMs);
+            if (PositionMs >= DurationMs) break;
+
+            // Pacing comes from the clock-derived target frame index above, not sleep precision --
+            // this tick just bounds CPU spin while waiting for the next frame boundary.
+            Thread.Sleep(5);
         }
 
         StopInternal(raiseStoppedEvent: true);
     }
 
-    private void RenderCurrentFrame(IReadOnlyList<ILayerFrameSource> sources)
+    private void RenderComposite(IReadOnlyList<SKBitmap> frames)
     {
-        var frames = sources.Select(s => s.GetNextFrame()).ToList();
         var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, frames.Count);
         var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects);
         FrameReady?.Invoke(composited);
+    }
+
+    private void RenderCurrentFrame(IReadOnlyList<ILayerFrameSource> sources)
+    {
+        var frames = sources.Select(s => s.GetNextFrame()).ToList();
+        RenderComposite(frames);
     }
 
     private void StartFrameSources(double positionMs)
@@ -217,7 +265,7 @@ public class PreviewPlaybackEngine : IDisposable
         return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, _fps, residualHoldMs, _ffmpegPath, effectiveTrimStart, layer.TrimEndMs);
     }
 
-    private void StartAudio(double positionMs)
+    private PositionTrackingSampleProvider StartAudio(double positionMs)
     {
         const int sampleRate = 44100;
         var mixInputs = _layers
@@ -231,7 +279,11 @@ public class PreviewPlaybackEngine : IDisposable
             ? new OffsetSampleProvider(mix) { SkipOver = TimeSpan.FromMilliseconds(positionMs) }
             : mix;
 
-        _audioSink.Play(seeked);
+        // Wraps the post-seek stream so samples actually pulled by the sink count from zero at
+        // this playback's start position -- FrameLoop adds startPositionMs back on top (audit A2).
+        var tracked = new PositionTrackingSampleProvider(seeked);
+        _audioSink.Play(tracked);
+        return tracked;
     }
 
     public void Stop()

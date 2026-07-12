@@ -15,6 +15,54 @@ public class FakeAudioSink : IPreviewAudioSink
     public void Dispose() { }
 }
 
+/// <summary>Simulates a real audio device by pulling the stream on a background thread at
+/// real-time pace (based on WaveFormat sample rate), without touching real hardware. This lets
+/// PositionTrackingSampleProvider report genuine elapsed-audio-time, so drift tests actually
+/// exercise the audio-as-master-clock path (audit A1/A2) rather than a stopwatch fallback.</summary>
+public class SimulatedRealtimeAudioSink : IPreviewAudioSink
+{
+    private readonly float[] _buffer = new float[4096];
+    private Thread? _pullThread;
+    private volatile bool _stop;
+
+    public bool DrivesRealtime => true;
+
+    public void Play(ISampleProvider mix)
+    {
+        _stop = false;
+        _pullThread = new Thread(() => PullLoop(mix)) { IsBackground = true };
+        _pullThread.Start();
+    }
+
+    private void PullLoop(ISampleProvider mix)
+    {
+        int sampleRate = mix.WaveFormat.SampleRate;
+        int channels = mix.WaveFormat.Channels;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        long framesPulled = 0;
+
+        while (!_stop)
+        {
+            int read = mix.Read(_buffer, 0, _buffer.Length);
+            if (read == 0) break;
+            framesPulled += read / channels;
+
+            double targetElapsedMs = framesPulled * 1000.0 / sampleRate;
+            double sleepMs = targetElapsedMs - clock.Elapsed.TotalMilliseconds;
+            if (sleepMs > 0) Thread.Sleep((int)sleepMs);
+        }
+    }
+
+    public void Stop()
+    {
+        _stop = true;
+        _pullThread?.Join(2000);
+        _pullThread = null;
+    }
+
+    public void Dispose() => Stop();
+}
+
 public class PreviewPlaybackEngineTests
 {
     // VideoFrameStreamSource.Dispose() kills the ffmpeg process, but the OS can take a moment to
@@ -126,6 +174,96 @@ public class PreviewPlaybackEngineTests
             Assert.True(previewPixel.Blue > 150, $"Expected preview frame at position 0 to show late (blue) content, got {previewPixel}.");
             Assert.Equal(exportPixel.Red, previewPixel.Red);
             Assert.Equal(exportPixel.Blue, previewPixel.Blue);
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Fixture whose frame color encodes its own timestamp (red channel = (T*50) mod
+    /// 256), so a rendered frame's pixel value can be converted back to "what timestamp is this
+    /// frame showing" and compared against the audio-clock position it should be synced to
+    /// (audit A1 drift test).</summary>
+    private static (string path, string tempDir) CreateTimestampEncodedFixtureClip(int durationSeconds)
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-preview-drift-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string path = Path.Combine(tempDir, "layer.mp4");
+
+        RunFfmpeg("-y", "-f", "lavfi", "-i", $"color=c=black:s=64x64:r=30:d={durationSeconds}",
+                  "-f", "lavfi", "-i", $"sine=frequency=440:sample_rate=44100:duration={durationSeconds}",
+                  "-vf", "geq=r='mod(T*50\\,256)':g=0:b=0",
+                  "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", path);
+
+        return (path, tempDir);
+    }
+
+    private static double ExpectedRedForMs(double positionMs) => (positionMs / 1000.0 * 50.0) % 256.0;
+
+    private const int DriftToleranceRed = 20; // ~2 frames (at 10fps, 200ms) of encoded red drift.
+
+    private static void AssertFrameNearPosition(PreviewPlaybackEngine engine, Func<SKBitmap?> getLatestFrame, object frameLock, double targetMs)
+    {
+        var timeout = System.Diagnostics.Stopwatch.StartNew();
+        while (engine.PositionMs < targetMs && timeout.Elapsed < TimeSpan.FromSeconds(10))
+            Thread.Sleep(5);
+
+        Assert.True(engine.PositionMs >= targetMs, $"Playback never reached position {targetMs}ms (stuck at {engine.PositionMs}ms).");
+
+        byte actualRed;
+        lock (frameLock)
+        {
+            var frame = getLatestFrame() ?? throw new InvalidOperationException("No frame received yet.");
+            actualRed = frame.GetPixel(32, 32).Red;
+        }
+
+        double expectedRed = ExpectedRedForMs(targetMs);
+        double delta = Math.Min(Math.Abs(actualRed - expectedRed), 256 - Math.Abs(actualRed - expectedRed));
+        Assert.True(delta <= DriftToleranceRed,
+            $"At target {targetMs}ms, expected encoded red ~{expectedRed:F1} but frame showed {actualRed} (actual engine position {engine.PositionMs:F0}ms).");
+    }
+
+    /// <summary>Regression test for audit A1/A2 (the reported "video does not match audio, audio
+    /// ends first" bug): with a real-time-pulling audio sink driving the position clock, the
+    /// rendered video frame must stay within ~2 frames of the audio-derived playback position at
+    /// both t~1s and t~4s, and again immediately after a mid-playback seek.</summary>
+    [Fact]
+    public void Play_VideoStaysWithinTwoFramesOfAudioPosition_AtOneAndFourSecondsAndAfterSeek()
+    {
+        int fps = 10;
+        var (path, tempDir) = CreateTimestampEncodedFixtureClip(durationSeconds: 5);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            using var sink = new SimulatedRealtimeAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: fps, audioSink: sink);
+            engine.SetLayers(layers.Layers);
+
+            object frameLock = new();
+            SKBitmap? latest = null;
+            engine.FrameReady += frame =>
+            {
+                lock (frameLock)
+                {
+                    latest?.Dispose();
+                    latest = frame;
+                }
+            };
+
+            engine.Play();
+
+            AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 1000);
+            AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 4000);
+
+            engine.Seek(2000);
+            AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 3000);
+
+            engine.Stop();
+            lock (frameLock) { latest?.Dispose(); }
         }
         finally
         {

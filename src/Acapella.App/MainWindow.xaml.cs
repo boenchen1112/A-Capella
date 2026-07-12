@@ -33,6 +33,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _previewDebounceTimer;
 
     private SKBitmap? _compositedFrame;
+    private readonly object _frameMailboxLock = new();
+    private SKBitmap? _pendingFrame;
+    private bool _framePumpQueued;
     private double? _lastCalibratedOffsetMs;
     // Metronome now lives only inside RecordSetupWindow (see UI_Design_Spec.md); this just carries
     // the last-used BPM forward across dialogs and into project save/load.
@@ -51,18 +54,48 @@ public partial class MainWindow : Window
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _previewDebounceTimer.Tick += (s, e) => { _previewDebounceTimer.Stop(); RefreshPreviewLive(); };
 
-        _previewEngine.FrameReady += frame => Dispatcher.Invoke(() =>
+        // Latest-frame-wins mailbox (audit A2/B14): FrameReady fires on the frame-loop thread, and
+        // that thread must never block on the UI thread (a blocking Dispatcher.Invoke here used to
+        // throttle the render loop by UI-thread availability -- slider updates, layout passes --
+        // turning UI jank into permanent video lag). InvokeAsync queues at most one pending pump;
+        // frames that arrive while a pump is already queued just overwrite the mailbox slot and
+        // are disposed immediately rather than piling up a backlog.
+        _previewEngine.FrameReady += frame =>
         {
-            var old = _compositedFrame;
-            _compositedFrame = frame;
-            CompositeCanvas.InvalidateVisual();
-            old?.Dispose();
-            if (!_isScrubbing) TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
-            TimeReadoutText.Text = $"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(_previewEngine.DurationMs)}";
-        });
+            SKBitmap? overwritten;
+            bool alreadyQueued;
+            lock (_frameMailboxLock)
+            {
+                overwritten = _pendingFrame;
+                _pendingFrame = frame;
+                alreadyQueued = _framePumpQueued;
+                _framePumpQueued = true;
+            }
+            overwritten?.Dispose();
+            if (!alreadyQueued) Dispatcher.InvokeAsync(DrainFrameMailbox);
+        };
         _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => PlayStopButton.Content = "▶ Play");
 
-        Closing += (s, e) => { _previewEngine.Dispose(); _compositedFrame?.Dispose(); };
+        Closing += (s, e) => { _previewEngine.Dispose(); _compositedFrame?.Dispose(); _pendingFrame?.Dispose(); };
+    }
+
+    private void DrainFrameMailbox()
+    {
+        SKBitmap? frame;
+        lock (_frameMailboxLock)
+        {
+            frame = _pendingFrame;
+            _pendingFrame = null;
+            _framePumpQueued = false;
+        }
+        if (frame is null) return;
+
+        var old = _compositedFrame;
+        _compositedFrame = frame;
+        CompositeCanvas.InvalidateVisual();
+        old?.Dispose();
+        if (!_isScrubbing) TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
+        TimeReadoutText.Text = $"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(_previewEngine.DurationMs)}";
     }
 
     // ----- Track sidebar: add / record / upload -----
