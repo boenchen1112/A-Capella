@@ -11,6 +11,7 @@ public class FfmpegCaptureSession : IDisposable
 {
     private readonly string _ffmpegPath;
     private Process? _process;
+    private RecentStderrBuffer? _stderrTail;
 
     public FfmpegCaptureSession(string ffmpegPath = "ffmpeg")
     {
@@ -18,6 +19,10 @@ public class FfmpegCaptureSession : IDisposable
     }
 
     public bool IsRunning => _process is { HasExited: false };
+
+    /// <summary>Recent ffmpeg stderr lines from the capture that just ran, e.g. "real-time buffer
+    /// too full / frame dropped" warnings -- available after Stop() for surfacing diagnostics.</summary>
+    public string[] GetRecentStderrLines() => _stderrTail?.GetLines() ?? Array.Empty<string>();
 
     public void Start(string videoDeviceName, string audioDeviceName, string outputPath)
     {
@@ -37,15 +42,29 @@ public class FfmpegCaptureSession : IDisposable
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-y");
+        // A live dshow feed (720p+ webcam) can outrun the default real-time buffer and encoder
+        // preset, causing ffmpeg to silently drop frames ("real-time buffer too full") -- with
+        // stderr previously discarded entirely, that would have been invisible. -rtbufsize gives
+        // headroom to absorb bursts; ultrafast/aac keep the encoder ahead of the live feed.
+        psi.ArgumentList.Add("-rtbufsize");
+        psi.ArgumentList.Add("256M");
         psi.ArgumentList.Add("-f");
         psi.ArgumentList.Add("dshow");
         psi.ArgumentList.Add("-i");
         psi.ArgumentList.Add($"video={videoDeviceName}:audio={audioDeviceName}");
+        psi.ArgumentList.Add("-c:v");
+        psi.ArgumentList.Add("libx264");
+        psi.ArgumentList.Add("-preset");
+        psi.ArgumentList.Add("ultrafast");
+        psi.ArgumentList.Add("-crf");
+        psi.ArgumentList.Add("23");
+        psi.ArgumentList.Add("-c:a");
+        psi.ArgumentList.Add("aac");
         psi.ArgumentList.Add(outputPath);
 
         _process = Process.Start(psi);
         if (_process is not null)
-            FfmpegProcessUtil.DrainStderrInBackground(_process);
+            _stderrTail = FfmpegProcessUtil.DrainStderrKeepingTail(_process);
     }
 
     /// <summary>
@@ -69,6 +88,8 @@ public class FfmpegCaptureSession : IDisposable
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-y");
+        psi.ArgumentList.Add("-rtbufsize");
+        psi.ArgumentList.Add("256M");
         psi.ArgumentList.Add("-f");
         psi.ArgumentList.Add("dshow");
         psi.ArgumentList.Add("-i");
@@ -77,7 +98,7 @@ public class FfmpegCaptureSession : IDisposable
 
         _process = Process.Start(psi);
         if (_process is not null)
-            FfmpegProcessUtil.DrainStderrInBackground(_process);
+            _stderrTail = FfmpegProcessUtil.DrainStderrKeepingTail(_process);
     }
 
     public void Stop()

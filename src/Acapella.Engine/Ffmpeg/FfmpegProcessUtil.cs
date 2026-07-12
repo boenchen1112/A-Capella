@@ -26,4 +26,56 @@ public static class FfmpegProcessUtil
             catch { /* process exited/stream closed */ }
         });
     }
+
+    /// <summary>
+    /// Same draining guarantee as <see cref="DrainStderrInBackground"/>, but retains the last
+    /// <paramref name="maxLines"/> lines so a caller can surface diagnostics (e.g. ffmpeg's
+    /// "real-time buffer too full / frame dropped" warnings during live capture) after the
+    /// process exits, instead of discarding everything.
+    /// </summary>
+    public static RecentStderrBuffer DrainStderrKeepingTail(Process process, int maxLines = 50)
+    {
+        var tail = new RecentStderrBuffer(maxLines);
+        var stderr = process.StandardError;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                string? line;
+                while ((line = stderr.ReadLine()) is not null)
+                    tail.Add(line);
+            }
+            catch { /* process exited/stream closed */ }
+        });
+        return tail;
+    }
+}
+
+public class RecentStderrBuffer
+{
+    private readonly object _lock = new();
+    private readonly Queue<string> _lines;
+    private readonly int _maxLines;
+
+    public RecentStderrBuffer(int maxLines)
+    {
+        _maxLines = maxLines;
+        _lines = new Queue<string>(maxLines);
+    }
+
+    public void Add(string line)
+    {
+        lock (_lock)
+        {
+            _lines.Enqueue(line);
+            while (_lines.Count > _maxLines)
+                _lines.Dequeue();
+        }
+    }
+
+    public string[] GetLines()
+    {
+        lock (_lock)
+            return _lines.ToArray();
+    }
 }
