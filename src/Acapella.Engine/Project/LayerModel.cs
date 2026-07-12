@@ -68,4 +68,12 @@ public class LayerCollection
         _layers.Clear();
         _layers.AddRange(list);
     }
+
+    /// <summary>Removes the most recently added layer -- used to discard a zombie layer left
+    /// behind by a failed recording (see MainWindow.StopRecordButton_Click).</summary>
+    public void RemoveLast()
+    {
+        if (_layers.Count > 0)
+            _layers.RemoveAt(_layers.Count - 1);
+    }
 }

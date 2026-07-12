@@ -4,6 +4,7 @@ using Acapella.Engine.Capture;
 using Acapella.Engine.Composite;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
+using Acapella.Engine.Ffmpeg;
 using Acapella.Engine.GuideTrack;
 using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
@@ -187,7 +188,10 @@ public partial class MainWindow : Window
 
     private void StopRecordButton_Click(object sender, RoutedEventArgs e)
     {
+        bool wasRecording = _activeCapture is not null;
+
         _activeCapture?.Stop();
+        string[] stderrTail = _activeCapture?.GetRecentStderrLines() ?? Array.Empty<string>();
         _activeCapture?.Dispose();
         _activeCapture = null;
         _guideTrackPlayer?.Stop();
@@ -196,6 +200,25 @@ public partial class MainWindow : Window
         _metronomeOutput?.Stop();
         _metronomeOutput?.Dispose();
         _metronomeOutput = null;
+
+        // M6: RecordLayerButton_Click added the layer immediately after Start(), with no check
+        // that ffmpeg actually produced usable output (e.g. H3's dshow name mismatch would leave
+        // an empty/missing file). Verify the just-recorded layer's file has real duration before
+        // keeping it; if not, remove it and surface ffmpeg's tail diagnostics instead of leaving
+        // a zombie layer that would later throw or render silent/black in export.
+        if (wasRecording && _layers.Layers.Count > 0)
+        {
+            var lastLayer = _layers.Layers[^1];
+            if (!MediaProbe.HasNonzeroDuration(lastLayer.SourcePath))
+            {
+                _layers.RemoveLast();
+                RefreshLayersList();
+                string diagnostics = stderrTail.Length > 0 ? string.Join(" | ", stderrTail.TakeLast(3)) : "no ffmpeg diagnostics captured";
+                StatusText.Text = $"Recording failed, layer removed. {diagnostics}";
+                return;
+            }
+        }
+
         StatusText.Text = "Recording stopped.";
     }
 
