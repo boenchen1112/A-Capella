@@ -26,14 +26,6 @@ public class ThreeBandEqSampleProvider : ISampleProvider
 
     public WaveFormat WaveFormat => _source.WaveFormat;
 
-    public void UpdateGains(float lowGainDb, float midGainDb, float highGainDb)
-    {
-        int sampleRate = _source.WaveFormat.SampleRate;
-        _lowShelf = BiQuadFilter.LowShelf(sampleRate, LowShelfFreq, 1f, lowGainDb);
-        _midBell = BiQuadFilter.PeakingEQ(sampleRate, MidBellFreq, 1f, midGainDb);
-        _highShelf = BiQuadFilter.HighShelf(sampleRate, HighShelfFreq, 1f, highGainDb);
-    }
-
     public int Read(float[] buffer, int offset, int count)
     {
         int read = _source.Read(buffer, offset, count);

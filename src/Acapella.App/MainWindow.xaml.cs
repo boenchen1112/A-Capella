@@ -246,6 +246,8 @@ public partial class MainWindow : Window
         {
             _layers.Layers[LayersList.SelectedIndex].ManualOffsetMs = OffsetSlider.Value;
         }
+
+        RebuildPreviewIfPlaying();
     }
 
     private void LoadLayerControls(LayerMixParameters parameters)
@@ -285,6 +287,8 @@ public partial class MainWindow : Window
         MidEqValueText.Text = $"{parameters.MidBellGainDb:F1} dB";
         HighEqValueText.Text = $"{parameters.HighShelfGainDb:F1} dB";
         GateThresholdValueText.Text = $"{parameters.NoiseGateThresholdDb:F1} dB";
+
+        RebuildPreviewIfPlaying();
     }
 
     private void PreviewMixButton_Click(object sender, RoutedEventArgs e)
@@ -305,6 +309,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        StartOrRebuildPreviewMix();
+    }
+
+    /// <summary>
+    /// Regression fix for M3: the mix graph was previously built once per Preview click, so a
+    /// slider change mutated LayerMixParameters but nothing re-read them until preview was
+    /// stopped and restarted. Cheapest honest fix per the audit: while preview is already
+    /// playing, rebuild the whole graph from current parameters and swap it in. Not glitch-free
+    /// during a rapid slider drag (each tick restarts playback from the top), but correctly
+    /// audible after every change, which is what mattered.
+    /// </summary>
+    private void RebuildPreviewIfPlaying()
+    {
+        if (_previewOutput is null) return;
+        StartOrRebuildPreviewMix();
+    }
+
+    private void StartOrRebuildPreviewMix()
+    {
         try
         {
             const int sampleRate = 44100;
@@ -313,6 +336,9 @@ public partial class MainWindow : Window
                 .ToList();
 
             var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
+
+            _previewOutput?.Stop();
+            _previewOutput?.Dispose();
 
             var outputDevice = _renderDevices[AudioOutDeviceCombo.SelectedIndex];
             using var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
