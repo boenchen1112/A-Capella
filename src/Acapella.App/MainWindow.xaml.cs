@@ -496,11 +496,20 @@ public partial class MainWindow : Window
         StatusText.Text = "Exporting...";
         ExportButton.IsEnabled = false;
 
+        // M7: Export previously read the live _layers/MixParameters directly from a background
+        // task while the UI thread could still add layers or move sliders mid-export -- a data
+        // race with only the Export button disabled to (incompletely) discourage it. Snapshot via
+        // a DTO round-trip (already used for project save/load, so it's already a proven deep
+        // copy) and export that snapshot instead of the live, still-editable state.
+        double.TryParse(BpmTextBox.Text, out double bpm);
+        var snapshotDto = _projectPersistence.ToDto(_layers, bpm, _lastCalibratedOffsetMs);
+        var (snapshotLayers, _, _) = _projectPersistence.FromDto(snapshotDto);
+
         Task.Run(() =>
         {
             try
             {
-                new ExportEngine().Export(_layers, dialog.FileName);
+                new ExportEngine().Export(snapshotLayers, dialog.FileName);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)
