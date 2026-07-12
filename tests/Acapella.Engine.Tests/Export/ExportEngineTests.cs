@@ -152,6 +152,44 @@ public class ExportEngineTests
         }
     }
 
+    /// <summary>Regression test for audit A5: a video-only layer (no audio track) decodes to
+    /// zero audio samples, but its duration must come from the video stream, not audio -- export
+    /// used to throw "No decodable audio found" for this case.</summary>
+    [Fact]
+    public void Export_VideoOnlyLayer_HonorsVideoDurationAndSucceeds()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-export-videoonly-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string video = Path.Combine(tempDir, "silent.mp4");
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            RunFfmpeg("-y", "-f", "lavfi", "-i", "color=c=green:s=64x64:r=10:d=2",
+                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", video);
+
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.UploadedVideo, video);
+
+            var exportEngine = new ExportEngine();
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100);
+
+            Assert.True(File.Exists(outputPath), "Export did not produce an output file.");
+            Assert.True(new FileInfo(outputPath).Length > 0, "Exported file is empty.");
+
+            string raw = ProbeStreamInfo(outputPath);
+            var durationLine = raw.Split('\n').FirstOrDefault(l => l.StartsWith("duration="));
+            Assert.NotNull(durationLine);
+            double duration = double.Parse(durationLine!.Split('=')[1]);
+            Assert.InRange(duration, 1.5, 2.5);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static byte[] DecodeFirstRawFrame(string mediaPath, int width, int height)
     {
         var psi = new ProcessStartInfo

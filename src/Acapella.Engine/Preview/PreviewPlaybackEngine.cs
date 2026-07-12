@@ -70,6 +70,7 @@ public class PreviewPlaybackEngine : IDisposable
 {
     private readonly MixEngine _mixEngine = new();
     private readonly string _ffmpegPath;
+    private readonly string _ffprobePath;
     private readonly int _sampleRate;
     private readonly int _fps;
     private readonly int _canvasWidth;
@@ -89,13 +90,14 @@ public class PreviewPlaybackEngine : IDisposable
     public double PositionMs { get; private set; }
     public double DurationMs { get; private set; }
 
-    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", IPreviewAudioSink? audioSink = null)
+    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null)
     {
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
         _fps = fps;
         _sampleRate = sampleRate;
         _ffmpegPath = ffmpegPath;
+        _ffprobePath = ffprobePath;
         _audioSink = audioSink ?? new WasapiPreviewAudioSink();
     }
 
@@ -115,13 +117,22 @@ public class PreviewPlaybackEngine : IDisposable
 
         double maxMs = 0;
         foreach (var layer in _layers)
-        {
-            float[] decoded = AudioDecoder.DecodeToMonoFloat(layer.SourcePath, _sampleRate, _ffmpegPath);
-            float[] trimmed = TrimHelper.ApplyTrim(decoded, layer.TrimStartMs, layer.TrimEndMs, _sampleRate);
-            float[] shifted = AudioShiftHelper.ApplyShift(trimmed, layer.GetShiftMs(), _sampleRate);
-            maxMs = Math.Max(maxMs, shifted.Length * 1000.0 / _sampleRate);
-        }
+            maxMs = Math.Max(maxMs, LayerDurationMs(layer));
         return maxMs;
+    }
+
+    /// <summary>Layer duration from ffprobe's container duration (audit A5) -- correct for
+    /// video-only and audio-only layers alike, and avoids a full ffmpeg audio decode just to
+    /// measure length (audit B2). Trim/shift are applied to the probed duration the same way
+    /// TrimHelper/AudioShiftHelper apply them to decoded sample arrays.</summary>
+    internal double LayerDurationMs(LayerModel layer)
+    {
+        double rawMs = Ffmpeg.MediaProbe.GetDurationSeconds(layer.SourcePath, _ffprobePath) * 1000.0;
+        double trimEndMs = Math.Min(layer.TrimEndMs ?? rawMs, rawMs);
+        double trimmedMs = Math.Max(0, trimEndMs - layer.TrimStartMs);
+
+        double shiftMs = layer.GetShiftMs();
+        return shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
     }
 
     public void Play()
@@ -188,13 +199,19 @@ public class PreviewPlaybackEngine : IDisposable
             return new StaticFrameSource(PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight));
 
         // Generalizes VideoFrameStreamSource's shift/trim formulas (see its own doc comment) to
-        // an arbitrary playback start position P: the layer's local media time at project time P
-        // is trimStart + max(0, P - shiftMs) once past its shift-delayed start, and it still owes
-        // max(0, shiftMs - P) of hold before real content begins. Passing that residual as the
-        // "shiftMs" argument (always >= 0 here) reuses VideoFrameStreamSource's own hold-only
-        // branch without re-applying the skip a second time.
+        // an arbitrary playback start position P. For a negative shift, ExportEngine passes
+        // shiftMs straight through so VideoFrameStreamSource's own -ss math applies the
+        // |shiftMs| head-skip; the preview path instead folds the skip directly into media time
+        // here (since it also needs the position-dependent hold term), so that same |shiftMs|
+        // head-skip must be included explicitly -- omitting it left every recorded layer's
+        // preview video lagging its own audio by the calibration offset (audit A3). For a
+        // positive shift, the layer still owes max(0, shiftMs - P) of hold before real content
+        // begins; passing that residual as the "shiftMs" argument (always >= 0 here) reuses
+        // VideoFrameStreamSource's own hold-only branch without re-applying the skip a second
+        // time.
         double shiftMs = layer.GetShiftMs();
-        double effectiveTrimStart = layer.TrimStartMs + Math.Max(0, positionMs - Math.Max(0, shiftMs));
+        double headSkipMs = Math.Max(0, -shiftMs);
+        double effectiveTrimStart = layer.TrimStartMs + headSkipMs + Math.Max(0, positionMs - Math.Max(0, shiftMs));
         double residualHoldMs = Math.Max(0, shiftMs - positionMs);
 
         return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, _fps, residualHoldMs, _ffmpegPath, effectiveTrimStart, layer.TrimEndMs);
@@ -205,7 +222,7 @@ public class PreviewPlaybackEngine : IDisposable
         const int sampleRate = 44100;
         var mixInputs = _layers
             .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(
-                TrimHelper.ApplyTrim(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
+                TrimHelper.ApplyTrim(AudioDecodeCache.GetOrDecode(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
                 l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
             .ToList();
 

@@ -61,7 +61,12 @@ public class VideoFrameStreamSource : ILayerFrameSource
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(mediaPath);
         if (trimEndMs is double trimEnd)
         {
-            double durationSeconds = Math.Max(0, trimEnd - trimStartMs) / 1000.0;
+            // The -ss skip above already includes |shiftMs| (negative-shift head-skip), so the
+            // remaining trimmed span is shorter by that same amount -- otherwise video would keep
+            // playing |shiftMs| longer than this layer's audio (which loses that much from its
+            // head via AudioShiftHelper), desyncing the freeze-frame moment (audit A4).
+            double headSkipSeconds = shiftMs < 0 ? -shiftMs / 1000.0 : 0;
+            double durationSeconds = Math.Max(0, (trimEnd - trimStartMs) / 1000.0 - headSkipSeconds);
             psi.ArgumentList.Add("-t");
             psi.ArgumentList.Add(durationSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }

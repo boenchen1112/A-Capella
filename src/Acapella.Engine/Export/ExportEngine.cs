@@ -15,10 +15,12 @@ public class ExportEngine
 {
     private readonly MixEngine _mixEngine = new();
     private readonly string _ffmpegPath;
+    private readonly string _ffprobePath;
 
-    public ExportEngine(string ffmpegPath = "ffmpeg")
+    public ExportEngine(string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe")
     {
         _ffmpegPath = ffmpegPath;
+        _ffprobePath = ffprobePath;
     }
 
     public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100)
@@ -29,13 +31,20 @@ public class ExportEngine
         var decodedAudio = layers.Layers.ToDictionary(
             l => l.LayerId,
             l => AudioShiftHelper.ApplyShift(
-                TrimHelper.ApplyTrim(Mix.AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
+                TrimHelper.ApplyTrim(Mix.AudioDecodeCache.GetOrDecode(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
                 l.GetShiftMs(), sampleRate));
 
-        int maxSamples = decodedAudio.Values.Max(a => a.Length);
+        // Duration from ffprobe's container duration (audit A5), not decoded-audio length: a
+        // video-only layer decodes to zero audio samples but still has real video duration, and
+        // a video stream that outlasts its own audio stream (common with dshow captures stopped
+        // mid-frame) would otherwise truncate the export to the shorter audio length.
+        double durationSeconds = layers.Layers
+            .Select(l => LayerDurationSeconds(l, sampleRate))
+            .DefaultIfEmpty(0)
+            .Max();
+        int maxSamples = (int)Math.Round(durationSeconds * sampleRate);
         if (maxSamples == 0)
-            throw new InvalidOperationException("No decodable audio found in any layer.");
-        double durationSeconds = maxSamples / (double)sampleRate;
+            throw new InvalidOperationException("No decodable media found in any layer.");
 
         var mixInputs = layers.Layers
             .Select(l => new MixLayerInput(l.LayerId, decodedAudio[l.LayerId], sampleRate, l.MixParameters))
@@ -106,6 +115,20 @@ public class ExportEngine
             if (File.Exists(tempWavPath))
                 File.Delete(tempWavPath);
         }
+    }
+
+    /// <summary>Mirrors PreviewPlaybackEngine.LayerDurationMs -- trim/shift applied to the
+    /// ffprobe'd container duration rather than a decoded sample count, so it works for
+    /// video-only layers (see A5).</summary>
+    private double LayerDurationSeconds(LayerModel layer, int sampleRate)
+    {
+        double rawMs = Ffmpeg.MediaProbe.GetDurationSeconds(layer.SourcePath, _ffprobePath) * 1000.0;
+        double trimEndMs = Math.Min(layer.TrimEndMs ?? rawMs, rawMs);
+        double trimmedMs = Math.Max(0, trimEndMs - layer.TrimStartMs);
+
+        double shiftMs = layer.GetShiftMs();
+        double totalMs = shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
+        return totalMs / 1000.0;
     }
 
     private ILayerFrameSource CreateFrameSource(LayerModel layer, int cellWidth, int cellHeight, int fps)
