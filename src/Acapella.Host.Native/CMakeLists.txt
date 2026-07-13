@@ -27,10 +27,41 @@ function(aca_set_output_dir target)
     endif()
 endfunction()
 
+add_subdirectory(JUCE)
+
+# HostBridge.cpp is the real v6 P3a C-ABI bridge (tasks 1-6, 8, 10 -- scan/instantiate/prepare/
+# parameters/latency+tail/processBlock/state/release), built on the JUCE VST3-hosting sequence
+# JuceHostProbe.cpp proved out in probe 2. Probe.cpp's trivial aca_probe() stays alongside it as
+# the toolchain smoke test from probe 1 (NativeBridgeProbeTests.cs still calls it).
 add_library(AcapellaHostNative SHARED
     src/Probe.cpp
+    src/HostBridge.cpp
 )
 aca_set_output_dir(AcapellaHostNative)
+
+target_compile_definitions(AcapellaHostNative PRIVATE
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_STANDALONE_APPLICATION=0
+)
+
+target_link_libraries(AcapellaHostNative PRIVATE
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_audio_utils
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_events
+    juce::juce_graphics
+    juce::juce_gui_basics
+    juce::juce_gui_extra
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
 
 # v6 P3a probe 2 (go/no-go gate, see reviews/ or commit message): proves a real commercial
 # FabFilter plugin can be scanned/instantiated/prepared/processed/released with no GUI session,
@@ -38,8 +69,6 @@ aca_set_output_dir(AcapellaHostNative)
 # (not part of AcapellaHostNative.dll) so the iteration loop is a quick build+run .exe.
 option(ACA_BUILD_JUCE_PROBE "Build the JUCE headless-hosting probe console app" ON)
 if(ACA_BUILD_JUCE_PROBE)
-    add_subdirectory(JUCE)
-
     juce_add_console_app(AcaJuceHostProbe
         PRODUCT_NAME "AcaJuceHostProbe"
     )
