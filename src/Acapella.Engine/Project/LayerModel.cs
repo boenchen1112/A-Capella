@@ -17,6 +17,11 @@ public class LayerModel
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 
+    /// <summary>User-editable display name (v5 P2 task 1). Null/blank means "not renamed yet" --
+    /// callers fall back to a positional default (e.g. "Layer {CellIndex + 1}") rather than baking
+    /// that default in here, since the model doesn't know which UI slot it's shown in.</summary>
+    public string? Name { get; set; }
+
     /// <summary>Trim in/out points, in ms from the start of SourcePath -- independent of sync
     /// (GetShiftMs): trim defines which portion of the source plays, sync shifts it in time
     /// relative to the other layers. Added for UI_Design_Spec v2's Editor-screen trim control.

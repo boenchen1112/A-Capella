@@ -28,6 +28,11 @@ public class ExportEngine
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
 
+        // Sorted by CellIndex (audit B8), not LayerCollection's internal list order: a layer
+        // attached to sidebar row 3 before row 2 must still land in grid cell 3 on export, matching
+        // PreviewPlaybackEngine.SetLayersCore's same ordering fix.
+        var orderedLayers = layers.Layers.OrderBy(l => l.CellIndex).ToList();
+
         var decodedAudio = layers.Layers.ToDictionary(
             l => l.LayerId,
             l => AudioShiftHelper.ApplyShift(
@@ -68,13 +73,13 @@ public class ExportEngine
             int cellWidth = width / 2;
             int cellHeight = height / 2;
 
-            var frameSources = layers.Layers
+            var frameSources = orderedLayers
                 .Select(l => CreateFrameSource(l, cellWidth, cellHeight, fps))
                 .ToList();
 
             try
             {
-                var cellRects = Layout2x2Provider.GetCellRects(width, height, layers.Layers.Count);
+                var cellRects = Layout2x2Provider.GetCellRects(width, height, orderedLayers.Count);
                 int totalFrames = (int)Math.Ceiling(durationSeconds * fps);
 
                 using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath);

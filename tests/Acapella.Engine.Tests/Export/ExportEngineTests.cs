@@ -153,6 +153,51 @@ public class ExportEngineTests
         }
     }
 
+    /// <summary>Regression test for audit B8: grid placement must follow LayerModel.CellIndex, not
+    /// LayerCollection's internal insertion order -- simulates a layer being attached to sidebar
+    /// row 2 (CellIndex 1) before row 1 (CellIndex 0) gets its source, which used to render in the
+    /// wrong cell because export/preview both zipped frames to cellRects by list order.</summary>
+    [Fact]
+    public void Export_LayersAddedOutOfCellOrder_PlacesEachInItsCellIndexNotInsertionOrder()
+    {
+        var (video1, video2, tempDir) = CreateFixtureClips(); // video1=red (2s), video2=blue (1s)
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            // Inserted red-then-blue, but assigned to the grid as if row 2 (blue, CellIndex 0,
+            // top-left) was filled before row 1 (red, CellIndex 1, top-right).
+            var redLayer = layers.Add(LayerKind.RecordedAV, video1);
+            var blueLayer = layers.Add(LayerKind.RecordedAV, video2);
+            redLayer.CellIndex = 1;
+            blueLayer.CellIndex = 0;
+
+            var exportEngine = new ExportEngine();
+            exportEngine.Export(layers, outputPath, width: 128, height: 128, fps: 10, sampleRate: 44100);
+
+            byte[] frameBytes = DecodeFirstRawFrame(outputPath, 128, 128);
+            AssertPixelColorDominant(frameBytes, 128, x: 32, y: 32, redDominant: false);   // top-left: blue
+            AssertPixelColorDominant(frameBytes, 128, x: 96, y: 32, redDominant: true);    // top-right: red
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static void AssertPixelColorDominant(byte[] frameBytes, int width, int x, int y, bool redDominant)
+    {
+        int pixelIndex = (y * width + x) * 4;
+        byte r = frameBytes[pixelIndex];
+        byte b = frameBytes[pixelIndex + 2];
+        if (redDominant)
+            Assert.True(r > b + 50, $"Expected red-dominant pixel at ({x},{y}), got r={r}, b={b}");
+        else
+            Assert.True(b > r + 50, $"Expected blue-dominant pixel at ({x},{y}), got r={r}, b={b}");
+    }
+
     /// <summary>Regression test for audit A5: a video-only layer (no audio track) decodes to
     /// zero audio samples, but its duration must come from the video stream, not audio -- export
     /// used to throw "No decodable audio found" for this case.</summary>

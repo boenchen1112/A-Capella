@@ -70,6 +70,49 @@ public class CompositorTests
         Assert.Null(exception);
     }
 
+    /// <summary>Regression test for v5 P2 task 3: with labels supplied, each cell's border must be
+    /// drawn in that cell's own palette color -- checked at a pixel just inside the border stroke,
+    /// away from the corner where two borders and a background could ambiguously overlap.</summary>
+    [Fact]
+    public void Composite_WithLabels_DrawsEachCellsBorderInItsOwnColor()
+    {
+        const int canvasWidth = 640;
+        const int canvasHeight = 480;
+
+        var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.White), SolidColorBitmap(320, 240, SKColors.White) };
+        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var labels = new List<CellLabel?>
+        {
+            new CellLabel(SKColors.Red, "Layer 1"),
+            new CellLabel(SKColors.Blue, "Layer 2"),
+        };
+
+        var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects, labels);
+
+        // Just inside the left edge of each cell, vertically centered -- inside the border stroke,
+        // away from the top-left name tag and away from any corner.
+        AssertPixelNear(output, (int)cellRects[0].Left + 1, canvasHeight / 4, SKColors.Red);
+        AssertPixelNear(output, (int)cellRects[1].Left + 1, canvasHeight / 4, SKColors.Blue);
+    }
+
+    /// <summary>Regression test for v5 P2 task 3: omitting labels (export's path) must produce no
+    /// overlay pixels at all -- the cell interior stays exactly the source frame's color, right up
+    /// to its edge.</summary>
+    [Fact]
+    public void Composite_WithoutLabels_DrawsNoOverlay()
+    {
+        const int canvasWidth = 640;
+        const int canvasHeight = 480;
+
+        var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.White) };
+        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+
+        var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects, labels: null);
+
+        AssertPixelNear(output, (int)cellRects[0].Left + 1, canvasHeight / 4, SKColors.White);
+        AssertPixelNear(output, (int)cellRects[0].Left + 1, (int)cellRects[0].Top + 1, SKColors.White);
+    }
+
     private static void AssertPixelNear(SKBitmap bitmap, int x, int y, SKColor expected)
     {
         var actual = bitmap.GetPixel(x, y);

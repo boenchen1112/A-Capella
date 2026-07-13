@@ -113,6 +113,11 @@ public class PreviewPlaybackEngine : IDisposable
     public double PositionMs { get; private set; }
     public double DurationMs { get; private set; }
 
+    /// <summary>Grid-identification overlay toggle (v5 P2 task 3), read at render time -- not
+    /// routed through the command queue, same reasoning as MasterVolumeDb. Export never sets this;
+    /// it always composites without labels regardless.</summary>
+    public volatile bool ShowLayerLabels = true;
+
     public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null)
     {
         _canvasWidth = canvasWidth;
@@ -155,7 +160,10 @@ public class PreviewPlaybackEngine : IDisposable
 
     private void SetLayersCore(IReadOnlyList<LayerModel> layers)
     {
-        _layers = layers.ToList();
+        // Sorted by CellIndex (audit B8), not insertion/list order: a layer attached to sidebar
+        // row 3 before row 2 must still land in grid cell 3, not wherever it happened to land in
+        // LayerCollection's internal list. Frame sources / cellRects are zipped by this same order.
+        _layers = layers.OrderBy(l => l.CellIndex).ToList();
         DurationMs = ComputeDurationMs();
         PositionMs = Math.Min(PositionMs, DurationMs);
     }
@@ -259,7 +267,14 @@ public class PreviewPlaybackEngine : IDisposable
     private void RenderComposite(IReadOnlyList<SKBitmap> frames)
     {
         var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, frames.Count);
-        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects);
+        List<CellLabel?>? labels = null;
+        if (ShowLayerLabels)
+        {
+            labels = _layers.Take(frames.Count)
+                .Select(l => (CellLabel?)new CellLabel(LayerColorPalette.GetColor(l.CellIndex), l.Name is { Length: > 0 } n ? n : $"Layer {l.CellIndex + 1}"))
+                .ToList();
+        }
+        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects, labels);
         FrameReady?.Invoke(composited);
     }
 

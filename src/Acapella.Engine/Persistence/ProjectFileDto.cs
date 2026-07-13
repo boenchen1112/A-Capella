@@ -32,6 +32,7 @@ public class LayerDto
     public int CellIndex { get; set; }
     public string Kind { get; set; } = "";
     public string SourcePath { get; set; } = "";
+    public string? Name { get; set; }
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 

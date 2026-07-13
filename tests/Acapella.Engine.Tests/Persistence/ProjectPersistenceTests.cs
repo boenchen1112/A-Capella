@@ -11,6 +11,7 @@ public class ProjectPersistenceTests
         var layers = new LayerCollection();
 
         var layer0 = layers.Add(LayerKind.RecordedAV, "layer0.mkv");
+        layer0.Name = "Lead vocal";
         layer0.CalibratedOffsetMs = 162.7;
         layer0.ManualOffsetMs = -15.5;
         layer0.MixParameters.GainDb = -6.5f;
@@ -60,6 +61,7 @@ public class ProjectPersistenceTests
                 Assert.Equal(original.LayerId, loaded.LayerId);
                 Assert.Equal(original.Kind, loaded.Kind);
                 Assert.Equal(original.SourcePath, loaded.SourcePath);
+                Assert.Equal(original.Name, loaded.Name);
                 Assert.Equal(original.CalibratedOffsetMs, loaded.CalibratedOffsetMs);
                 Assert.Equal(original.ManualOffsetMs, loaded.ManualOffsetMs);
                 Assert.Equal(original.CellIndex, loaded.CellIndex);
