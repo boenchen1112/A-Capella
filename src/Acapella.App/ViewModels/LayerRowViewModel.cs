@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 
@@ -22,6 +23,12 @@ namespace Acapella.App.ViewModels;
 public class LayerRowViewModel : INotifyPropertyChanged
 {
     private LayerModel? _layer;
+
+    // v6 P3: one MixEngine/availability check per app session -- set once by MainWindow at
+    // startup. Shared (not per-row) since there's exactly one of each in this single-window app;
+    // avoids threading an extra constructor parameter through every LayerRowViewModel call site.
+    public static MixEngine? SharedMixEngine { get; set; }
+    public static IHostedPluginAvailability HostedAvailability { get; set; } = NoHostedPluginsAvailable.Instance;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action? LiveParamChanged;
@@ -227,6 +234,46 @@ public class LayerRowViewModel : INotifyPropertyChanged
     }
     public string LimiterGainDisplay => $"{LimiterGainDb:F1} dB";
 
+    // ----- Reverb subtab (hosted-only, no native fallback -- v6 P3 task 5) -----
+
+    public bool ReverbEnabled
+    {
+        get => Params?.ReverbEnabled ?? false;
+        set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); LiveParamChanged?.Invoke(); }
+    }
+
+    public bool IsReverbHosted => HostedAvailability.IsAvailable(MixEngine.ReverbPluginLabel);
+
+    public void OpenReverbEditor() => OpenHostedEditor(MixEngine.ReverbStage, MixEngine.ReverbPluginLabel, () => Params?.ReverbHostedState, s => { if (Params is not null) Params.ReverbHostedState = s; });
+
+    // ----- Hosted-backend auto-selection (v6 P3 task 1): each stage below shows a native slider
+    // panel when its matching FabFilter plugin isn't detected, or a launcher button when it is --
+    // never both, never a user-facing selector (see build plan P3 task 1's rationale). -----
+
+    public bool IsEqHosted => HostedAvailability.IsAvailable(MixEngine.EqPluginLabel);
+    public bool IsNoiseGateHosted => HostedAvailability.IsAvailable(MixEngine.NoiseGatePluginLabel);
+    public bool IsCompressorHosted => HostedAvailability.IsAvailable(MixEngine.CompressorPluginLabel);
+    public bool IsLimiterHosted => HostedAvailability.IsAvailable(MixEngine.LimiterPluginLabel);
+
+    public void OpenEqEditor() => OpenHostedEditor(MixEngine.EqStage, MixEngine.EqPluginLabel, () => Params?.EqHostedState, s => { if (Params is not null) Params.EqHostedState = s; });
+    public void OpenNoiseGateEditor() => OpenHostedEditor(MixEngine.NoiseGateStage, MixEngine.NoiseGatePluginLabel, () => Params?.NoiseGateHostedState, s => { if (Params is not null) Params.NoiseGateHostedState = s; });
+    public void OpenCompressorEditor() => OpenHostedEditor(MixEngine.CompressorStage, MixEngine.CompressorPluginLabel, () => Params?.CompressorHostedState, s => { if (Params is not null) Params.CompressorHostedState = s; });
+    public void OpenLimiterEditor() => OpenHostedEditor(MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, () => Params?.LimiterHostedState, s => { if (Params is not null) Params.LimiterHostedState = s; });
+
+    /// <summary>Fetches (or lazily creates) the same cached hosted instance the mix chain actually
+    /// processes audio through and opens its own top-level editor window (P3a task 7). Edits made
+    /// there are audible immediately since it's the live instance, not a copy. State-change
+    /// detection/polling (P3a task 9, so a tweak also persists to the project and marks it dirty)
+    /// is not yet built -- storeState is called once eagerly right after opening as a first-pass
+    /// stand-in so at least an explicit save captures whatever was last read back.</summary>
+    private void OpenHostedEditor(string stage, string pluginLabel, Func<byte[]?> loadState, Action<byte[]?> storeState)
+    {
+        if (_layer is null || SharedMixEngine is null) return;
+        var instance = SharedMixEngine.GetOrCreateHostedInstance(_layer.LayerId, stage, pluginLabel, loadState());
+        instance.ShowEditorWindow($"{pluginLabel} — {DisplayName}");
+        storeState(instance.GetState());
+    }
+
     // ----- Melodyne subtab -----
 
     public int PitchBackendIndex
@@ -274,6 +321,9 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(LimiterEnabled));
         OnPropertyChanged(nameof(LimiterCeilingDb)); OnPropertyChanged(nameof(LimiterCeilingDisplay));
         OnPropertyChanged(nameof(LimiterGainDb)); OnPropertyChanged(nameof(LimiterGainDisplay));
+        OnPropertyChanged(nameof(ReverbEnabled)); OnPropertyChanged(nameof(IsReverbHosted));
+        OnPropertyChanged(nameof(IsEqHosted)); OnPropertyChanged(nameof(IsNoiseGateHosted));
+        OnPropertyChanged(nameof(IsCompressorHosted)); OnPropertyChanged(nameof(IsLimiterHosted));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
         OnPropertyChanged(nameof(PitchBackendIndex)); OnPropertyChanged(nameof(ShowMelodyneButton));
     }

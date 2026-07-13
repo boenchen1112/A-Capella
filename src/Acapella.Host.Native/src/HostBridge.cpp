@@ -62,6 +62,39 @@ namespace
         std::unique_ptr<AudioPluginInstance> instance;
         AudioBuffer<float> scratch; // 2-channel scratch buffer reused across processBlock calls
         MidiBuffer midi;
+        std::unique_ptr<juce::DocumentWindow> editorWindow; // task 7: own top-level window, never embedded
+    };
+
+    // Task 7: the plugin's own editor in its own top-level window (never embedded in WPF -- see
+    // UI_Design_Spec.md's launcher pattern). Every method that touches editorWindow or the
+    // instance's editor must run on the same thread JUCE's MessageManager was initialised on (the
+    // WPF UI thread -- see aca_initialize()); processBlock is the only call meant to cross threads.
+    class PluginEditorWindow : public juce::DocumentWindow
+    {
+    public:
+        PluginEditorWindow(const juce::String& name, juce::AudioProcessorEditor* editor, AcaPluginInstance* owner)
+            : DocumentWindow(name, juce::Colours::darkgrey, DocumentWindow::closeButton), _owner(owner)
+        {
+            setUsingNativeTitleBar(true);
+            setContentOwned(editor, true);
+            centreWithSize(getWidth(), getHeight());
+            setResizable(editor->isResizable(), false);
+            setVisible(true);
+        }
+
+        // Deferred via callAsync: closeButtonPressed() is a method of `this`, and
+        // owner->editorWindow.reset() would destroy `this` while its own frame is still on the
+        // call stack (self-destruction mid-call -- the same class of bug as the heap corruption
+        // chased earlier this session). Posting to the next message-loop iteration lets this call
+        // return safely before the object is destroyed.
+        void closeButtonPressed() override
+        {
+            auto* ownerCopy = _owner;
+            juce::MessageManager::callAsync([ownerCopy] { ownerCopy->editorWindow.reset(); });
+        }
+
+    private:
+        AcaPluginInstance* _owner;
     };
 
     void copyToBuffer(char* outBuffer, int outBufferSize, const String& value)
@@ -96,6 +129,17 @@ namespace
 
 extern "C"
 {
+    // Forces juceInit() (and therefore JUCE's MessageManager) to bind to the calling thread.
+    // MUST be called once from the app's WPF UI thread at startup, before any other bridge call --
+    // every subsequent plugin-lifecycle/editor call must then also happen on that same thread (only
+    // aca_process_block is meant to be called from a different, audio-processing thread; JUCE's
+    // AudioProcessor::processBlock itself has no message-thread affinity requirement, matching how
+    // a real DAW's realtime audio thread is separate from its GUI thread).
+    __declspec(dllexport) void aca_initialize()
+    {
+        juceInit();
+    }
+
     // Task 1: scan. Returns 1 if at least one plugin type was found in pluginPath, else 0.
     // Writes the first found type's name/version into caller-provided buffers (truncated, NUL-terminated).
     __declspec(dllexport) int aca_scan_plugin(const char* pluginPath,
@@ -249,11 +293,37 @@ extern "C"
         static_cast<AcaPluginInstance*>(handle)->instance->setStateInformation(data, dataSize);
     }
 
+    // Task 7: opens the plugin's own editor in its own top-level window (never embedded). No-op if
+    // already open (bringing it to front is left to a future polish pass -- not needed for the
+    // launcher's "Open Pro-Q 4..." button to work). Must be called on the same thread as
+    // aca_initialize(). Returns 1 on success, 0 if the plugin has no editor.
+    __declspec(dllexport) int aca_show_editor_window(void* handle, const char* title)
+    {
+        if (handle == nullptr) return 0;
+        auto* h = static_cast<AcaPluginInstance*>(handle);
+        if (h->editorWindow != nullptr) return 1;
+
+        auto* editor = h->instance->createEditorIfNeeded();
+        if (editor == nullptr) return 0;
+
+        h->editorWindow = std::make_unique<PluginEditorWindow>(String(title), editor, h);
+        return 1;
+    }
+
+    // Closes the editor window if open. Safe to call when none is open. Must be called on the same
+    // thread as aca_initialize().
+    __declspec(dllexport) void aca_close_editor_window(void* handle)
+    {
+        if (handle == nullptr) return;
+        static_cast<AcaPluginInstance*>(handle)->editorWindow.reset();
+    }
+
     // Task 10: release. Safe to call with nullptr (no-op).
     __declspec(dllexport) void aca_release_instance(void* handle)
     {
         if (handle == nullptr) return;
         auto* h = static_cast<AcaPluginInstance*>(handle);
+        h->editorWindow.reset(); // close any open editor before tearing down the processor beneath it
         h->instance->releaseResources();
         delete h;
     }

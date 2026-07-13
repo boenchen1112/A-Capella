@@ -143,4 +143,43 @@ public class HostedPluginInstanceTests
         // energy across a couple of samples rather than reproducing a single-sample spike exactly.
         Assert.InRange(peakIndex, expectedIndex - 2, expectedIndex + 2);
     }
+
+    /// <summary>
+    /// P3a task 7 threading spike: the app's design calls for all plugin lifecycle/editor calls to
+    /// happen on the WPF UI thread (where JUCE's MessageManager gets bound via Initialize()), while
+    /// ProcessBlock runs on a separate audio/command thread -- matching how a real DAW's realtime
+    /// audio thread is separate from its GUI thread. This proves that split doesn't crash or hang
+    /// JUCE before any UI is built on top of the assumption: open an editor window on this thread,
+    /// hammer ProcessBlock concurrently from a background thread, close the editor, release clean.
+    /// A hang here would show up as this test timing out; a JUCE assert now routes to stderr
+    /// instead of a blocking dialog (see HostBridge.cpp's juceInit()).
+    /// </summary>
+    [Fact]
+    public void EditorWindow_OpensAndClosesSafely_WhileProcessBlockRunsOnAnotherThread()
+    {
+        HostedPluginInstance.Initialize();
+        string path = HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"];
+        using var instance = HostedPluginInstance.Create(path, SampleRate, BlockSize);
+
+        bool opened = instance.ShowEditorWindow("Pro-Q 4 (threading spike)");
+        Assert.True(opened, "expected Pro-Q 4 to report an editor");
+
+        var inL = new float[BlockSize];
+        var inR = new float[BlockSize];
+        var outL = new float[BlockSize];
+        var outR = new float[BlockSize];
+
+        using var cts = new System.Threading.CancellationTokenSource();
+        var processingTask = System.Threading.Tasks.Task.Run(() =>
+        {
+            while (!cts.IsCancellationRequested)
+                instance.ProcessBlock(inL, inR, outL, outR, BlockSize);
+        });
+
+        System.Threading.Thread.Sleep(500);
+        cts.Cancel();
+        Assert.True(processingTask.Wait(TimeSpan.FromSeconds(5)), "processBlock loop did not stop cleanly");
+
+        instance.CloseEditorWindow();
+    }
 }

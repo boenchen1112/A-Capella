@@ -30,16 +30,17 @@ public partial class MainWindow : Window
     // L1: a directory next to the executable works regardless of how/where the app is launched.
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
-    // v6 P3: MixEngine's default constructor auto-selects a hosted FabFilter plugin over native
-    // DSP wherever it's detected -- correct per the plan, but only once there's a way to actually
-    // control the hosted plugin's parameters. That's the launcher + own-window editor from P3a
-    // task 7, not yet built, so a hosted stage would silently run at its untouched factory-default
-    // state while these sliders (bound to LayerMixParameters) do nothing audible. Force native
-    // until that UI exists; drop this override once P3a task 7 ships.
-    private readonly MixEngine _mixEngine = new(NoHostedPluginsAvailable.Instance);
+    // v6 P3: MixEngine auto-selects a hosted FabFilter plugin over native DSP wherever detected
+    // (native is the automatic fallback, never a user-facing choice -- see the build plan's P3
+    // task 1). The launcher UI (per-stage "Open Pro-X..." buttons + own-window editor, P3a task 7)
+    // now exists, so a hosted stage's parameters are actually reachable -- share one availability
+    // instance across MixEngine/PreviewPlaybackEngine/ExportEngine so all three agree on what's
+    // hosted.
+    private static readonly IHostedPluginAvailability HostedAvailability = new HostedPluginAvailability();
+    private readonly MixEngine _mixEngine = new(HostedAvailability);
     private readonly ProjectPersistenceService _projectPersistence = new();
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
-    private readonly PreviewPlaybackEngine _previewEngine = new(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+    private readonly PreviewPlaybackEngine _previewEngine = new(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedPluginAvailability: HostedAvailability);
     private readonly DispatcherTimer _previewDebounceTimer;
 
     private SKBitmap? _compositedFrame;
@@ -64,6 +65,13 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        // Must happen before any other bridge call, on this (the WPF UI) thread -- all hosted
+        // plugin lifecycle/editor calls are required to run on the thread that initialized JUCE's
+        // MessageManager (see HostedPluginInstance.Initialize's doc comment).
+        HostedPluginInstance.Initialize();
+        LayerRowViewModel.SharedMixEngine = _mixEngine;
+        LayerRowViewModel.HostedAvailability = HostedAvailability;
+
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
         UpdateAddLayerButtonState();
@@ -396,6 +404,7 @@ public partial class MainWindow : Window
             _ when ReferenceEquals(sender, CompressorTabButton) => CompressorPanel,
             _ when ReferenceEquals(sender, NoiseGateTabButton) => NoiseGatePanel,
             _ when ReferenceEquals(sender, EqTabButton) => EqPanel,
+            _ when ReferenceEquals(sender, ReverbTabButton) => ReverbPanel,
             _ when ReferenceEquals(sender, MelodyneTabButton) => MelodynePanel,
             _ => LimiterPanel,
         };
@@ -404,7 +413,7 @@ public partial class MainWindow : Window
 
     private void ShowSubtab(StackPanel selected)
     {
-        foreach (var panel in new[] { LimiterPanel, CompressorPanel, NoiseGatePanel, EqPanel, MelodynePanel })
+        foreach (var panel in new[] { LimiterPanel, CompressorPanel, NoiseGatePanel, EqPanel, ReverbPanel, MelodynePanel })
             panel.Visibility = ReferenceEquals(panel, selected) ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -412,6 +421,15 @@ public partial class MainWindow : Window
     {
         new MelodyneEditorWindow { Owner = this }.ShowDialog();
     }
+
+    // ----- v6 P3: hosted FabFilter launcher buttons. Each stage panel already switches between
+    // native controls and this launcher via IsXHosted-bound Visibility in XAML; these handlers just
+    // open the live plugin instance's own editor window (never embedded -- P3a task 7). -----
+    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenEqEditor();
+    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenNoiseGateEditor();
+    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenCompressorEditor();
+    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenLimiterEditor();
+    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenReverbEditor();
 
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom (UI_Design_Spec v2) -----
     //
@@ -643,7 +661,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                using var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+                using var exportEngine = new ExportEngine(hostedPluginAvailability: HostedAvailability);
                 exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }

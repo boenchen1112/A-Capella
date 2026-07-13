@@ -25,6 +25,22 @@ public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerM
 /// </summary>
 public class MixEngine : IDisposable
 {
+    // Stage names double as HostedPluginInstanceCache keys (alongside layerId) -- the UI's "Open
+    // Pro-Q 4..." launcher buttons must fetch the exact same cache entry BuildLayerChain uses, so
+    // it edits the live instance actually processing audio rather than an orphaned second one.
+    // Keep these public constants as the single source of truth for both sides.
+    public const string EqStage = "Eq";
+    public const string NoiseGateStage = "NoiseGate";
+    public const string CompressorStage = "Compressor";
+    public const string LimiterStage = "Limiter";
+    public const string ReverbStage = "Reverb";
+
+    public const string EqPluginLabel = "FabFilter Pro-Q 4";
+    public const string NoiseGatePluginLabel = "FabFilter Pro-G";
+    public const string CompressorPluginLabel = "FabFilter Pro-C 3";
+    public const string LimiterPluginLabel = "FabFilter Pro-L 2";
+    public const string ReverbPluginLabel = "FabFilter Pro-R 2";
+
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
 
     /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
@@ -46,6 +62,14 @@ public class MixEngine : IDisposable
     }
 
     public void Dispose() => _hostedInstances.Dispose();
+
+    public bool IsHosted(string pluginLabel) => _availability.IsAvailable(pluginLabel);
+
+    /// <summary>Fetches (lazily creating) the same cached hosted instance BuildLayerChain uses for
+    /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on.
+    /// Must be called on the app's UI thread (see HostedPluginInstance.Initialize's doc comment).</summary>
+    public HostedPluginInstance GetOrCreateHostedInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
+        _hostedInstances.GetOrCreate(layerId, stage, HostedPluginCatalog.KnownPluginPaths[pluginLabel], sampleRate, HostedPluginSampleProvider.DefaultBlockSize, initialState);
 
     public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
         BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
@@ -95,29 +119,26 @@ public class MixEngine : IDisposable
 
         int totalHostedLatency = 0;
 
-        chain = ApplyStage(chain, layer.LayerId, "NoiseGate", "FabFilter Pro-G", parameters.NoiseGateHostedState,
+        chain = ApplyStage(chain, layer.LayerId, NoiseGateStage, NoiseGatePluginLabel, parameters.NoiseGateHostedState,
             outputSampleRate, ref totalHostedLatency,
             s => new NoiseGateSampleProvider(s, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs));
 
         if (parameters.CompressorEnabled)
         {
-            chain = ApplyStage(chain, layer.LayerId, "Compressor", "FabFilter Pro-C 3", parameters.CompressorHostedState,
+            chain = ApplyStage(chain, layer.LayerId, CompressorStage, CompressorPluginLabel, parameters.CompressorHostedState,
                 outputSampleRate, ref totalHostedLatency,
                 s => new CompressorSampleProvider(s, parameters.CompressorThresholdDb, parameters.CompressorRatio));
         }
 
-        chain = ApplyStage(chain, layer.LayerId, "Eq", "FabFilter Pro-Q 4", parameters.EqHostedState,
+        chain = ApplyStage(chain, layer.LayerId, EqStage, EqPluginLabel, parameters.EqHostedState,
             outputSampleRate, ref totalHostedLatency,
             s => new ThreeBandEqSampleProvider(s, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb));
 
         ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
 
-        const string reverbLabel = "FabFilter Pro-R 2";
-        if (parameters.ReverbEnabled && _availability.IsAvailable(reverbLabel))
+        if (parameters.ReverbEnabled && _availability.IsAvailable(ReverbPluginLabel))
         {
-            string reverbPath = HostedPluginCatalog.KnownPluginPaths[reverbLabel];
-            var reverbInstance = _hostedInstances.GetOrCreate(layer.LayerId, "Reverb", reverbPath,
-                outputSampleRate, HostedPluginSampleProvider.DefaultBlockSize, parameters.ReverbHostedState);
+            var reverbInstance = GetOrCreateHostedInstance(layer.LayerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, outputSampleRate);
 
             double tailSeconds = Math.Clamp(reverbInstance.TailSeconds, 0.0, MaxReverbTailSeconds);
             int tailFrames = (int)(tailSeconds * outputSampleRate);
@@ -133,7 +154,7 @@ public class MixEngine : IDisposable
 
         if (parameters.LimiterEnabled)
         {
-            withGain = ApplyStage(withGain, layer.LayerId, "Limiter", "FabFilter Pro-L 2", parameters.LimiterHostedState,
+            withGain = ApplyStage(withGain, layer.LayerId, LimiterStage, LimiterPluginLabel, parameters.LimiterHostedState,
                 outputSampleRate, ref totalHostedLatency,
                 s => new LimiterSampleProvider(s, parameters.LimiterCeilingDb, parameters.LimiterGainDb));
         }
@@ -152,8 +173,7 @@ public class MixEngine : IDisposable
         if (!_availability.IsAvailable(hostedPluginLabel))
             return buildNative(source);
 
-        string path = HostedPluginCatalog.KnownPluginPaths[hostedPluginLabel];
-        var instance = _hostedInstances.GetOrCreate(layerId, stageName, path, sampleRate, HostedPluginSampleProvider.DefaultBlockSize, hostedState);
+        var instance = GetOrCreateHostedInstance(layerId, stageName, hostedPluginLabel, hostedState, sampleRate);
         var hosted = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize);
         totalHostedLatency += hosted.LatencySamples;
         return hosted;

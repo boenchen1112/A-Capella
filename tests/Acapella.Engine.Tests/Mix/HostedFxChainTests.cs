@@ -86,11 +86,9 @@ public class HostedFxChainTests
         parameters.EqHostedState = tweakedState;
 
         using var engine2 = new MixEngine(new OnlyAvailable("FabFilter Pro-Q 4"));
-        var cache = typeof(MixEngine).GetField("_hostedInstances", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .GetValue(engine2) as HostedPluginInstanceCache;
         var restoredChain = engine2.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
         ReadAll(restoredChain, 512); // force lazy instance creation
-        var restoredInstance = cache!.GetOrCreate(0, "Eq", HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], SampleRate, HostedPluginSampleProvider.DefaultBlockSize, null);
+        var restoredInstance = engine2.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
         Assert.Equal(0.8f, restoredInstance.GetParameterValue(gainParam), precision: 2);
     }
 

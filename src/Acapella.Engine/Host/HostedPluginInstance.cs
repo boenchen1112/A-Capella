@@ -63,6 +63,22 @@ public sealed class HostedPluginInstance : IDisposable
 
     public void SetParameterValue(int index, float value) => NativeHostBridge.aca_set_parameter_value(_handle, index, value);
 
+    /// <summary>Opens the plugin's own editor in its own top-level window (P3a task 7 -- never
+    /// embedded in WPF). Must be called on the same thread as HostedPluginInstance.Initialize()
+    /// (the WPF UI thread) -- JUCE's MessageManager is bound to whichever thread that was.
+    /// Returns false if the plugin has no editor.</summary>
+    public bool ShowEditorWindow(string title) => NativeHostBridge.aca_show_editor_window(_handle, title) != 0;
+
+    /// <summary>Closes the editor window if open. Safe to call when none is open. Same
+    /// thread-affinity requirement as ShowEditorWindow.</summary>
+    public void CloseEditorWindow() => NativeHostBridge.aca_close_editor_window(_handle);
+
+    /// <summary>Binds JUCE's MessageManager to the calling thread. Call exactly once, from the
+    /// app's WPF UI thread, before any other HostedPluginInstance/HostedPluginAvailability call --
+    /// every plugin-lifecycle and editor-window call must then happen on that same thread
+    /// (ProcessBlock is the only call meant to run on a different, audio-processing thread).</summary>
+    public static void Initialize() => NativeHostBridge.aca_initialize();
+
     public void ProcessBlock(float[] inL, float[] inR, float[] outL, float[] outR, int numSamples) =>
         NativeHostBridge.aca_process_block(_handle, inL, inR, outL, outR, numSamples);
 

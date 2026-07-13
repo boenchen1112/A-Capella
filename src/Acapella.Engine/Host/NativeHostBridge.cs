@@ -11,6 +11,15 @@ internal static class NativeHostBridge
 {
     private const string Lib = "AcapellaHostNative";
 
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_initialize();
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_show_editor_window(IntPtr handle, string title);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_close_editor_window(IntPtr handle);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern int aca_scan_plugin(string pluginPath,
         byte[] outName, int outNameSize,
