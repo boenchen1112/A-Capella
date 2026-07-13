@@ -20,6 +20,9 @@ namespace Acapella.App;
 
 public partial class MainWindow : Window
 {
+    public static readonly RoutedCommand UndoCommand = new();
+    public static readonly RoutedCommand RedoCommand = new();
+
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
     private readonly LayerCollection _layers = new();
@@ -40,10 +43,17 @@ public partial class MainWindow : Window
     // Metronome now lives only inside RecordSetupWindow (see UI_Design_Spec.md); this just carries
     // the last-used BPM forward across dialogs and into project save/load.
     private double _metronomeBpm = 120;
+    private float _masterVolumeDb;
     private int _previewRefreshGeneration;
     private bool _isScrubbing;
     private double _pixelsPerSecond = 60;
     private LayerRowViewModel? _mixingLayer;
+
+    // Undo/redo (v5 P1 task 2): snapshots the whole project DTO on each discrete edit (slider
+    // release/focus-loss, not per-tick). _applyingHistory guards against re-pushing a snapshot
+    // while an Undo/Redo restore itself is mutating bound view models.
+    private readonly ProjectUndoStack _undoStack = new();
+    private bool _applyingHistory;
 
     public MainWindow()
     {
@@ -77,7 +87,144 @@ public partial class MainWindow : Window
         _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => PlayStopButton.Content = "▶ Play");
 
         Closing += (s, e) => { _previewEngine.Dispose(); _compositedFrame?.Dispose(); _pendingFrame?.Dispose(); };
+
+        _undoStack.Reset(CurrentProjectDto());
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
     }
+
+    // ----- Undo/redo (v5 P1 task 2) -----
+
+    private ProjectFileDto CurrentProjectDto() =>
+        _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs, _masterVolumeDb);
+
+    /// <summary>Call after any discrete project edit completes (a slider release, a checkbox
+    /// toggle, adding/recording/uploading a layer) -- never mid-drag, so undo steps correspond to
+    /// one user-visible change each.</summary>
+    private void PushUndoSnapshot()
+    {
+        if (_applyingHistory) return;
+        _undoStack.Push(CurrentProjectDto());
+    }
+
+    private void RestoreProjectDto(ProjectFileDto dto)
+    {
+        _applyingHistory = true;
+        try
+        {
+            var (loadedLayers, bpm, latencyOffset, masterVolumeDb) = _projectPersistence.FromDto(dto);
+            _layers.Restore(loadedLayers.Layers);
+            _lastCalibratedOffsetMs = latencyOffset;
+            _metronomeBpm = bpm;
+            _masterVolumeDb = masterVolumeDb;
+            MasterVolumeSlider.Value = masterVolumeDb;
+
+            RestoreTracksFromLayers();
+            if (_mixingLayer is not null)
+            {
+                var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _mixingLayer.Layer?.LayerId);
+                _mixingLayer = stillPresent;
+                if (stillPresent is not null)
+                {
+                    MixingTopStripPanel.DataContext = stillPresent;
+                    MixingContentGrid.DataContext = stillPresent;
+                    MixingHeaderText.Text = $"Mixing — {stillPresent.DisplayName}";
+                }
+                else
+                {
+                    BackToEditor_Click(this, new RoutedEventArgs());
+                }
+            }
+            RefreshPreviewLive();
+        }
+        finally
+        {
+            _applyingHistory = false;
+        }
+    }
+
+    private void UndoMenuItem_Click(object sender, RoutedEventArgs e) => PerformUndo();
+    private void RedoMenuItem_Click(object sender, RoutedEventArgs e) => PerformRedo();
+    private void UndoCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => PerformUndo();
+    private void RedoCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => PerformRedo();
+
+    private void PerformUndo()
+    {
+        var restored = _undoStack.Undo();
+        if (restored is not null)
+        {
+            RestoreProjectDto(restored);
+            StatusText.Text = "Undo.";
+        }
+    }
+
+    private void PerformRedo()
+    {
+        var restored = _undoStack.Redo();
+        if (restored is not null)
+        {
+            RestoreProjectDto(restored);
+            StatusText.Text = "Redo.";
+        }
+    }
+
+    /// <summary>Commit-style handler shared by every FX/mix-parameter slider (Style="{StaticResource
+    /// CommitSlider}"): pushes an undo snapshot once the drag ends, not per-tick.</summary>
+    private void CommitSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+
+    private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+
+    private void CommitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => PushUndoSnapshot();
+
+    private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+
+    // ----- Keyboard transport shortcuts (v5 P1 task 6) -----
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Don't hijack typing in a trim/rename textbox.
+        if (Keyboard.FocusedElement is TextBox) return;
+
+        switch (e.Key)
+        {
+            case Key.Space:
+                PlayStopButton_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+            case Key.Left:
+                SeekRelative(-5000);
+                e.Handled = true;
+                break;
+            case Key.Right:
+                SeekRelative(5000);
+                e.Handled = true;
+                break;
+            case Key.Home:
+                RestartButton_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void SeekBackButton_Click(object sender, RoutedEventArgs e) => SeekRelative(-5000);
+    private void SeekForwardButton_Click(object sender, RoutedEventArgs e) => SeekRelative(5000);
+
+    private void SeekRelative(double deltaMs)
+    {
+        double target = Math.Max(0, Math.Min(_previewEngine.DurationMs, _previewEngine.PositionMs + deltaMs));
+        Task.Run(() =>
+        {
+            _previewEngine.Seek(target);
+            Dispatcher.Invoke(UpdateTimelineRangeUi);
+        });
+    }
+
+    private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        _masterVolumeDb = (float)e.NewValue;
+        _previewEngine.MasterVolumeDb = _masterVolumeDb;
+    }
+
+    private void MasterVolumeSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
 
     private void DrainFrameMailbox()
     {
@@ -112,6 +259,8 @@ public partial class MainWindow : Window
         row.LiveParamChanged += DebounceRefreshPreview;
         _tracks.Add(row);
         UpdateAddLayerButtonState();
+        // Not pushed to undo history yet: this row has no LayerModel until Record/Upload attaches
+        // a source, so it isn't part of the ProjectFileDto snapshot ToDto serializes.
     }
 
     private void UpdateAddLayerButtonState() =>
@@ -120,7 +269,14 @@ public partial class MainWindow : Window
     private void RecordChoice_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        OpenRecordSetupForRow(row);
+    }
 
+    /// <summary>Shared by a track row's own "Record" button and the Tools menu's "Recording
+    /// setup..."/"Calibrate latency..." entries -- both funnel into the same capture-setup dialog
+    /// (its Calibrate button is usable standalone, without completing a recording).</summary>
+    private void OpenRecordSetupForRow(LayerRowViewModel row)
+    {
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _metronomeBpm) { Owner = this };
         bool? result = dialog.ShowDialog();
         _metronomeBpm = dialog.Bpm;
@@ -130,7 +286,23 @@ public partial class MainWindow : Window
             row.Layer = dialog.CreatedLayer;
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
+            PushUndoSnapshot();
         }
+    }
+
+    private void RecordingSetupMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tracks.Count >= LayerCollection.MaxLayers)
+        {
+            StatusText.Text = "Layer cap reached (4).";
+            return;
+        }
+
+        var row = new LayerRowViewModel(_tracks.Count + 1);
+        row.LiveParamChanged += DebounceRefreshPreview;
+        _tracks.Add(row);
+        UpdateAddLayerButtonState();
+        OpenRecordSetupForRow(row);
     }
 
     private void UploadChoice_Click(object sender, RoutedEventArgs e)
@@ -149,6 +321,7 @@ public partial class MainWindow : Window
         row.Layer = _layers.Add(kind, dialog.FileName);
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
+        PushUndoSnapshot();
     }
 
     private static bool IsAudioOnlyExtension(string ext) =>
@@ -370,7 +543,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var dto = _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs);
+            var dto = CurrentProjectDto();
             // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
             // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
             string filePath = dialog.FileName.EndsWith(".acapella.json", StringComparison.OrdinalIgnoreCase)
@@ -393,15 +566,18 @@ public partial class MainWindow : Window
         try
         {
             var dto = _projectPersistence.LoadFromFile(dialog.FileName);
-            var (loadedLayers, bpm, latencyOffset) = _projectPersistence.FromDto(dto);
+            var (loadedLayers, bpm, latencyOffset, masterVolumeDb) = _projectPersistence.FromDto(dto);
 
             _layers.Restore(loadedLayers.Layers);
             _lastCalibratedOffsetMs = latencyOffset;
             _metronomeBpm = bpm;
+            _masterVolumeDb = masterVolumeDb;
+            MasterVolumeSlider.Value = masterVolumeDb;
 
             RestoreTracksFromLayers();
             RefreshPreviewLive();
             StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({loadedLayers.Layers.Count} layer(s)).";
+            _undoStack.Reset(CurrentProjectDto());
         }
         catch (Exception ex)
         {
@@ -421,18 +597,18 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
 
         StatusText.Text = "Exporting...";
-        ExportButton.IsEnabled = false;
+        ExportMenuItem.IsEnabled = false;
 
         // M7: snapshot via a DTO round-trip so a mid-export layer/parameter edit can't race the
         // background export task's read of live state.
-        var snapshotDto = _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs);
-        var (snapshotLayers, _, _) = _projectPersistence.FromDto(snapshotDto);
+        var snapshotDto = CurrentProjectDto();
+        var (snapshotLayers, _, _, snapshotMasterVolumeDb) = _projectPersistence.FromDto(snapshotDto);
 
         Task.Run(() =>
         {
             try
             {
-                new ExportEngine().Export(snapshotLayers, dialog.FileName);
+                new ExportEngine().Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)
@@ -441,8 +617,29 @@ public partial class MainWindow : Window
             }
             finally
             {
-                Dispatcher.Invoke(() => ExportButton.IsEnabled = true);
+                Dispatcher.Invoke(() => ExportMenuItem.IsEnabled = true);
             }
         });
+    }
+
+    // ----- Menu bar: File > New, Help > About (v5 P1 task 1) -----
+
+    private void NewProjectMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        _layers.Restore(Enumerable.Empty<LayerModel>());
+        _tracks.Clear();
+        _lastCalibratedOffsetMs = null;
+        _masterVolumeDb = 0f;
+        MasterVolumeSlider.Value = 0;
+        UpdateAddLayerButtonState();
+        RefreshPreviewLive();
+        _undoStack.Reset(CurrentProjectDto());
+        StatusText.Text = "New project.";
+    }
+
+    private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show(this, "Acapella\nMulti-layer vocal recording and mixing.", "About Acapella",
+            MessageBoxButton.OK, MessageBoxImage.Information);
     }
 }
