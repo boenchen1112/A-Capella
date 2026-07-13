@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Acapella.App.ViewModels;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Persistence;
 using Acapella.Engine.Preview;
@@ -29,10 +30,16 @@ public partial class MainWindow : Window
     // L1: a directory next to the executable works regardless of how/where the app is launched.
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
-    private readonly MixEngine _mixEngine = new();
+    // v6 P3: MixEngine's default constructor auto-selects a hosted FabFilter plugin over native
+    // DSP wherever it's detected -- correct per the plan, but only once there's a way to actually
+    // control the hosted plugin's parameters. That's the launcher + own-window editor from P3a
+    // task 7, not yet built, so a hosted stage would silently run at its untouched factory-default
+    // state while these sliders (bound to LayerMixParameters) do nothing audible. Force native
+    // until that UI exists; drop this override once P3a task 7 ships.
+    private readonly MixEngine _mixEngine = new(NoHostedPluginsAvailable.Instance);
     private readonly ProjectPersistenceService _projectPersistence = new();
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
-    private readonly PreviewPlaybackEngine _previewEngine = new(canvasWidth: 640, canvasHeight: 480, fps: 30);
+    private readonly PreviewPlaybackEngine _previewEngine = new(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
     private readonly DispatcherTimer _previewDebounceTimer;
 
     private SKBitmap? _compositedFrame;
@@ -636,7 +643,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                using var exportEngine = new ExportEngine();
+                using var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
                 exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
