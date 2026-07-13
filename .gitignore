@@ -4,3 +4,4 @@ media/
 recordings/
 *.user
 .vs/
+src/Acapella.Host.Native/build/

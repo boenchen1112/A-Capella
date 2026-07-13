@@ -77,14 +77,14 @@ Test recordings and other captured audio/video are large binaries and don't belo
 
 **Installed:**
 - Git
-- Visual Studio 2022, "Desktop development with C++" workload (default components: MSVC Build Tools, Windows 11 SDK, CMake tools for Windows, vcpkg, AddressSanitizer)
-- Melodyne (via FL Studio's plugin install). Phase 0 de-risk check confirmed: `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3` exists, file/product version 5.4.1.4. Tier and ARA-factory support not yet confirmed at runtime (requires loading it in a host) — that verification is deferred to Phase 2A's spike as planned; this check only confirms presence + version.
+- Visual Studio "18" (2026) Community, C++ workload (MSVC 14.51.36231, Windows 10 SDK 10.0.26100.0)
+- Standalone CMake 4.3.4 (`cmake` on PATH)
+- Melodyne (via FL Studio's plugin install): `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3`, v5.4.1.4. Tier/ARA-factory support unconfirmed at runtime (deferred to Phase 2A's spike).
+- **All five FabFilter v6 targets, confirmed present** under `C:\Program Files\Common Files\VST3\`: Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of v6 scope).
+- JUCE: not yet cloned as of this note; clone when P3a's hosting code starts (JUCE bundles its own VST3 SDK — do not also clone Steinberg's VST3 SDK separately).
 
-**Not yet installed (install via winget/git when the phase that needs them starts, not preemptively):**
-- .NET SDK (`winget install Microsoft.DotNet.SDK.8`)
-- Standalone CMake (`winget install Kitware.CMake`)
-- FFmpeg (`winget install Gyan.FFmpeg`)
-- JUCE + VST3 SDK (git clone, deferred until Phase 2A)
+**Known environment defect — native (C++) toolchain:**
+`C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\v145\Microsoft.VCToolsVersion.VC.14.51.props` (and its sibling `.txt`) are corrupted (zero-byte) inside the VS install. This breaks `vcvarsall.bat`'s toolset-version resolution and the CMake Visual-Studio-generator's `VCTargetsPath` probe — i.e. `cmake -G "Visual Studio 18 2026"` and anything that shells out to `vcvarsall.bat` fails. Repairing it needs admin rights (Program Files) or a VS "Repair", neither done here. **Workaround in place:** `src/Acapella.Host.Native/build.ps1` sets `INCLUDE`/`LIB`/`PATH` by hand from the known MSVC/SDK install paths and uses CMake's `NMake Makefiles` generator, which calls `cl.exe`/`link.exe` directly and never touches the broken file. Confirmed working (see `AcapellaHostNativeDll` probe). If VS is repaired later, the plain `cmake -G "Visual Studio 18 2026" -A x64` path should also work again, but keep build.ps1 as the documented default until someone confirms that.
 
 **Locked technology choices** (do not reconsider without triggering Pause Rule 2):
 - UI: WPF
@@ -92,14 +92,16 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Video/audio capture, decode, encode, mux: FFmpeg via CLI + raw pipes (escalate to FFmpeg.AutoGen only if piped preview decode is too slow — pre-approved, see Pause Rule 2)
 - Compositing: SkiaSharp (SkiaSharp.Views.WPF for the WPF integration)
 - Pitch correction fallback: Rubber Band Library + a pitch-tracking library
-- Plugin hosting bridge (Phase 2A only): JUCE (C++) exposing a plain C ABI, called from C# via P/Invoke — not C++/CLI
+- Plugin hosting bridge (v6 P3a, also used by Phase 2A): JUCE (C++, `juce_audio_processors`' `VST3PluginFormat`) exposing a plain C ABI, called from C# via P/Invoke — not C++/CLI. Own-window (JUCE `DocumentWindow`) native editors, never embedded inline.
+- Hosted plugin vendors (v6, hard limit): only FabFilter (Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2) and Melodyne. No other vendor without a new explicit decision.
 
 **Canonical commands:**
-- Build: `dotnet build` (from repo root, builds `Acapella.sln`)
+- Build (.NET solution): `dotnet build` (from repo root, builds `Acapella.sln`)
+- Build native module (only needed when `src/Acapella.Host.Native` changes): `powershell -File src/Acapella.Host.Native/build.ps1` — must run *before* `dotnet build` picks up a changed `AcapellaHostNative.dll` (both `Acapella.App.csproj` and `Acapella.Engine.Tests.csproj` copy it into their own output post-build).
 - Run app: `dotnet run --project src/Acapella.App/Acapella.App.csproj`
-- Solution layout: `src/Acapella.App` (WPF UI project) references `src/Acapella.Engine` (class library for capture/sync/mix/composite/export logic)
+- Solution layout: `src/Acapella.App` (WPF UI) references `src/Acapella.Engine` (capture/sync/mix/composite/export/hosting logic); `src/Acapella.Host.Native` (C++/CMake, built separately) is the VST3 hosting bridge DLL.
 
 ## Reference
 
-- Full phased plan, architecture, and per-phase acceptance criteria: `Acapella_Build_Plan.md`
-- Confirmed scope snapshot: 4-layer cap, upload-or-record for layer 1, toggleable metronome, EQ/pan/noise gate/metronome/pitch correction FX, fixed 2x2 grid, MP4 output, native Windows C#/.NET + JUCE native module.
+- Full phased plan, architecture, and per-phase acceptance criteria: `Acapella_Build_Plan_v6.md` (supersedes v5; v5/v4/original kept for history).
+- Confirmed scope snapshot: 4-layer cap, upload-or-record for layer 1, toggleable metronome, EQ/pan/noise gate/compressor/limiter/pitch-correction/reverb FX (native + FabFilter-hosted backends), fixed 2x2 grid, MP4 output, native Windows C#/.NET + JUCE native module, Melodyne (ARA) + FabFilter (generic VST3) as the only hosted-plugin vendors.

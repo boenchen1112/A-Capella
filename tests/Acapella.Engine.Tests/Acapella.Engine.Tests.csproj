@@ -25,4 +25,14 @@
     <ProjectReference Include="..\..\src\Acapella.Engine\Acapella.Engine.csproj" />
   </ItemGroup>
 
+  <!-- v6 P3a task 0: the test host process needs AcapellaHostNative.dll alongside its own
+       binaries to resolve the [DllImport] probe/hosting calls; see Acapella.App.csproj's
+       matching target for why this is a separate build step (build.ps1), not part of dotnet build. -->
+  <Target Name="CopyAcapellaHostNative" AfterTargets="Build">
+    <ItemGroup>
+      <AcapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\..\src\Acapella.Host.Native\build\bin\$(Configuration)\AcapellaHostNative.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AcapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(AcapellaHostNativeDll.Identity)')" />
+  </Target>
+
 </Project>
