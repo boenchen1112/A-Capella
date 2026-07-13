@@ -106,13 +106,13 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock x:Name="TimeReadoutText" Grid.Column="0" Text="0:00 / 0:00" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
-                                <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="28">
+                                <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="46">
                                     <Slider x:Name="TimelineSlider" Minimum="0" Maximum="1000" Value="0"
-                                            Width="640"
+                                            Width="640" Height="24"
                                             PreviewMouseDown="TimelineSlider_PreviewMouseDown"
                                             PreviewMouseUp="TimelineSlider_PreviewMouseUp"
                                             ValueChanged="TimelineSlider_ValueChanged"
-                                            VerticalAlignment="Center"/>
+                                            VerticalAlignment="Top"/>
                                 </ScrollViewer>
                             </Grid>
                         </StackPanel>
