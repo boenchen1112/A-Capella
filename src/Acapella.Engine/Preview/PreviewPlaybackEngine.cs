@@ -138,7 +138,11 @@ public class PreviewPlaybackEngine : IDisposable
     /// it always composites without labels regardless.</summary>
     public volatile bool ShowLayerLabels = true;
 
-    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null, IHostedPluginAvailability? hostedPluginAvailability = null)
+    /// <summary>hostedService, when given, is shared with MainWindow's launcher UI and
+    /// ExportEngine (v7 Q0 task 1, audit A1) so a plugin edit is audible on the next rebuild and
+    /// export captures the same live state -- pass hostedPluginAvailability instead only for
+    /// isolated tests/callers that don't need that sharing.</summary>
+    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null, IHostedPluginAvailability? hostedPluginAvailability = null, HostedPluginService? hostedService = null)
     {
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
@@ -147,7 +151,7 @@ public class PreviewPlaybackEngine : IDisposable
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
         _audioSink = audioSink ?? new WasapiPreviewAudioSink();
-        _mixEngine = new MixEngine(hostedPluginAvailability);
+        _mixEngine = hostedService is not null ? new MixEngine(hostedService) : new MixEngine(hostedPluginAvailability);
 
         _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
         _commandThread.Start();
@@ -159,6 +163,15 @@ public class PreviewPlaybackEngine : IDisposable
             command();
     }
 
+    // v7 Q0 (audit A3): the command thread this queues onto now calls into HostedPluginService
+    // during chain builds, which blocks-marshals hosted-plugin lifecycle calls onto the WPF UI
+    // thread (WpfHostedPluginDispatcher). That is only deadlock-free because every call site into a
+    // queued method (Play/Seek/SetLayers/Stop/Restart) already runs off the UI thread (Task.Run) --
+    // see MainWindow's transport handlers. If a future call site invoked one of these methods
+    // directly on the UI thread instead, that call would block in done.Wait() below while the
+    // command thread's dispatcher.Invoke blocks waiting for the very same (now-busy) UI thread:
+    // permanent deadlock on the first hosted-plugin chain build. Keep every UI-thread call site
+    // wrapped in Task.Run (or otherwise off the UI thread).
     private void Enqueue(Action action)
     {
         using var done = new ManualResetEventSlim(false);

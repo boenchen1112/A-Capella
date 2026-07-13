@@ -16,6 +16,7 @@
 #include <juce_events/juce_events.h>
 #include <memory>
 #include <cstring>
+#include <atomic>
 
 #if defined(_DEBUG) && defined(_MSC_VER)
 #define _CRTDBG_MAP_ALLOC
@@ -57,12 +58,25 @@ namespace
         return init;
     }
 
+    // v7 Q0 task 2 (audit B8): aca_scan_plugin/aca_create_instance used to call juceInit()
+    // themselves, so whichever thread queried plugin availability first silently bound JUCE's
+    // MessageManager to itself -- if that happened to be a background thread before
+    // aca_initialize() ran on the real UI thread, every later "correct" UI-thread call would then
+    // be on the wrong thread. aca_initialize() is now the only thing allowed to bind it; scan/create
+    // just check the flag and fail loudly instead of self-initialising.
+    std::atomic<bool> g_initialized{false};
+
     struct AcaPluginInstance
     {
         std::unique_ptr<AudioPluginInstance> instance;
         AudioBuffer<float> scratch; // 2-channel scratch buffer reused across processBlock calls
         MidiBuffer midi;
         std::unique_ptr<juce::DocumentWindow> editorWindow; // task 7: own top-level window, never embedded
+
+        // v7 Q0 task 6 (audit B4): shared with any PluginEditorWindow currently open on this
+        // instance so a deferred close callback can tell whether `this` is still alive without
+        // dereferencing it -- see PluginEditorWindow::closeButtonPressed.
+        std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
     };
 
     // Task 7: the plugin's own editor in its own top-level window (never embedded in WPF -- see
@@ -73,7 +87,8 @@ namespace
     {
     public:
         PluginEditorWindow(const juce::String& name, juce::AudioProcessorEditor* editor, AcaPluginInstance* owner)
-            : DocumentWindow(name, juce::Colours::darkgrey, DocumentWindow::closeButton), _owner(owner)
+            : DocumentWindow(name, juce::Colours::darkgrey, DocumentWindow::closeButton),
+              _owner(owner), _ownerAlive(owner->alive)
         {
             setUsingNativeTitleBar(true);
             setContentOwned(editor, true);
@@ -87,14 +102,27 @@ namespace
         // call stack (self-destruction mid-call -- the same class of bug as the heap corruption
         // chased earlier this session). Posting to the next message-loop iteration lets this call
         // return safely before the object is destroyed.
+        //
+        // v7 Q0 task 6 (audit B4): if aca_release_instance runs (and deletes the owning
+        // AcaPluginInstance) before this queued callback fires -- e.g. the user closes an editor
+        // and deletes its layer in the same UI beat -- `ownerCopy` would dangle. _ownerAlive is a
+        // shared_ptr independent of the AcaPluginInstance's own lifetime, flipped to false by
+        // aca_release_instance before it deletes the instance, so the callback can tell not to
+        // touch owner memory at all rather than merely hoping it's still valid.
         void closeButtonPressed() override
         {
             auto* ownerCopy = _owner;
-            juce::MessageManager::callAsync([ownerCopy] { ownerCopy->editorWindow.reset(); });
+            auto ownerAlive = _ownerAlive;
+            juce::MessageManager::callAsync([ownerCopy, ownerAlive]
+            {
+                if (*ownerAlive)
+                    ownerCopy->editorWindow.reset();
+            });
         }
 
     private:
         AcaPluginInstance* _owner;
+        std::shared_ptr<std::atomic<bool>> _ownerAlive;
     };
 
     void copyToBuffer(char* outBuffer, int outBufferSize, const String& value)
@@ -138,15 +166,17 @@ extern "C"
     __declspec(dllexport) void aca_initialize()
     {
         juceInit();
+        g_initialized = true;
     }
 
     // Task 1: scan. Returns 1 if at least one plugin type was found in pluginPath, else 0.
     // Writes the first found type's name/version into caller-provided buffers (truncated, NUL-terminated).
+    // v7 Q0 (audit B8): returns 0 (not-found) if aca_initialize() hasn't run yet -- see g_initialized.
     __declspec(dllexport) int aca_scan_plugin(const char* pluginPath,
                                                char* outName, int outNameSize,
                                                char* outVersion, int outVersionSize)
     {
-        juceInit();
+        if (!g_initialized) return 0;
         VST3PluginFormat format;
         OwnedArray<PluginDescription> descriptions;
         format.findAllTypesForFile(descriptions, String(pluginPath));
@@ -163,11 +193,16 @@ extern "C"
     // sampleRate/maxBlockSize are applied immediately via prepareToPlay (no separate prepare call --
     // VST3 plugins need a sample rate/block size at construction time for their own internal setup,
     // so splitting instantiate from prepare would just mean prepare is always called right after).
+    // v7 Q0 (audit B8): fails loudly if aca_initialize() hasn't run yet, instead of self-initialising.
     __declspec(dllexport) void* aca_create_instance(const char* pluginPath,
                                                      double sampleRate, int maxBlockSize,
                                                      char* outError, int outErrorSize)
     {
-        juceInit();
+        if (!g_initialized)
+        {
+            copyToBuffer(outError, outErrorSize, "aca_initialize() was not called before aca_create_instance()");
+            return nullptr;
+        }
         VST3PluginFormat format;
         OwnedArray<PluginDescription> descriptions;
         format.findAllTypesForFile(descriptions, String(pluginPath));
@@ -232,12 +267,26 @@ extern "C"
         return params[index]->getValue();
     }
 
+    // v7 Q0 (audit B6): setValueNotifyingHost (with its begin/end change gesture) instead of the
+    // bare setValue -- required for the plugin's own editor and internal processor to observe the
+    // change coherently. Unused by the UI today, but task 8's state-polling work depends on this
+    // being correct for any future automation/UI-driven parameter writes.
     __declspec(dllexport) void aca_set_parameter_value(void* handle, int index, float value)
     {
         if (handle == nullptr) return;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
         if (index < 0 || index >= params.size()) return;
-        params[index]->setValue(value);
+        params[index]->setValueNotifyingHost(value);
+    }
+
+    // v7 Q0 task 5 (audit A5): clears a plugin's internal DSP state (lookahead/delay lines, etc.)
+    // without destroying/recreating the instance. The chain builder calls this on every cached
+    // instance it wires into a freshly built chain, so a second/subsequent Play doesn't bleed the
+    // previous run's buffered audio into the new one.
+    __declspec(dllexport) void aca_reset(void* handle)
+    {
+        if (handle == nullptr) return;
+        static_cast<AcaPluginInstance*>(handle)->instance->reset();
     }
 
     // Task 6: stereo-pair audio processing. inL/inR/outL/outR are caller-allocated, numSamples long.
@@ -267,22 +316,24 @@ extern "C"
     }
 
     // Task 8: state persistence (VST3 component+controller state chunk, as a raw byte blob).
-    __declspec(dllexport) int aca_get_state_size(void* handle)
+    // v7 Q0 (audit B5): single native round-trip -- getStateInformation() is called exactly once
+    // per call, and outRequiredSize always reports the real size so a caller whose buffer was too
+    // small can retry with a correctly sized one rather than the old get-size-then-get-data pair
+    // (which could observe two different sizes if the state changed in between). Returns the
+    // number of bytes written into outBuffer (0 if outBuffer was too small or there's no state --
+    // check outRequiredSize to tell "no state" (0) from "buffer too small" (>0)).
+    __declspec(dllexport) int aca_get_state(void* handle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
     {
-        if (handle == nullptr) return 0;
-        MemoryBlock block;
-        static_cast<AcaPluginInstance*>(handle)->instance->getStateInformation(block);
-        return (int) block.getSize();
-    }
-
-    // Returns the number of bytes written (0 on failure / no state / buffer too small).
-    __declspec(dllexport) int aca_get_state(void* handle, unsigned char* outBuffer, int bufferSize)
-    {
-        if (handle == nullptr || outBuffer == nullptr) return 0;
+        if (handle == nullptr)
+        {
+            if (outRequiredSize != nullptr) *outRequiredSize = 0;
+            return 0;
+        }
         MemoryBlock block;
         static_cast<AcaPluginInstance*>(handle)->instance->getStateInformation(block);
         auto n = (int) block.getSize();
-        if (n <= 0 || n > bufferSize) return 0;
+        if (outRequiredSize != nullptr) *outRequiredSize = n;
+        if (n <= 0 || outBuffer == nullptr || n > bufferSize) return 0;
         memcpy(outBuffer, block.getData(), (size_t) n);
         return n;
     }
@@ -323,6 +374,7 @@ extern "C"
     {
         if (handle == nullptr) return;
         auto* h = static_cast<AcaPluginInstance*>(handle);
+        *h->alive = false; // v7 Q0 (audit B4): tell any in-flight callAsync close callback not to touch h
         h->editorWindow.reset(); // close any open editor before tearing down the processor beneath it
         h->instance->releaseResources();
         delete h;

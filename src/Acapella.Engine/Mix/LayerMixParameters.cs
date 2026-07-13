@@ -25,12 +25,20 @@ public class LayerMixParameters
     public float MidBellGainDb { get; set; } = 0f;
     public float HighShelfGainDb { get; set; } = 0f;
 
+    // v7 Q0 task 4 (audit A4): all five FX slots default off, matching the FL Studio insert-slot
+    // model -- an empty slot until the user enables it. Live in-memory default is false for a
+    // brand-new layer; old project files predating this flag migrate to "enabled" on load instead
+    // (see MixParametersDto.NoiseGateEnabled/EqEnabled), since those slots were unconditionally
+    // applied before this flag existed.
+    public bool NoiseGateEnabled { get; set; } = false;
     public float NoiseGateThresholdDb { get; set; } = -60f;
     public float NoiseGateReleaseMs { get; set; } = 100f;
 
     public bool CompressorEnabled { get; set; } = false;
     public float CompressorThresholdDb { get; set; } = -18f;
     public float CompressorRatio { get; set; } = 2f;
+
+    public bool EqEnabled { get; set; } = false;
 
     public bool LimiterEnabled { get; set; } = false;
     public float LimiterCeilingDb { get; set; } = -0.3f;

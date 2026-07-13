@@ -24,11 +24,19 @@ public class LayerRowViewModel : INotifyPropertyChanged
 {
     private LayerModel? _layer;
 
-    // v6 P3: one MixEngine/availability check per app session -- set once by MainWindow at
-    // startup. Shared (not per-row) since there's exactly one of each in this single-window app;
-    // avoids threading an extra constructor parameter through every LayerRowViewModel call site.
-    public static MixEngine? SharedMixEngine { get; set; }
-    public static IHostedPluginAvailability HostedAvailability { get; set; } = NoHostedPluginsAvailable.Instance;
+    // v7 Q0 task 1 (audit A1): one HostedPluginService per app session -- set once by MainWindow
+    // at startup, and the SAME instance MainWindow's MixEngine/PreviewPlaybackEngine/ExportEngine
+    // all share, so the instance this row's launcher buttons open an editor on is always the exact
+    // instance actually processing audio. Static (not per-row) since there's exactly one per this
+    // single-window app; avoids threading an extra constructor parameter through every
+    // LayerRowViewModel call site.
+    public static HostedPluginService? SharedHostedService { get; set; }
+
+    // v7 Q0 task 3 (audit A2): stages whose editor this row has opened at least once -- their live
+    // instance's state gets pulled/polled even after the editor window itself is closed (the
+    // instance stays alive in the shared cache until the layer is removed).
+    private readonly HashSet<string> _openedHostedStages = new();
+    private readonly Dictionary<string, byte[]?> _lastPolledHostedState = new();
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action? LiveParamChanged;
@@ -242,36 +250,65 @@ public class LayerRowViewModel : INotifyPropertyChanged
         set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); LiveParamChanged?.Invoke(); }
     }
 
-    public bool IsReverbHosted => HostedAvailability.IsAvailable(MixEngine.ReverbPluginLabel);
+    public bool IsReverbHosted => SharedHostedService?.IsAvailable(MixEngine.ReverbPluginLabel) ?? false;
 
-    public void OpenReverbEditor() => OpenHostedEditor(MixEngine.ReverbStage, MixEngine.ReverbPluginLabel, () => Params?.ReverbHostedState, s => { if (Params is not null) Params.ReverbHostedState = s; });
+    public void OpenReverbEditor() => OpenHostedEditor(MixEngine.ReverbStage, MixEngine.ReverbPluginLabel);
 
     // ----- Hosted-backend auto-selection (v6 P3 task 1): each stage below shows a native slider
     // panel when its matching FabFilter plugin isn't detected, or a launcher button when it is --
     // never both, never a user-facing selector (see build plan P3 task 1's rationale). -----
 
-    public bool IsEqHosted => HostedAvailability.IsAvailable(MixEngine.EqPluginLabel);
-    public bool IsNoiseGateHosted => HostedAvailability.IsAvailable(MixEngine.NoiseGatePluginLabel);
-    public bool IsCompressorHosted => HostedAvailability.IsAvailable(MixEngine.CompressorPluginLabel);
-    public bool IsLimiterHosted => HostedAvailability.IsAvailable(MixEngine.LimiterPluginLabel);
+    public bool IsEqHosted => SharedHostedService?.IsAvailable(MixEngine.EqPluginLabel) ?? false;
+    public bool IsNoiseGateHosted => SharedHostedService?.IsAvailable(MixEngine.NoiseGatePluginLabel) ?? false;
+    public bool IsCompressorHosted => SharedHostedService?.IsAvailable(MixEngine.CompressorPluginLabel) ?? false;
+    public bool IsLimiterHosted => SharedHostedService?.IsAvailable(MixEngine.LimiterPluginLabel) ?? false;
 
-    public void OpenEqEditor() => OpenHostedEditor(MixEngine.EqStage, MixEngine.EqPluginLabel, () => Params?.EqHostedState, s => { if (Params is not null) Params.EqHostedState = s; });
-    public void OpenNoiseGateEditor() => OpenHostedEditor(MixEngine.NoiseGateStage, MixEngine.NoiseGatePluginLabel, () => Params?.NoiseGateHostedState, s => { if (Params is not null) Params.NoiseGateHostedState = s; });
-    public void OpenCompressorEditor() => OpenHostedEditor(MixEngine.CompressorStage, MixEngine.CompressorPluginLabel, () => Params?.CompressorHostedState, s => { if (Params is not null) Params.CompressorHostedState = s; });
-    public void OpenLimiterEditor() => OpenHostedEditor(MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, () => Params?.LimiterHostedState, s => { if (Params is not null) Params.LimiterHostedState = s; });
+    public void OpenEqEditor() => OpenHostedEditor(MixEngine.EqStage, MixEngine.EqPluginLabel);
+    public void OpenNoiseGateEditor() => OpenHostedEditor(MixEngine.NoiseGateStage, MixEngine.NoiseGatePluginLabel);
+    public void OpenCompressorEditor() => OpenHostedEditor(MixEngine.CompressorStage, MixEngine.CompressorPluginLabel);
+    public void OpenLimiterEditor() => OpenHostedEditor(MixEngine.LimiterStage, MixEngine.LimiterPluginLabel);
 
-    /// <summary>Fetches (or lazily creates) the same cached hosted instance the mix chain actually
-    /// processes audio through and opens its own top-level editor window (P3a task 7). Edits made
-    /// there are audible immediately since it's the live instance, not a copy. State-change
-    /// detection/polling (P3a task 9, so a tweak also persists to the project and marks it dirty)
-    /// is not yet built -- storeState is called once eagerly right after opening as a first-pass
-    /// stand-in so at least an explicit save captures whatever was last read back.</summary>
-    private void OpenHostedEditor(string stage, string pluginLabel, Func<byte[]?> loadState, Action<byte[]?> storeState)
+    /// <summary>Fetches (or lazily creates, via the one shared HostedPluginService -- v7 Q0 task 1,
+    /// audit A1) the same live instance the mix chain actually processes audio through, and opens
+    /// its own top-level editor window (P3a task 7). Edits made there are audible on the next
+    /// rebuild since it's the live instance, not a copy. Marks the stage as "opened" so
+    /// PollHostedStateChanges (task 8) keeps pulling its state even after this editor window is
+    /// closed (the instance itself stays alive until the layer is removed).</summary>
+    private void OpenHostedEditor(string stage, string pluginLabel)
     {
-        if (_layer is null || SharedMixEngine is null) return;
-        var instance = SharedMixEngine.GetOrCreateHostedInstance(_layer.LayerId, stage, pluginLabel, loadState());
-        instance.ShowEditorWindow($"{pluginLabel} — {DisplayName}");
-        storeState(instance.GetState());
+        if (_layer is null || SharedHostedService is null || Params is null) return;
+        var instance = SharedHostedService.GetOrCreateInstance(_layer.LayerId, stage, pluginLabel, HostedStageStateBindings.Get(Params, stage));
+        SharedHostedService.ShowEditor(instance, $"{pluginLabel} — {DisplayName}");
+        _openedHostedStages.Add(stage);
+        _lastPolledHostedState[stage] = HostedStageStateBindings.Get(Params, stage);
+    }
+
+    /// <summary>Pulls live state for every stage this row has ever opened an editor for, and
+    /// updates Params' matching *HostedState field if it changed since the last poll (v7 Q0 task 8,
+    /// audit A2/B11 -- also what lets a Pro-R tail-length change picked up here feed into the next
+    /// chain rebuild). Returns true if anything changed, so the caller can refresh the live preview.
+    /// Cheap when nothing is open (loops zero times) or nothing changed (one native call per open
+    /// stage, no allocation beyond the pulled bytes).</summary>
+    public bool PollHostedStateChanges()
+    {
+        if (_layer is null || SharedHostedService is null || Params is null || _openedHostedStages.Count == 0)
+            return false;
+
+        bool changed = false;
+        foreach (var stage in _openedHostedStages)
+        {
+            var instance = SharedHostedService.TryGetLiveInstance(_layer.LayerId, stage);
+            if (instance is null) continue;
+
+            var newState = SharedHostedService.PullLiveState(instance);
+            var previous = _lastPolledHostedState.GetValueOrDefault(stage);
+            if (previous is not null && newState.AsSpan().SequenceEqual(previous)) continue;
+
+            HostedStageStateBindings.Set(Params, stage, newState);
+            _lastPolledHostedState[stage] = newState;
+            changed = true;
+        }
+        return changed;
     }
 
     // ----- Melodyne subtab -----

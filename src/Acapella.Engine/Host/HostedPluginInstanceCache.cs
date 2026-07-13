@@ -30,6 +30,12 @@ public sealed class HostedPluginInstanceCache : IDisposable
         });
     }
 
+    /// <summary>Non-creating lookup (v7 Q0 task 3, audit B7): true if a live instance already
+    /// exists for (layerId, stage) -- used to push a loaded/restored state into an already-live
+    /// instance without accidentally instantiating a plugin the user never opened.</summary>
+    public bool TryGet(int layerId, string stage, out HostedPluginInstance? instance) =>
+        _instances.TryGetValue(new Key(layerId, stage), out instance);
+
     /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>
     public void Release(int layerId, string stage)
     {

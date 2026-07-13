@@ -18,14 +18,18 @@ public class ExportEngine : IDisposable
     private readonly string _ffmpegPath;
     private readonly string _ffprobePath;
 
-    /// <summary>hostedPluginAvailability defaults to real detection so exports use the same
-    /// FabFilter-when-detected backend as the live preview (v6 P3) -- exports must sound like the
-    /// preview. Pass NoHostedPluginsAvailable.Instance to force pure native processing.</summary>
-    public ExportEngine(string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IHostedPluginAvailability? hostedPluginAvailability = null)
+    /// <summary>hostedService, when given, is the same shared service MainWindow's launcher UI
+    /// and PreviewPlaybackEngine use (v7 Q0 task 1, audit A1/B1): export reuses/reads the live
+    /// instances (reset before processing, per A5) rather than instantiating a stale parallel set
+    /// from the DTO, so export sounds exactly like the preview. Pass hostedPluginAvailability
+    /// instead only for isolated tests/callers that don't need that sharing (defaults to real
+    /// detection so exports use the same FabFilter-when-detected backend as the live preview;
+    /// pass NoHostedPluginsAvailable.Instance to force pure native processing).</summary>
+    public ExportEngine(string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IHostedPluginAvailability? hostedPluginAvailability = null, HostedPluginService? hostedService = null)
     {
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
-        _mixEngine = new MixEngine(hostedPluginAvailability);
+        _mixEngine = hostedService is not null ? new MixEngine(hostedService) : new MixEngine(hostedPluginAvailability);
     }
 
     public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f)

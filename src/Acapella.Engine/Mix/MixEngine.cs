@@ -53,23 +53,67 @@ public class MixEngine : IDisposable
     /// bites on a bogus/inf report, not a real long reverb setting.</summary>
     private const double MaxReverbTailSeconds = 12.0;
 
-    private readonly IHostedPluginAvailability _availability;
-    private readonly HostedPluginInstanceCache _hostedInstances = new();
+    private readonly HostedPluginService _hostedService;
+    // True only when this MixEngine created its own private HostedPluginService (the
+    // availability-only constructor, kept for callers/tests that don't need to share one service
+    // across the whole app session) -- only then does Dispose() also dispose the service. A
+    // MixEngine built from a shared HostedPluginService (v7 Q0 task 1, audit A1: MainWindow,
+    // PreviewPlaybackEngine, and ExportEngine all share one) never owns or disposes it.
+    private readonly bool _ownsHostedService;
 
-    public MixEngine(IHostedPluginAvailability? availability = null)
+    public MixEngine(IHostedPluginAvailability? availability = null) : this(new HostedPluginService(availability))
     {
-        _availability = availability ?? new HostedPluginAvailability();
+        _ownsHostedService = true;
     }
 
-    public void Dispose() => _hostedInstances.Dispose();
+    public MixEngine(HostedPluginService hostedService)
+    {
+        _hostedService = hostedService;
+    }
 
-    public bool IsHosted(string pluginLabel) => _availability.IsAvailable(pluginLabel);
+    public void Dispose()
+    {
+        if (_ownsHostedService) _hostedService.Dispose();
+    }
 
-    /// <summary>Fetches (lazily creating) the same cached hosted instance BuildLayerChain uses for
-    /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on.
-    /// Must be called on the app's UI thread (see HostedPluginInstance.Initialize's doc comment).</summary>
+    public bool IsHosted(string pluginLabel) => _hostedService.IsAvailable(pluginLabel);
+
+    /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
+    /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on
+    /// -- both go through the one shared HostedPluginService, so this is never an orphaned second
+    /// instance (audit A1). Safe to call from any thread: the service marshals the actual creation
+    /// onto the dispatcher thread.</summary>
     public HostedPluginInstance GetOrCreateHostedInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
-        _hostedInstances.GetOrCreate(layerId, stage, HostedPluginCatalog.KnownPluginPaths[pluginLabel], sampleRate, HostedPluginSampleProvider.DefaultBlockSize, initialState);
+        _hostedService.GetOrCreateInstance(layerId, stage, pluginLabel, initialState, sampleRate);
+
+    /// <summary>Pulls each stage's live VST3 state into parameters' matching *HostedState field, for
+    /// every stage that already has a live instance (v7 Q0 task 3, audit A2) -- call before a
+    /// project snapshot (save/export/undo) is taken so the file reflects the user's actual editor
+    /// tweaks, not just the state as of whenever the editor was first opened.</summary>
+    public void SyncLiveStateIntoParameters(int layerId, LayerMixParameters parameters)
+    {
+        foreach (var stage in HostedStageStateBindings.PluginLabelByStage.Keys)
+        {
+            var instance = _hostedService.TryGetLiveInstance(layerId, stage);
+            if (instance is not null)
+                HostedStageStateBindings.Set(parameters, stage, _hostedService.PullLiveState(instance));
+        }
+    }
+
+    /// <summary>Pushes parameters' saved *HostedState blobs into any already-live instances for
+    /// this layerId (v7 Q0 task 3, audit B7) -- call after restoring a project (load, undo/redo),
+    /// since GetOrCreateInstance's initialState only ever applies at first creation and a live
+    /// instance surviving across the restore would otherwise keep its old (pre-restore) state.</summary>
+    public void PushSavedStateIntoLiveInstances(int layerId, LayerMixParameters parameters)
+    {
+        foreach (var stage in HostedStageStateBindings.PluginLabelByStage.Keys)
+        {
+            var instance = _hostedService.TryGetLiveInstance(layerId, stage);
+            var state = HostedStageStateBindings.Get(parameters, stage);
+            if (instance is not null && state is { Length: > 0 })
+                _hostedService.PushState(instance, state);
+        }
+    }
 
     public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
         BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
@@ -106,6 +150,15 @@ public class MixEngine : IDisposable
 
     public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)
     {
+        // v7 Q0 (audit A3): MainWindow fires EnsureScanned() via Task.Run at startup, but that's
+        // fire-and-forget -- if a chain build (on the command thread or export's Task.Run thread)
+        // reaches IsAvailable() before that pre-warm finishes, HostedPluginAvailability's lazy scan
+        // would run its first native aca_scan_plugin call on THIS (non-UI) thread instead, which is
+        // exactly the off-thread-scanning hazard A3 calls out. Calling EnsureScanned() here blocks
+        // until the marshaled scan completes on the dispatcher thread; every call after the first
+        // short-circuits on _scanned before touching the dispatcher, so this is free afterward.
+        _hostedService.EnsureScanned();
+
         var parameters = layer.Parameters;
 
         float[] processedSamples = parameters.PitchBackend == PitchBackendSelection.Automatic2B
@@ -119,9 +172,16 @@ public class MixEngine : IDisposable
 
         int totalHostedLatency = 0;
 
-        chain = ApplyStage(chain, layer.LayerId, NoiseGateStage, NoiseGatePluginLabel, parameters.NoiseGateHostedState,
-            outputSampleRate, ref totalHostedLatency,
-            s => new NoiseGateSampleProvider(s, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs));
+        // v7 Q0 task 4 (audit A4): all five stages are FL-style insert slots, off by default --
+        // gate and EQ now gate on their own Enabled flag just like compressor/limiter already did,
+        // instead of always running (at the hosted plugin's untouched factory-default state,
+        // audibly gating/EQing every layer even when the user never opened the panel).
+        if (parameters.NoiseGateEnabled)
+        {
+            chain = ApplyStage(chain, layer.LayerId, NoiseGateStage, NoiseGatePluginLabel, parameters.NoiseGateHostedState,
+                outputSampleRate, ref totalHostedLatency,
+                s => new NoiseGateSampleProvider(s, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs));
+        }
 
         if (parameters.CompressorEnabled)
         {
@@ -130,15 +190,19 @@ public class MixEngine : IDisposable
                 s => new CompressorSampleProvider(s, parameters.CompressorThresholdDb, parameters.CompressorRatio));
         }
 
-        chain = ApplyStage(chain, layer.LayerId, EqStage, EqPluginLabel, parameters.EqHostedState,
-            outputSampleRate, ref totalHostedLatency,
-            s => new ThreeBandEqSampleProvider(s, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb));
+        if (parameters.EqEnabled)
+        {
+            chain = ApplyStage(chain, layer.LayerId, EqStage, EqPluginLabel, parameters.EqHostedState,
+                outputSampleRate, ref totalHostedLatency,
+                s => new ThreeBandEqSampleProvider(s, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb));
+        }
 
         ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
 
-        if (parameters.ReverbEnabled && _availability.IsAvailable(ReverbPluginLabel))
+        if (parameters.ReverbEnabled && _hostedService.IsAvailable(ReverbPluginLabel))
         {
             var reverbInstance = GetOrCreateHostedInstance(layer.LayerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, outputSampleRate);
+            _hostedService.Reset(reverbInstance); // v7 Q0 task 5 (audit A5): clear last play's tail before reuse
 
             double tailSeconds = Math.Clamp(reverbInstance.TailSeconds, 0.0, MaxReverbTailSeconds);
             int tailFrames = (int)(tailSeconds * outputSampleRate);
@@ -170,10 +234,11 @@ public class MixEngine : IDisposable
         ISampleProvider source, int layerId, string stageName, string hostedPluginLabel, byte[]? hostedState,
         int sampleRate, ref int totalHostedLatency, Func<ISampleProvider, ISampleProvider> buildNative)
     {
-        if (!_availability.IsAvailable(hostedPluginLabel))
+        if (!_hostedService.IsAvailable(hostedPluginLabel))
             return buildNative(source);
 
         var instance = GetOrCreateHostedInstance(layerId, stageName, hostedPluginLabel, hostedState, sampleRate);
+        _hostedService.Reset(instance); // v7 Q0 task 5 (audit A5): clear last play's lookahead/buffer before reuse
         var hosted = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize);
         totalHostedLatency += hosted.LatencySamples;
         return hosted;

@@ -49,14 +49,14 @@ internal static class NativeHostBridge
     public static extern void aca_set_parameter_value(IntPtr handle, int index, float value);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_reset(IntPtr handle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_process_block(IntPtr handle,
         float[] inL, float[] inR, float[] outL, float[] outR, int numSamples);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int aca_get_state_size(IntPtr handle);
-
-    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int aca_get_state(IntPtr handle, byte[] outBuffer, int bufferSize);
+    public static extern int aca_get_state(IntPtr handle, byte[]? outBuffer, int bufferSize, out int outRequiredSize);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_set_state(IntPtr handle, byte[] data, int dataSize);

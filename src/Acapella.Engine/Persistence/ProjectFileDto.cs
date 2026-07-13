@@ -54,11 +54,18 @@ public class MixParametersDto
     public float LowShelfGainDb { get; set; }
     public float MidBellGainDb { get; set; }
     public float HighShelfGainDb { get; set; }
+    // v7 Q0 task 4: defaults to true (unlike LayerMixParameters' live default of false) so a
+    // project file saved before this flag existed -- where the JSON simply lacks the property --
+    // deserializes as "enabled", matching that gate/EQ were unconditionally always-on before this
+    // flag was introduced. A project saved after this flag exists always writes an explicit
+    // true/false, so this default only ever engages for old files.
+    public bool NoiseGateEnabled { get; set; } = true;
     public float NoiseGateThresholdDb { get; set; } = -60f;
     public float NoiseGateReleaseMs { get; set; } = 100f;
     public bool CompressorEnabled { get; set; }
     public float CompressorThresholdDb { get; set; } = -18f;
     public float CompressorRatio { get; set; } = 2f;
+    public bool EqEnabled { get; set; } = true;
     public bool LimiterEnabled { get; set; }
     public float LimiterCeilingDb { get; set; } = -0.3f;
     public float LimiterGainDb { get; set; }

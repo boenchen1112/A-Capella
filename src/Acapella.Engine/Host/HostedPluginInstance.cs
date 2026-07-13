@@ -82,14 +82,39 @@ public sealed class HostedPluginInstance : IDisposable
     public void ProcessBlock(float[] inL, float[] inR, float[] outL, float[] outR, int numSamples) =>
         NativeHostBridge.aca_process_block(_handle, inL, inR, outL, outR, numSamples);
 
+    /// <summary>Clears the plugin's internal DSP state (lookahead/delay lines etc.) without
+    /// destroying/recreating it (v7 Q0 task 5, audit A5). Call before reusing a cached instance in
+    /// a freshly built chain -- otherwise the first samples out on a second/subsequent play are
+    /// stale audio buffered from the previous run.</summary>
+    public void Reset() => NativeHostBridge.aca_reset(_handle);
+
+    // Optimistic first-attempt buffer size (v7 Q0, audit B5): every known FabFilter/Melodyne
+    // preset chunk is well under this, so GetState is a single native round-trip in the common
+    // case; only a plugin reporting more than this retries once with its actual required size.
+    private const int OptimisticStateBufferBytes = 8192;
+
+    /// <summary>A plugin with no state at all returns an empty array (a legitimate value --
+    /// factory default, never tweaked). A plugin that DOES report state but it couldn't be
+    /// retrieved (capped by MaxStateBytes, or an inconsistent size on retry) throws instead of
+    /// silently persisting an empty blob over real edited state (the old get-size-then-get-data
+    /// pair could do exactly that).</summary>
     public byte[] GetState()
     {
-        int size = NativeHostBridge.aca_get_state_size(_handle);
-        if (size <= 0 || size > MaxStateBytes)
+        var buf = new byte[OptimisticStateBufferBytes];
+        int written = NativeHostBridge.aca_get_state(_handle, buf, buf.Length, out int requiredSize);
+        if (requiredSize <= 0)
             return Array.Empty<byte>();
-        var buf = new byte[size];
-        int written = NativeHostBridge.aca_get_state(_handle, buf, buf.Length);
-        return written == size ? buf : Array.Empty<byte>();
+        if (written == requiredSize)
+            return buf[..written];
+
+        if (requiredSize > MaxStateBytes)
+            throw new InvalidOperationException($"Hosted plugin reported a state size ({requiredSize} bytes) beyond the {MaxStateBytes}-byte cap.");
+
+        buf = new byte[requiredSize];
+        written = NativeHostBridge.aca_get_state(_handle, buf, buf.Length, out int requiredSize2);
+        if (written != requiredSize || requiredSize2 != requiredSize)
+            throw new InvalidOperationException("Hosted plugin state changed between size query and read; failed to capture a consistent state blob.");
+        return buf;
     }
 
     public void SetState(byte[] data)

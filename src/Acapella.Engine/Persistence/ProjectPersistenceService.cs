@@ -93,11 +93,13 @@ public class ProjectPersistenceService
         LowShelfGainDb = p.LowShelfGainDb,
         MidBellGainDb = p.MidBellGainDb,
         HighShelfGainDb = p.HighShelfGainDb,
+        NoiseGateEnabled = p.NoiseGateEnabled,
         NoiseGateThresholdDb = p.NoiseGateThresholdDb,
         NoiseGateReleaseMs = p.NoiseGateReleaseMs,
         CompressorEnabled = p.CompressorEnabled,
         CompressorThresholdDb = p.CompressorThresholdDb,
         CompressorRatio = p.CompressorRatio,
+        EqEnabled = p.EqEnabled,
         LimiterEnabled = p.LimiterEnabled,
         LimiterCeilingDb = p.LimiterCeilingDb,
         LimiterGainDb = p.LimiterGainDb,
@@ -122,11 +124,13 @@ public class ProjectPersistenceService
         target.LowShelfGainDb = dto.LowShelfGainDb;
         target.MidBellGainDb = dto.MidBellGainDb;
         target.HighShelfGainDb = dto.HighShelfGainDb;
+        target.NoiseGateEnabled = dto.NoiseGateEnabled;
         target.NoiseGateThresholdDb = dto.NoiseGateThresholdDb;
         target.NoiseGateReleaseMs = dto.NoiseGateReleaseMs;
         target.CompressorEnabled = dto.CompressorEnabled;
         target.CompressorThresholdDb = dto.CompressorThresholdDb;
         target.CompressorRatio = dto.CompressorRatio;
+        target.EqEnabled = dto.EqEnabled;
         target.LimiterEnabled = dto.LimiterEnabled;
         target.LimiterCeilingDb = dto.LimiterCeilingDb;
         target.LimiterGainDb = dto.LimiterGainDb;

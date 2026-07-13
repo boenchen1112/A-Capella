@@ -30,18 +30,22 @@ public partial class MainWindow : Window
     // L1: a directory next to the executable works regardless of how/where the app is launched.
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
-    // v6 P3: MixEngine auto-selects a hosted FabFilter plugin over native DSP wherever detected
-    // (native is the automatic fallback, never a user-facing choice -- see the build plan's P3
-    // task 1). The launcher UI (per-stage "Open Pro-X..." buttons + own-window editor, P3a task 7)
-    // now exists, so a hosted stage's parameters are actually reachable -- share one availability
-    // instance across MixEngine/PreviewPlaybackEngine/ExportEngine so all three agree on what's
-    // hosted.
-    private static readonly IHostedPluginAvailability HostedAvailability = new HostedPluginAvailability();
-    private readonly MixEngine _mixEngine = new(HostedAvailability);
+    // v7 Q0 task 1 (audit A1): exactly one HostedPluginService for the whole app session, shared by
+    // MixEngine, PreviewPlaybackEngine, ExportEngine, and (via LayerRowViewModel.SharedHostedService)
+    // the Mixing screen's launcher buttons -- fixes the "three disconnected plugin-instance caches"
+    // defect where editing a plugin was inaudible and export matched neither the editor nor the
+    // preview. All lifecycle calls marshal through WpfHostedPluginDispatcher onto this window's
+    // Dispatcher (A3/B8).
+    private readonly HostedPluginService _hostedService = new(new HostedPluginAvailability(), new WpfHostedPluginDispatcher(Dispatcher.CurrentDispatcher));
+    private readonly MixEngine _mixEngine;
     private readonly ProjectPersistenceService _projectPersistence = new();
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
-    private readonly PreviewPlaybackEngine _previewEngine = new(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedPluginAvailability: HostedAvailability);
+    private readonly PreviewPlaybackEngine _previewEngine;
     private readonly DispatcherTimer _previewDebounceTimer;
+    // v7 Q0 task 8 (v6 task 9): polls open hosted-plugin editors for state changes at a fixed
+    // interval, independent of the (self-resetting) preview-refresh debounce timer above -- a plugin
+    // tweak needs to be captured even if the user never triggers another live-param change.
+    private readonly DispatcherTimer _hostedStatePollTimer;
 
     private SKBitmap? _compositedFrame;
     private readonly object _frameMailboxLock = new();
@@ -67,10 +71,16 @@ public partial class MainWindow : Window
     {
         // Must happen before any other bridge call, on this (the WPF UI) thread -- all hosted
         // plugin lifecycle/editor calls are required to run on the thread that initialized JUCE's
-        // MessageManager (see HostedPluginInstance.Initialize's doc comment).
+        // MessageManager (see HostedPluginInstance.Initialize's doc comment). _hostedService's
+        // WpfHostedPluginDispatcher was already built against this same thread's Dispatcher above.
         HostedPluginInstance.Initialize();
-        LayerRowViewModel.SharedMixEngine = _mixEngine;
-        LayerRowViewModel.HostedAvailability = HostedAvailability;
+        _mixEngine = new MixEngine(_hostedService);
+        _previewEngine = new PreviewPlaybackEngine(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedService: _hostedService);
+        LayerRowViewModel.SharedHostedService = _hostedService;
+
+        // Scan for installed FabFilter plugins off the critical Play path (audit B2) -- the first
+        // real chain build should never stall on loading six plugin binaries.
+        Task.Run(() => _hostedService.EnsureScanned());
 
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
@@ -78,6 +88,17 @@ public partial class MainWindow : Window
 
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _previewDebounceTimer.Tick += (s, e) => { _previewDebounceTimer.Stop(); RefreshPreviewLive(); };
+
+        // v7 Q0 task 8 (v6 task 9): poll the currently open Mixing-screen layer's hosted editors for
+        // state changes every 500ms so a plugin tweak is captured (and the preview refreshed) even
+        // if the user never triggers another live-param change while the editor is open.
+        _hostedStatePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _hostedStatePollTimer.Tick += (s, e) =>
+        {
+            if (_mixingLayer?.PollHostedStateChanges() == true)
+                DebounceRefreshPreview();
+        };
+        _hostedStatePollTimer.Start();
 
         // Latest-frame-wins mailbox (audit A2/B14): FrameReady fires on the frame-loop thread, and
         // that thread must never block on the UI thread (a blocking Dispatcher.Invoke here used to
@@ -101,7 +122,15 @@ public partial class MainWindow : Window
         };
         _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => PlayStopButton.Content = "▶ Play");
 
-        Closing += (s, e) => { _previewEngine.Dispose(); _compositedFrame?.Dispose(); _pendingFrame?.Dispose(); };
+        Closing += (s, e) =>
+        {
+            _hostedStatePollTimer.Stop();
+            _previewEngine.Dispose();
+            _mixEngine.Dispose();
+            _hostedService.Dispose();
+            _compositedFrame?.Dispose();
+            _pendingFrame?.Dispose();
+        };
 
         _undoStack.Reset(CurrentProjectDto());
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -109,8 +138,16 @@ public partial class MainWindow : Window
 
     // ----- Undo/redo (v5 P1 task 2) -----
 
-    private ProjectFileDto CurrentProjectDto() =>
-        _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs, _masterVolumeDb);
+    /// <summary>Single funnel point for every snapshot (undo push, save, export) -- v7 Q0 task 3
+    /// (audit A2): pulls each layer's live hosted-plugin state into its LayerMixParameters first,
+    /// so the snapshot reflects the user's actual editor tweaks rather than stale state captured
+    /// whenever a stage's editor happened to be opened.</summary>
+    private ProjectFileDto CurrentProjectDto()
+    {
+        foreach (var layer in _layers.Layers)
+            _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
+        return _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs, _masterVolumeDb);
+    }
 
     /// <summary>Call after any discrete project edit completes (a slider release, a checkbox
     /// toggle, adding/recording/uploading a layer) -- never mid-drag, so undo steps correspond to
@@ -132,6 +169,12 @@ public partial class MainWindow : Window
             _metronomeBpm = bpm;
             _masterVolumeDb = masterVolumeDb;
             MasterVolumeSlider.Value = masterVolumeDb;
+
+            // v7 Q0 task 3 (audit B7): a live hosted instance surviving this restore (e.g. its
+            // editor was left open across an Undo) keeps its pre-restore state unless explicitly
+            // pushed -- GetOrCreateInstance's initialState only ever applies at first creation.
+            foreach (var layer in _layers.Layers)
+                _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
 
             RestoreTracksFromLayers();
             if (_mixingLayer is not null)
@@ -627,6 +670,10 @@ public partial class MainWindow : Window
             _masterVolumeDb = masterVolumeDb;
             MasterVolumeSlider.Value = masterVolumeDb;
 
+            // v7 Q0 task 3 (audit B7): see RestoreProjectDto's matching comment.
+            foreach (var layer in _layers.Layers)
+                _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
+
             RestoreTracksFromLayers();
             RefreshPreviewLive();
             StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({loadedLayers.Layers.Count} layer(s)).";
@@ -661,7 +708,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                using var exportEngine = new ExportEngine(hostedPluginAvailability: HostedAvailability);
+                using var exportEngine = new ExportEngine(hostedService: _hostedService);
                 exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }

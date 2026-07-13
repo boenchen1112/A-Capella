@@ -51,7 +51,9 @@ public class HostedFxChainTests
     public void BackendSelection_AutoSelectsHostedWhenDetected_AndStatePersistsThroughDto()
     {
         var samples = GenerateSineWave(440, SampleRate, SampleRate);
-        var parameters = new LayerMixParameters();
+        // v7 Q0 task 4: EQ is an FL-style insert slot, off by default -- must be explicitly
+        // enabled for this test's EQ-specific assertions to exercise anything.
+        var parameters = new LayerMixParameters { EqEnabled = true };
 
         using (var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-Q 4")))
         {
@@ -156,7 +158,7 @@ public class HostedFxChainTests
         // the gate instead of after it (chain order: gate -> compressor -> EQ) -- keeping the gate
         // permissive here isolates "does something reach the output at all", which is what a
         // reordering bug would break regardless of EQ specifics.
-        var parameters = new LayerMixParameters { NoiseGateThresholdDb = -80f };
+        var parameters = new LayerMixParameters { NoiseGateEnabled = true, NoiseGateThresholdDb = -80f, EqEnabled = true };
 
         using var nativeEngine = new MixEngine(NoHostedPluginsAvailable.Instance);
         var nativeChain = nativeEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
@@ -217,4 +219,142 @@ public class HostedFxChainTests
 
         Assert.Equal(outputA, outputB);
     }
+
+    // ----- v7 Q0 acceptance tests (fixing Bug_Audit_2026-07-13_VstHosting.md section A) -----
+
+    /// <summary>All-slots-off is the default (Q0 acceptance): a fresh layer's processed output is
+    /// bit-identical to its unprocessed input, modulo pan/volume -- guards against gate/EQ (or any
+    /// future stage) silently applying at some non-transparent default when the user never enabled
+    /// it (audit A4).</summary>
+    [Fact]
+    public void AllSlotsOff_ProducesBitIdenticalOutputToUnprocessedInputModuloPanVolume()
+    {
+        var samples = GenerateSineWave(440, SampleRate, 1000, amplitude: 0.3f);
+        using var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
+        // Pan/volume are the only stages that always run; a plain VolumeSampleProvider at 0dB and
+        // NAudio's constant-power PanningSampleProvider at dead center both apply a fixed,
+        // deterministic scale independent of any FX slot -- assert equality up to that scale
+        // instead of exact identity so this test targets the FX slots, not the always-on bus math.
+        var chain = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate);
+        var output = ReadAll(chain, samples.Length * 2);
+
+        // Index 25 (quarter-period-ish for a 440Hz tone at 44100Hz) rather than 0, since a sine
+        // wave starts at zero and 0/0 would be NaN.
+        float scale = output[25 * 2] / samples[25];
+        Assert.True(Math.Abs(scale) > 0.001f, "expected a non-zero pan/volume scale to compare against");
+        for (int i = 0; i < samples.Length; i++)
+        {
+            Assert.Equal(samples[i] * scale, output[i * 2], 4);
+            Assert.Equal(samples[i] * scale, output[i * 2 + 1], 4);
+        }
+    }
+
+    /// <summary>Identity test (Q0 acceptance, audit A1): the instance a "UI-side" MixEngine fetches
+    /// for (layerId, stage) is reference-equal to the one a separate "chain-building" MixEngine
+    /// wires into its chain, as long as both share the same HostedPluginService -- this is exactly
+    /// the sharing MainWindow/PreviewPlaybackEngine/ExportEngine now do in production.</summary>
+    [Fact]
+    public void Identity_UiAndChainMixEnginesSharingOneServiceGetTheSameLiveInstance()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], out _))
+            return;
+
+        var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-Q 4"));
+        try
+        {
+            using var chainEngine = new MixEngine(service);
+            using var uiEngine = new MixEngine(service);
+
+            var samples = GenerateSineWave(440, SampleRate, 1000);
+            var chain = chainEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters { EqEnabled = true }), anySolo: false, SampleRate);
+            ReadAll(chain, 512); // force lazy instance creation inside the chain
+
+            var uiInstance = uiEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+            var chainInstance = chainEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+
+            Assert.Same(chainInstance, uiInstance);
+        }
+        finally
+        {
+            service.Dispose();
+        }
+    }
+
+    /// <summary>State round-trip (Q0 acceptance, audit A2): after a plugin tweak,
+    /// MixEngine.SyncLiveStateIntoParameters (the method CurrentProjectDto now calls before every
+    /// save/export/undo snapshot) pulls exactly the live GetState() blob, not a stale one.</summary>
+    [Fact]
+    public void StateRoundTrip_SyncLiveStateIntoParameters_MatchesLiveGetState()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], out _))
+            return;
+
+        var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-Q 4"));
+        try
+        {
+            using var engine = new MixEngine(service);
+            var parameters = new LayerMixParameters { EqEnabled = true };
+
+            var samples = GenerateSineWave(440, SampleRate, 1000);
+            var chain = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            ReadAll(chain, 512);
+
+            var instance = engine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+            int gainParam = -1;
+            for (int i = 0; i < instance.ParameterCount; i++)
+            {
+                if (instance.GetParameterName(i).Contains("Gain", StringComparison.OrdinalIgnoreCase))
+                {
+                    instance.SetParameterValue(i, 0.75f);
+                    gainParam = i;
+                    break;
+                }
+            }
+            Assert.True(gainParam >= 0);
+
+            engine.SyncLiveStateIntoParameters(0, parameters);
+            Assert.NotNull(parameters.EqHostedState);
+            Assert.Equal(instance.GetState(), parameters.EqHostedState);
+        }
+        finally
+        {
+            service.Dispose();
+        }
+    }
+
+    /// <summary>Replay hygiene (Q0 acceptance, audit A5): two consecutive builds of the same
+    /// (layerId, stage) hosted stage -- i.e. two consecutive plays -- produce sample-identical
+    /// output, proving aca_reset (called by MixEngine.ApplyStage before wiring a cached instance
+    /// into a fresh chain) actually clears the plugin's internal lookahead/delay state between
+    /// runs instead of bleeding the first run's buffered audio into the second.</summary>
+    [Fact]
+    public void ReplayReset_TwoConsecutivePlaysOfTheSameCachedInstance_ProduceSampleIdenticalOutput()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
+            return;
+
+        int totalSamples = SampleRate / 4;
+        var samples = new float[totalSamples];
+        samples[100] = 1f;
+
+        var parameters = new LayerMixParameters { LimiterEnabled = true };
+        var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-L 2"));
+        try
+        {
+            using var engine = new MixEngine(service);
+
+            var chain1 = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var output1 = ReadAll(chain1, totalSamples * 2);
+
+            var chain2 = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var output2 = ReadAll(chain2, totalSamples * 2);
+
+            Assert.Equal(output1, output2);
+        }
+        finally
+        {
+            service.Dispose();
+        }
+    }
+
 }
