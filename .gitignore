@@ -5,3 +5,4 @@ recordings/
 *.user
 .vs/
 src/Acapella.Host.Native/build/
+src/Acapella.Host.Native/JUCE/
