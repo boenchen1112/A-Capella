@@ -17,6 +17,11 @@
 #include <memory>
 #include <cstring>
 
+#if defined(_DEBUG) && defined(_MSC_VER)
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
+
 using namespace juce;
 
 namespace
@@ -26,6 +31,28 @@ namespace
     // the lifetime of the DLL -- there is no explicit shutdown hook available from a plain C ABI.
     ScopedJuceInitialiser_GUI& juceInit()
     {
+#if defined(_DEBUG) && defined(_MSC_VER)
+        // Debug-CRT assertions (e.g. _CrtIsValidHeapPointer on a corrupt heap) default to a modal
+        // dialog box. In a non-interactive test-runner process there is nobody to click it, so the
+        // process just hangs forever with no diagnostic in the log. Route assertions to stderr
+        // instead so a heap bug fails the process loudly and visibly, regardless of root cause.
+        //
+        // Investigated once (see Message_to_Claude_Code.md / commit history): the full 96-test
+        // suite was re-run with _CRTDBG_CHECK_ALWAYS_DF also enabled (full heap walk on every
+        // alloc/free -- reliably catches overruns/double-frees at the exact call site, not just at
+        // exit). It passed clean with no corruption report, so that expensive flag is NOT left on
+        // permanently here (it made the suite ~10x slower); re-enable it locally if this class of
+        // bug resurfaces.
+        static bool crtConfigured = []
+        {
+            _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+            _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+            _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+            _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+            return true;
+        }();
+        (void) crtConfigured;
+#endif
         static ScopedJuceInitialiser_GUI init;
         return init;
     }
