@@ -82,6 +82,17 @@ public class CountingAudioSink : IPreviewAudioSink
     public int ActiveCount => Volatile.Read(ref _activeCount);
 }
 
+/// <summary>Captures the ISampleProvider passed to Play() so a test can pull samples from it
+/// manually (simulating what a real sink would do at real-time pace) and inspect the effect of
+/// mid-playback changes like MasterVolumeDb.</summary>
+public class CapturingAudioSink : IPreviewAudioSink
+{
+    public ISampleProvider? LastMix;
+    public void Play(ISampleProvider mix) => LastMix = mix;
+    public void Stop() { }
+    public void Dispose() { }
+}
+
 public class PreviewPlaybackEngineTests
 {
     // VideoFrameStreamSource.Dispose() kills the ffmpeg process, but the OS can take a moment to
@@ -334,6 +345,53 @@ public class PreviewPlaybackEngineTests
         {
             DeleteWithRetry(tempDir);
         }
+    }
+
+    /// <summary>Regression test: MasterVolumeDb previously only took effect on the *next*
+    /// Play/Seek's fresh mix rebuild -- moving the master volume slider during active playback had
+    /// no audible effect at all. Pulls samples from the actual live graph handed to the sink,
+    /// before and after changing MasterVolumeDb without any Stop/Play/Seek in between.</summary>
+    [Fact]
+    public void MasterVolumeDb_ChangedWhilePlaying_AttenuatesLiveAudioImmediately()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.UploadedAudioOnly, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var sink = new CapturingAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink);
+            engine.FrameReady += bmp => bmp.Dispose();
+            engine.SetLayers(layers.Layers);
+            engine.MasterVolumeDb = 0f;
+            engine.Play();
+
+            Assert.NotNull(sink.LastMix);
+            var buffer = new float[8192];
+            sink.LastMix!.Read(buffer, 0, buffer.Length);
+            float rmsAt0Db = ComputeRms(buffer);
+
+            engine.MasterVolumeDb = -20f; // no Stop/Play/Seek -- same live graph
+            sink.LastMix!.Read(buffer, 0, buffer.Length);
+            float rmsAtMinus20Db = ComputeRms(buffer);
+
+            engine.Stop();
+
+            Assert.True(rmsAtMinus20Db < rmsAt0Db * 0.2f,
+                $"Expected -20dB master volume to noticeably attenuate live audio; got {rmsAt0Db} -> {rmsAtMinus20Db}.");
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    private static float ComputeRms(float[] samples)
+    {
+        double sumSquares = samples.Sum(s => (double)s * s);
+        return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
     [Fact]

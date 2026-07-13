@@ -23,7 +23,15 @@ public class MixEngine
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
     private const float MasterCeilingDb = -0.3f;
 
-    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f)
+    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
+        BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
+
+    /// <summary>Same chain as BuildMix, but also returns the master-volume-only VolumeSampleProvider
+    /// node so a live caller (PreviewPlaybackEngine) can update its Volume mid-playback instead of
+    /// only picking up a new masterVolumeDb on the next full rebuild -- BuildMix alone bakes
+    /// masterVolumeDb into the graph once at build time, which is why a real-time master-volume
+    /// slider previously had no audible effect until the next Play/Seek.</summary>
+    public (ISampleProvider Mix, VolumeSampleProvider MasterVolumeStage) BuildMixWithMasterVolumeHandle(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f)
     {
         bool anySolo = layers.Any(l => l.Parameters.Solo);
         var mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(outputSampleRate, 2));
@@ -35,13 +43,17 @@ public class MixEngine
 
         // MixingSampleProvider just sums its inputs; 2+ vocal layers near full scale would
         // exceed +-1.0 and hard-clip on the AAC/WAV encode. A fixed 1/sqrt(N) headroom scale is
-        // enough to keep the common case under 0dBFS without needing a full limiter for v1.
+        // enough to keep the common case under 0dBFS without needing a full limiter for v1. Kept
+        // as its own fixed-gain stage (not merged into the master-volume node) so the live handle
+        // below only ever carries the user's master-volume gain, not this structural constant.
         float headroomGain = layers.Count > 0 ? (float)(1.0 / Math.Sqrt(layers.Count)) : 1f;
-        ISampleProvider bus = new VolumeSampleProvider(mixer) { Volume = headroomGain * DbToLinear(masterVolumeDb) };
+        var headroomStage = new VolumeSampleProvider(mixer) { Volume = headroomGain };
+        var masterVolumeStage = new VolumeSampleProvider(headroomStage) { Volume = DbToLinear(masterVolumeDb) };
 
         // Bus limiter sits after master volume so preview and export share one ceiling regardless
         // of how loud the mix or the master fader is pushed.
-        return new LimiterSampleProvider(bus, MasterCeilingDb, makeupGainDb: 0f);
+        ISampleProvider mix = new LimiterSampleProvider(masterVolumeStage, MasterCeilingDb, makeupGainDb: 0f);
+        return (mix, masterVolumeStage);
     }
 
     public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)

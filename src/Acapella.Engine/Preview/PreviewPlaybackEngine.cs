@@ -94,10 +94,29 @@ public class PreviewPlaybackEngine : IDisposable
     private Thread? _frameLoopThread;
     private volatile bool _stopRequested;
 
-    /// <summary>Bus gain (audit P1 task 4) read at the start of each Play/Seek's audio rebuild --
-    /// not routed through the command queue since it's just a value read at StartAudio time, not
-    /// an operation that needs to be atomic relative to SetLayers/Play/Stop/Seek.</summary>
-    public volatile float MasterVolumeDb = 0f;
+    private volatile float _masterVolumeDb;
+    // Live handle onto the currently-playing graph's master-volume node (audit: master volume
+    // slider had no audible effect during active playback -- BuildMix only bakes masterVolumeDb
+    // into the graph once, at StartAudio time). Not routed through the command queue: this is a
+    // value push onto an already-built graph, not an operation that needs to be atomic relative to
+    // SetLayers/Play/Stop/Seek. Null whenever no audio graph is currently live (stopped, or a
+    // hardware-free test sink that never calls StartAudio).
+    private NAudio.Wave.SampleProviders.VolumeSampleProvider? _liveMasterVolumeStage;
+
+    /// <summary>Bus gain (audit P1 task 4). Setting this while playing updates the live graph
+    /// immediately; StartAudio also reads it when building a fresh graph for the next Play/Seek.</summary>
+    public float MasterVolumeDb
+    {
+        get => _masterVolumeDb;
+        set
+        {
+            _masterVolumeDb = value;
+            var stage = _liveMasterVolumeStage;
+            if (stage is not null) stage.Volume = DbToLinear(value);
+        }
+    }
+
+    private static float DbToLinear(float db) => (float)Math.Pow(10, db / 20.0);
 
     // Single-threaded command queue (audit B1): every public operation below enqueues work here
     // instead of running inline, so SetLayers/Play/Stop/Seek from any caller thread never
@@ -325,7 +344,8 @@ public class PreviewPlaybackEngine : IDisposable
                 l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters, l.SourceCacheKey()))
             .ToList();
 
-        var mix = _mixEngine.BuildMix(mixInputs, sampleRate, MasterVolumeDb);
+        var (mix, masterVolumeStage) = _mixEngine.BuildMixWithMasterVolumeHandle(mixInputs, sampleRate, MasterVolumeDb);
+        _liveMasterVolumeStage = masterVolumeStage;
         ISampleProvider seeked = positionMs > 0
             ? new OffsetSampleProvider(mix) { SkipOver = TimeSpan.FromMilliseconds(positionMs) }
             : mix;
@@ -349,6 +369,7 @@ public class PreviewPlaybackEngine : IDisposable
     private void StopInternal(bool raiseStoppedEvent)
     {
         _audioSink.Stop();
+        _liveMasterVolumeStage = null;
 
         if (_frameSources is not null)
         {
