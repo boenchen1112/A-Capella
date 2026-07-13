@@ -14,22 +14,23 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f)
     {
         return new ProjectFileDto
         {
             LayoutId = "2x2",
             MetronomeBpm = metronomeBpm,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
+            MasterVolumeDb = masterVolumeDb,
             Layers = layers.Layers.Select(ToLayerDto).ToList(),
         };
     }
 
-    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed) FromDto(ProjectFileDto dto)
+    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) FromDto(ProjectFileDto dto)
     {
         var layers = new LayerCollection();
         layers.Restore(dto.Layers.Select(FromLayerDto));
-        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed);
+        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb);
     }
 
     public void SaveToFile(ProjectFileDto dto, string filePath)

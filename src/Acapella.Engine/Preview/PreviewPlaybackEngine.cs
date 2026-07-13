@@ -94,6 +94,11 @@ public class PreviewPlaybackEngine : IDisposable
     private Thread? _frameLoopThread;
     private volatile bool _stopRequested;
 
+    /// <summary>Bus gain (audit P1 task 4) read at the start of each Play/Seek's audio rebuild --
+    /// not routed through the command queue since it's just a value read at StartAudio time, not
+    /// an operation that needs to be atomic relative to SetLayers/Play/Stop/Seek.</summary>
+    public volatile float MasterVolumeDb = 0f;
+
     // Single-threaded command queue (audit B1): every public operation below enqueues work here
     // instead of running inline, so SetLayers/Play/Stop/Seek from any caller thread never
     // interleave. Core methods call each other directly (never via Enqueue) to avoid a command
@@ -305,7 +310,7 @@ public class PreviewPlaybackEngine : IDisposable
                 l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters, l.SourceCacheKey()))
             .ToList();
 
-        var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
+        var mix = _mixEngine.BuildMix(mixInputs, sampleRate, MasterVolumeDb);
         ISampleProvider seeked = positionMs > 0
             ? new OffsetSampleProvider(mix) { SkipOver = TimeSpan.FromMilliseconds(positionMs) }
             : mix;

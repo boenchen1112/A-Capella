@@ -46,7 +46,7 @@ public class ProjectPersistenceTests
             service.SaveToFile(dto, tempPath);
 
             var loadedDto = service.LoadFromFile(tempPath);
-            var (loadedLayers, loadedBpm, loadedOffset) = service.FromDto(loadedDto);
+            var (loadedLayers, loadedBpm, loadedOffset, _) = service.FromDto(loadedDto);
 
             Assert.Equal(metronomeBpm, loadedBpm);
             Assert.Equal(latencyOffset, loadedOffset);
@@ -95,7 +95,7 @@ public class ProjectPersistenceTests
             var dto = service.ToDto(layers, 120, null);
             service.SaveToFile(dto, tempPath);
 
-            var (loadedLayers, loadedBpm, loadedOffset) = service.FromDto(service.LoadFromFile(tempPath));
+            var (loadedLayers, loadedBpm, loadedOffset, _) = service.FromDto(service.LoadFromFile(tempPath));
 
             Assert.Empty(loadedLayers.Layers);
             Assert.Equal(120, loadedBpm);

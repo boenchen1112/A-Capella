@@ -14,6 +14,10 @@ public class ProjectFileDto
 
     public double MetronomeBpm { get; set; } = 120;
 
+    /// <summary>Bus gain applied after summing all layers, before the master limiter (P1 task 4) --
+    /// used identically by preview and export so exports sound like the preview.</summary>
+    public float MasterVolumeDb { get; set; } = 0f;
+
     /// <summary>The latency offset (ms) that was actually used when this project's layers were
     /// recorded -- distinct from SettingsService's per-device-pair calibration store, which is
     /// about recalibrating future sessions, not remembering what a saved project used.</summary>

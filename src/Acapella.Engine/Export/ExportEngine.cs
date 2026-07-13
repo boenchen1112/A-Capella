@@ -23,7 +23,7 @@ public class ExportEngine
         _ffprobePath = ffprobePath;
     }
 
-    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100)
+    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f)
     {
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
@@ -49,7 +49,7 @@ public class ExportEngine
         var mixInputs = layers.Layers
             .Select(l => new MixLayerInput(l.LayerId, decodedAudio[l.LayerId], sampleRate, l.MixParameters, l.SourceCacheKey()))
             .ToList();
-        var mix = _mixEngine.BuildMix(mixInputs, sampleRate);
+        var mix = _mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb);
 
         var mixedSamples = new float[maxSamples * 2]; // interleaved stereo
         int totalRead = 0;
@@ -59,12 +59,6 @@ public class ExportEngine
             if (n == 0) break;
             totalRead += n;
         }
-
-        // MixEngine's fixed 1/sqrt(N) headroom scale is a statistical heuristic, not a hard peak
-        // limiter -- correlated layers can still exceed full scale, which the AAC encode would
-        // hard-clip. The full mixdown buffer is available here (unlike live preview), so
-        // peak-normalize as a guarantee.
-        PeakNormalizer.NormalizeIfClipping(mixedSamples);
 
         string tempWavPath = Path.Combine(Path.GetTempPath(), $"acapella-export-audio-{Guid.NewGuid()}.wav");
         WavFileWriter.WriteStereoFloat(tempWavPath, mixedSamples, sampleRate);

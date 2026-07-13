@@ -19,7 +19,11 @@ public class MixEngine
 {
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
 
-    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100)
+    /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
+    /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
+    private const float MasterCeilingDb = -0.3f;
+
+    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f)
     {
         bool anySolo = layers.Any(l => l.Parameters.Solo);
         var mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(outputSampleRate, 2));
@@ -33,7 +37,11 @@ public class MixEngine
         // exceed +-1.0 and hard-clip on the AAC/WAV encode. A fixed 1/sqrt(N) headroom scale is
         // enough to keep the common case under 0dBFS without needing a full limiter for v1.
         float headroomGain = layers.Count > 0 ? (float)(1.0 / Math.Sqrt(layers.Count)) : 1f;
-        return new VolumeSampleProvider(mixer) { Volume = headroomGain };
+        ISampleProvider bus = new VolumeSampleProvider(mixer) { Volume = headroomGain * DbToLinear(masterVolumeDb) };
+
+        // Bus limiter sits after master volume so preview and export share one ceiling regardless
+        // of how loud the mix or the master fader is pushed.
+        return new LimiterSampleProvider(bus, MasterCeilingDb, makeupGainDb: 0f);
     }
 
     public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)

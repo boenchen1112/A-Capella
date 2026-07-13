@@ -111,8 +111,10 @@ public class MixEngineTests
         var engine = new MixEngine();
         double[] frequencies = { 440, 523, 659, 784 };
 
+        // Kept below the master limiter's ceiling (added in P1 task 4) so this test isolates the
+        // headroom-scale mechanism itself rather than the limiter clamping an over-ceiling peak.
         var layers = frequencies.Select((freq, i) =>
-            new MixLayerInput(i, GenerateSineWave(freq, sampleRate, sampleRate, amplitude: 1.0f), sampleRate, new LayerMixParameters { GainDb = 0f }))
+            new MixLayerInput(i, GenerateSineWave(freq, sampleRate, sampleRate, amplitude: 0.2f), sampleRate, new LayerMixParameters { GainDb = 0f }))
             .ToList();
 
         // Un-headroomed reference: sum the same layer chains directly, bypassing BuildMix's
@@ -127,6 +129,34 @@ public class MixEngineTests
 
         float expectedHeadroomGain = (float)(1.0 / Math.Sqrt(layers.Count));
         Assert.Equal(rawPeak * expectedHeadroomGain, scaledPeak, 3);
+    }
+
+    /// <summary>Regression test for P1 task 4: master volume is a bus gain applied identically
+    /// regardless of layer count/parameters, so a +6dB master bump should roughly double RMS
+    /// (~2x linear) as long as the signal stays under the master limiter's ceiling -- keeping
+    /// amplitude low avoids the limiter clamping the louder case and breaking proportionality.</summary>
+    [Fact]
+    public void BuildMix_MasterVolume_ScalesOutputRmsProportionally()
+    {
+        int sampleRate = 44100;
+        var samples = GenerateSineWave(440, sampleRate, sampleRate, amplitude: 0.1f);
+        var engine = new MixEngine();
+        var parameters = new LayerMixParameters { GainDb = 0f };
+
+        var mixAt0Db = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, parameters) }, sampleRate, masterVolumeDb: 0f);
+        float rmsAt0Db = ComputeRms(ReadAll(mixAt0Db, sampleRate));
+
+        var mixAt6Db = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, parameters) }, sampleRate, masterVolumeDb: 6f);
+        float rmsAt6Db = ComputeRms(ReadAll(mixAt6Db, sampleRate));
+
+        float ratio = rmsAt6Db / rmsAt0Db;
+        Assert.InRange(ratio, 1.9f, 2.1f);
+    }
+
+    private static float ComputeRms(float[] samples)
+    {
+        double sumSquares = samples.Sum(s => (double)s * s);
+        return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
     [Fact]

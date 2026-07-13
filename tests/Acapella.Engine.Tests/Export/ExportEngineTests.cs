@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Acapella.Engine.Export;
+using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 
 namespace Acapella.Engine.Tests.Export;
@@ -188,6 +189,76 @@ public class ExportEngineTests
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    /// <summary>Regression test for P1 task 4: preview and export must sound the same at a given
+    /// master volume, since both route the final mix through MixEngine.BuildMix's bus chain
+    /// (master gain + brick-wall limiter) instead of export applying its own separate
+    /// content-dependent PeakNormalizer pass. Compares export's actual mixdown RMS (decoded back
+    /// from the lossy AAC output) against directly building the same mix in-process via
+    /// MixEngine -- the "preview" path -- allowing tolerance for AAC lossy round-trip.</summary>
+    [Fact]
+    public void Export_AudioRms_MatchesDirectMixEngineBuild_ForSameMasterVolume()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-export-rms-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string video = Path.Combine(tempDir, "tone.mp4");
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+        const int sampleRate = 44100;
+
+        try
+        {
+            RunFfmpeg("-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=10:d=1",
+                      "-f", "lavfi", "-i", $"sine=frequency=440:sample_rate={sampleRate}:duration=1:beep_factor=0",
+                      "-af", "volume=0.2",
+                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", video);
+
+            var layers = new LayerCollection();
+            var layer = layers.Add(LayerKind.RecordedAV, video);
+            const float masterVolumeDb = 6f;
+
+            var exportEngine = new ExportEngine();
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: sampleRate, masterVolumeDb: masterVolumeDb);
+
+            float[] exportedAudio = AudioDecoder.DecodeToMonoFloat(outputPath, sampleRate);
+            float exportedRms = ComputeRms(exportedAudio);
+
+            float[] sourceAudio = AudioDecoder.DecodeToMonoFloat(video, sampleRate);
+            var mixEngine = new MixEngine();
+            var mixInputs = new[] { new MixLayerInput(layer.LayerId, sourceAudio, sampleRate, layer.MixParameters, layer.SourceCacheKey()) };
+            var directMix = mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb);
+
+            var directBuffer = new float[sourceAudio.Length * 2];
+            int totalRead = 0;
+            while (totalRead < directBuffer.Length)
+            {
+                int n = directMix.Read(directBuffer, totalRead, directBuffer.Length - totalRead);
+                if (n == 0) break;
+                totalRead += n;
+            }
+            // Interleaved stereo -> mono, using ffmpeg's own stereo-to-mono downmix normalization
+            // ((L+R)/sqrt(2), not a plain average) so this matches how AudioDecoder.DecodeToMonoFloat
+            // (used on the exported side, via "-ac 1") actually downmixes -- a plain average would
+            // differ from ffmpeg's output by sqrt(2) even when both mixes are otherwise identical.
+            var directMono = new float[directBuffer.Length / 2];
+            for (int i = 0; i < directMono.Length; i++)
+                directMono[i] = (float)((directBuffer[i * 2] + directBuffer[i * 2 + 1]) / Math.Sqrt(2));
+            float directRms = ComputeRms(directMono);
+
+            float ratio = exportedRms / directRms;
+            Assert.InRange(ratio, 0.7f, 1.3f);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static float ComputeRms(float[] samples)
+    {
+        double sumSquares = samples.Sum(s => (double)s * s);
+        return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
     private static byte[] DecodeFirstRawFrame(string mediaPath, int width, int height)
