@@ -102,7 +102,16 @@ public class ProjectPersistenceService
         LimiterCeilingDb = p.LimiterCeilingDb,
         LimiterGainDb = p.LimiterGainDb,
         PitchBackend = p.PitchBackend.ToString(),
+        NoiseGateHostedStateBase64 = ToBase64(p.NoiseGateHostedState),
+        CompressorHostedStateBase64 = ToBase64(p.CompressorHostedState),
+        EqHostedStateBase64 = ToBase64(p.EqHostedState),
+        LimiterHostedStateBase64 = ToBase64(p.LimiterHostedState),
+        ReverbEnabled = p.ReverbEnabled,
+        ReverbHostedStateBase64 = ToBase64(p.ReverbHostedState),
     };
+
+    private static string? ToBase64(byte[]? data) => data is null ? null : Convert.ToBase64String(data);
+    private static byte[]? FromBase64(string? data) => data is null ? null : Convert.FromBase64String(data);
 
     private static void ApplyMixParametersDto(MixParametersDto dto, LayerMixParameters target)
     {
@@ -122,5 +131,11 @@ public class ProjectPersistenceService
         target.LimiterCeilingDb = dto.LimiterCeilingDb;
         target.LimiterGainDb = dto.LimiterGainDb;
         target.PitchBackend = Enum.Parse<PitchBackendSelection>(dto.PitchBackend);
+        target.NoiseGateHostedState = FromBase64(dto.NoiseGateHostedStateBase64);
+        target.CompressorHostedState = FromBase64(dto.CompressorHostedStateBase64);
+        target.EqHostedState = FromBase64(dto.EqHostedStateBase64);
+        target.LimiterHostedState = FromBase64(dto.LimiterHostedStateBase64);
+        target.ReverbEnabled = dto.ReverbEnabled;
+        target.ReverbHostedState = FromBase64(dto.ReverbHostedStateBase64);
     }
 }

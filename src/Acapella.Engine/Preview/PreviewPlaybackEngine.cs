@@ -1,5 +1,6 @@
 using Acapella.Engine.Composite;
 using Acapella.Engine.Export;
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 using NAudio.CoreAudioApi;
@@ -79,7 +80,7 @@ public class WasapiPreviewAudioSink : IPreviewAudioSink
 /// </summary>
 public class PreviewPlaybackEngine : IDisposable
 {
-    private readonly MixEngine _mixEngine = new();
+    private readonly MixEngine _mixEngine;
     private readonly string _ffmpegPath;
     private readonly string _ffprobePath;
     private readonly int _sampleRate;
@@ -137,7 +138,7 @@ public class PreviewPlaybackEngine : IDisposable
     /// it always composites without labels regardless.</summary>
     public volatile bool ShowLayerLabels = true;
 
-    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null)
+    public PreviewPlaybackEngine(int canvasWidth = 640, int canvasHeight = 480, int fps = 30, int sampleRate = 44100, string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IPreviewAudioSink? audioSink = null, IHostedPluginAvailability? hostedPluginAvailability = null)
     {
         _canvasWidth = canvasWidth;
         _canvasHeight = canvasHeight;
@@ -146,6 +147,7 @@ public class PreviewPlaybackEngine : IDisposable
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
         _audioSink = audioSink ?? new WasapiPreviewAudioSink();
+        _mixEngine = new MixEngine(hostedPluginAvailability);
 
         _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
         _commandThread.Start();
@@ -415,5 +417,6 @@ public class PreviewPlaybackEngine : IDisposable
         _commandQueue.CompleteAdding();
         _commandThread.Join();
         _audioSink.Dispose();
+        _mixEngine.Dispose();
     }
 }

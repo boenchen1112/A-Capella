@@ -636,7 +636,8 @@ public partial class MainWindow : Window
         {
             try
             {
-                new ExportEngine().Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
+                using var exportEngine = new ExportEngine();
+                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)

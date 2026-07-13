@@ -37,4 +37,20 @@ public class LayerMixParameters
     public float LimiterGainDb { get; set; } = 0f;
 
     public PitchBackendSelection PitchBackend { get; set; } = PitchBackendSelection.None;
+
+    // v6 P3: when a stage's matching FabFilter plugin is detected, MixEngine auto-selects the
+    // hosted backend for that stage instead of the native math above (native stays as the
+    // automatic fallback when the plugin isn't installed -- see HostedPluginAvailability). These
+    // hold each hosted stage's VST3 state chunk (persisted via ProjectFileDto's base64 fields) so
+    // a user's tweaks in the plugin's own editor survive save/reload; null means "use the plugin's
+    // factory default state" (no editor tweak yet, or never hosted).
+    public byte[]? NoiseGateHostedState { get; set; }
+    public byte[]? CompressorHostedState { get; set; }
+    public byte[]? EqHostedState { get; set; }
+    public byte[]? LimiterHostedState { get; set; }
+
+    /// <summary>Stereo insert post-pan, only ever hosted (FabFilter Pro-R 2) -- no native fallback
+    /// per the plan, so this is simply skipped if Pro-R 2 isn't detected even when true.</summary>
+    public bool ReverbEnabled { get; set; } = false;
+    public byte[]? ReverbHostedState { get; set; }
 }

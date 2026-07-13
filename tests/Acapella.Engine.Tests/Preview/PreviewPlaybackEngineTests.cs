@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Acapella.Engine.Export;
+using Acapella.Engine.Host;
 using Acapella.Engine.Preview;
 using Acapella.Engine.Project;
 using NAudio.Wave;
@@ -270,7 +271,7 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             using var sink = new SimulatedRealtimeAudioSink();
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: fps, audioSink: sink);
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: fps, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.SetLayers(layers.Layers);
 
             object frameLock = new();
@@ -317,7 +318,7 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             var sink = new CountingAudioSink();
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink);
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
             engine.SetLayers(layers.Layers);
 
@@ -362,7 +363,7 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             var sink = new CapturingAudioSink();
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink);
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
             engine.SetLayers(layers.Layers);
             engine.MasterVolumeDb = 0f;
@@ -404,7 +405,7 @@ public class PreviewPlaybackEngineTests
             var layers = new LayerCollection();
             layers.Restore(new[] { layer });
 
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10);
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.SetLayers(layers.Layers);
 
             Assert.InRange(engine.DurationMs, 1800, 2200);
@@ -425,7 +426,7 @@ public class PreviewPlaybackEngineTests
             var layers = new LayerCollection();
             layers.Restore(new[] { layer });
 
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10);
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.SetLayers(layers.Layers);
 
             SKBitmap? received = null;
@@ -454,7 +455,7 @@ public class PreviewPlaybackEngineTests
             var layers = new LayerCollection();
             layers.Restore(new[] { layer });
 
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: new FakeAudioSink());
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: new FakeAudioSink(), hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.SetLayers(layers.Layers);
 
             int frameCount = 0;

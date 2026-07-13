@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Acapella.Engine.Composite;
 using Acapella.Engine.Ffmpeg;
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 using SkiaSharp;
@@ -11,16 +12,20 @@ namespace Acapella.Engine.Export;
 /// Mixes down all layers (Phase 3's fixed chain) and composites the 2x2 grid (Phase 4) across
 /// the full duration, then muxes both into a single H.264+AAC .mp4 via ffmpeg.
 /// </summary>
-public class ExportEngine
+public class ExportEngine : IDisposable
 {
-    private readonly MixEngine _mixEngine = new();
+    private readonly MixEngine _mixEngine;
     private readonly string _ffmpegPath;
     private readonly string _ffprobePath;
 
-    public ExportEngine(string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe")
+    /// <summary>hostedPluginAvailability defaults to real detection so exports use the same
+    /// FabFilter-when-detected backend as the live preview (v6 P3) -- exports must sound like the
+    /// preview. Pass NoHostedPluginsAvailable.Instance to force pure native processing.</summary>
+    public ExportEngine(string ffmpegPath = "ffmpeg", string ffprobePath = "ffprobe", IHostedPluginAvailability? hostedPluginAvailability = null)
     {
         _ffmpegPath = ffmpegPath;
         _ffprobePath = ffprobePath;
+        _mixEngine = new MixEngine(hostedPluginAvailability);
     }
 
     public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f)
@@ -183,4 +188,6 @@ public class ExportEngine
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg encode process.");
     }
+
+    public void Dispose() => _mixEngine.Dispose();
 }

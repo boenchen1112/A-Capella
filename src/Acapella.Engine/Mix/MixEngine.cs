@@ -1,3 +1,4 @@
+using Acapella.Engine.Host;
 using Acapella.Engine.Pitch;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -10,18 +11,41 @@ namespace Acapella.Engine.Mix;
 public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerMixParameters Parameters, string? SourceKey = null);
 
 /// <summary>
-/// Builds the live mixed preview: for each layer, applies the fixed chain
-/// (pitch correction -> noise gate -> EQ -> pan -> gain) then sums via NAudio's
-/// MixingSampleProvider. Parameters are read at build time, so changing a parameter and
+/// Builds the live mixed preview: for each layer, applies the fixed chain (pitch correction ->
+/// noise gate -> compressor -> EQ -> pan -> reverb -> gain/mute/solo -> limiter) then sums via
+/// NAudio's MixingSampleProvider. Parameters are read at build time, so changing a parameter and
 /// rebuilding is how "live" updates apply (non-destructive: raw samples untouched).
+///
+/// v6 P3: gate/compressor/EQ/limiter each auto-select the matching hosted FabFilter plugin when
+/// IHostedPluginAvailability reports it installed, falling back to the native math above
+/// otherwise (native is the automatic fallback, not a user-facing choice -- see the build plan's
+/// P3 task 1). Reverb is hosted-only (Pro-R 2), off by default, added if a stage isn't detected.
+/// Instances are cached per (layerId, stage) so they survive debounced preview rebuilds -- Dispose
+/// this MixEngine to release them (e.g. on project close).
 /// </summary>
-public class MixEngine
+public class MixEngine : IDisposable
 {
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
 
     /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
     private const float MasterCeilingDb = -0.3f;
+
+    /// <summary>getTailLengthSeconds() can report `inf` for some FabFilter plugins (confirmed for
+    /// Pro-R 2 and Pro-Q 4 in P3a probe 2) -- clamp before using it in any duration/loop-bound math.
+    /// FabFilter Pro-R 2's own decay-time control tops out well under this, so the clamp only ever
+    /// bites on a bogus/inf report, not a real long reverb setting.</summary>
+    private const double MaxReverbTailSeconds = 12.0;
+
+    private readonly IHostedPluginAvailability _availability;
+    private readonly HostedPluginInstanceCache _hostedInstances = new();
+
+    public MixEngine(IHostedPluginAvailability? availability = null)
+    {
+        _availability = availability ?? new HostedPluginAvailability();
+    }
+
+    public void Dispose() => _hostedInstances.Dispose();
 
     public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
         BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
@@ -69,23 +93,70 @@ public class MixEngine
         if (layer.SampleRate != outputSampleRate)
             chain = new WdlResamplingSampleProvider(chain, outputSampleRate);
 
-        chain = new NoiseGateSampleProvider(chain, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs);
+        int totalHostedLatency = 0;
+
+        chain = ApplyStage(chain, layer.LayerId, "NoiseGate", "FabFilter Pro-G", parameters.NoiseGateHostedState,
+            outputSampleRate, ref totalHostedLatency,
+            s => new NoiseGateSampleProvider(s, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs));
 
         if (parameters.CompressorEnabled)
-            chain = new CompressorSampleProvider(chain, parameters.CompressorThresholdDb, parameters.CompressorRatio);
+        {
+            chain = ApplyStage(chain, layer.LayerId, "Compressor", "FabFilter Pro-C 3", parameters.CompressorHostedState,
+                outputSampleRate, ref totalHostedLatency,
+                s => new CompressorSampleProvider(s, parameters.CompressorThresholdDb, parameters.CompressorRatio));
+        }
 
-        chain = new ThreeBandEqSampleProvider(chain, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb);
+        chain = ApplyStage(chain, layer.LayerId, "Eq", "FabFilter Pro-Q 4", parameters.EqHostedState,
+            outputSampleRate, ref totalHostedLatency,
+            s => new ThreeBandEqSampleProvider(s, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb));
 
-        var panned = new PanningSampleProvider(chain) { Pan = parameters.Pan };
+        ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
+
+        const string reverbLabel = "FabFilter Pro-R 2";
+        if (parameters.ReverbEnabled && _availability.IsAvailable(reverbLabel))
+        {
+            string reverbPath = HostedPluginCatalog.KnownPluginPaths[reverbLabel];
+            var reverbInstance = _hostedInstances.GetOrCreate(layer.LayerId, "Reverb", reverbPath,
+                outputSampleRate, HostedPluginSampleProvider.DefaultBlockSize, parameters.ReverbHostedState);
+
+            double tailSeconds = Math.Clamp(reverbInstance.TailSeconds, 0.0, MaxReverbTailSeconds);
+            int tailFrames = (int)(tailSeconds * outputSampleRate);
+
+            var hostedReverb = new HostedPluginSampleProvider(afterPan, reverbInstance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames);
+            totalHostedLatency += hostedReverb.LatencySamples;
+            afterPan = hostedReverb;
+        }
 
         bool effectiveMute = parameters.Mute || (anySolo && !parameters.Solo);
         float linearGain = effectiveMute ? 0f : DbToLinear(parameters.GainDb);
-        ISampleProvider withGain = new VolumeSampleProvider(panned) { Volume = linearGain };
+        ISampleProvider withGain = new VolumeSampleProvider(afterPan) { Volume = linearGain };
 
         if (parameters.LimiterEnabled)
-            withGain = new LimiterSampleProvider(withGain, parameters.LimiterCeilingDb, parameters.LimiterGainDb);
+        {
+            withGain = ApplyStage(withGain, layer.LayerId, "Limiter", "FabFilter Pro-L 2", parameters.LimiterHostedState,
+                outputSampleRate, ref totalHostedLatency,
+                s => new LimiterSampleProvider(s, parameters.LimiterCeilingDb, parameters.LimiterGainDb));
+        }
 
-        return withGain;
+        return totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
+    }
+
+    /// <summary>Auto-selects hosted vs. native for one stage (v6 P3 task 1): if hostedPluginLabel
+    /// is detected, wraps source in a HostedPluginSampleProvider against a cached instance (state
+    /// restored from hostedState on first creation) and accumulates its latency; otherwise builds
+    /// the native provider via buildNative.</summary>
+    private ISampleProvider ApplyStage(
+        ISampleProvider source, int layerId, string stageName, string hostedPluginLabel, byte[]? hostedState,
+        int sampleRate, ref int totalHostedLatency, Func<ISampleProvider, ISampleProvider> buildNative)
+    {
+        if (!_availability.IsAvailable(hostedPluginLabel))
+            return buildNative(source);
+
+        string path = HostedPluginCatalog.KnownPluginPaths[hostedPluginLabel];
+        var instance = _hostedInstances.GetOrCreate(layerId, stageName, path, sampleRate, HostedPluginSampleProvider.DefaultBlockSize, hostedState);
+        var hosted = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize);
+        totalHostedLatency += hosted.LatencySamples;
+        return hosted;
     }
 
     private static float DbToLinear(float db) => (float)Math.Pow(10, db / 20.0);

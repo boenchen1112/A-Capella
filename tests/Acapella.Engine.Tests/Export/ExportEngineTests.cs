@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Acapella.Engine.Export;
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 
@@ -77,7 +78,7 @@ public class ExportEngineTests
             layers.Add(LayerKind.RecordedAV, video1);
             layers.Add(LayerKind.RecordedAV, video2);
 
-            var exportEngine = new ExportEngine();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             exportEngine.Export(layers, outputPath, width: 128, height: 128, fps: 10, sampleRate: 44100);
 
             Assert.True(File.Exists(outputPath), "Export did not produce an output file.");
@@ -128,7 +129,7 @@ public class ExportEngineTests
             var layers = new LayerCollection();
             layers.Add(LayerKind.RecordedAV, video);
 
-            var exportEngine = new ExportEngine();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100);
 
             byte[] frameBytes = DecodeFirstRawFrame(outputPath, 64, 64);
@@ -173,7 +174,7 @@ public class ExportEngineTests
             redLayer.CellIndex = 1;
             blueLayer.CellIndex = 0;
 
-            var exportEngine = new ExportEngine();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             exportEngine.Export(layers, outputPath, width: 128, height: 128, fps: 10, sampleRate: 44100);
 
             byte[] frameBytes = DecodeFirstRawFrame(outputPath, 128, 128);
@@ -217,7 +218,7 @@ public class ExportEngineTests
             var layers = new LayerCollection();
             layers.Add(LayerKind.UploadedVideo, video);
 
-            var exportEngine = new ExportEngine();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100);
 
             Assert.True(File.Exists(outputPath), "Export did not produce an output file.");
@@ -262,14 +263,14 @@ public class ExportEngineTests
             var layer = layers.Add(LayerKind.RecordedAV, video);
             const float masterVolumeDb = 6f;
 
-            var exportEngine = new ExportEngine();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: sampleRate, masterVolumeDb: masterVolumeDb);
 
             float[] exportedAudio = AudioDecoder.DecodeToMonoFloat(outputPath, sampleRate);
             float exportedRms = ComputeRms(exportedAudio);
 
             float[] sourceAudio = AudioDecoder.DecodeToMonoFloat(video, sampleRate);
-            var mixEngine = new MixEngine();
+            var mixEngine = new MixEngine(NoHostedPluginsAvailable.Instance);
             var mixInputs = new[] { new MixLayerInput(layer.LayerId, sourceAudio, sampleRate, layer.MixParameters, layer.SourceCacheKey()) };
             var directMix = mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb);
 

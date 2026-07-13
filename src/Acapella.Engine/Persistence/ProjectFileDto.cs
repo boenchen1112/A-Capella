@@ -63,4 +63,14 @@ public class MixParametersDto
     public float LimiterCeilingDb { get; set; } = -0.3f;
     public float LimiterGainDb { get; set; }
     public string PitchBackend { get; set; } = "None";
+
+    // v6 P3: hosted FabFilter stage state, base64-encoded VST3 state chunks (null if never hosted
+    // or never tweaked away from factory default). See LayerMixParameters' matching byte[] fields.
+    public string? NoiseGateHostedStateBase64 { get; set; }
+    public string? CompressorHostedStateBase64 { get; set; }
+    public string? EqHostedStateBase64 { get; set; }
+    public string? LimiterHostedStateBase64 { get; set; }
+
+    public bool ReverbEnabled { get; set; }
+    public string? ReverbHostedStateBase64 { get; set; }
 }

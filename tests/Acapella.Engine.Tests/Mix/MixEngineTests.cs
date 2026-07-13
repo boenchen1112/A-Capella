@@ -1,9 +1,14 @@
+using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
 namespace Acapella.Engine.Tests.Mix;
 
+/// <summary>Every engine here is built with NoHostedPluginsAvailable so these tests exercise the
+/// native DSP math deterministically regardless of what FabFilter plugins happen to be installed
+/// on the machine running them (v6 P3 auto-selects the hosted backend when detected -- see
+/// HostedFxChainTests for that behavior specifically).</summary>
 public class MixEngineTests
 {
     private static float[] GenerateSineWave(double frequencyHz, int sampleRate, int length, float amplitude = 0.5f)
@@ -32,7 +37,7 @@ public class MixEngineTests
     {
         int sampleRate = 44100;
         var samples = GenerateSineWave(440, sampleRate, sampleRate);
-        var engine = new MixEngine();
+        var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
 
         var paramsLow = new LayerMixParameters { GainDb = -20f };
         var mixLow = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, paramsLow) }, sampleRate);
@@ -53,7 +58,7 @@ public class MixEngineTests
     {
         int sampleRate = 44100;
         var samples = GenerateSineWave(440, sampleRate, sampleRate);
-        var engine = new MixEngine();
+        var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
 
         var parameters = new LayerMixParameters { Mute = true };
         var mix = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, parameters) }, sampleRate);
@@ -67,7 +72,7 @@ public class MixEngineTests
     {
         int sampleRate = 44100;
         var samples = GenerateSineWave(440, sampleRate, sampleRate);
-        var engine = new MixEngine();
+        var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
 
         var leftParams = new LayerMixParameters { Pan = -1f };
         var leftMix = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, leftParams) }, sampleRate);
@@ -108,7 +113,7 @@ public class MixEngineTests
     public void BuildMix_MultipleLayers_AppliesHeadroomScale()
     {
         int sampleRate = 44100;
-        var engine = new MixEngine();
+        var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
         double[] frequencies = { 440, 523, 659, 784 };
 
         // Kept below the master limiter's ceiling (added in P1 task 4) so this test isolates the
@@ -140,7 +145,7 @@ public class MixEngineTests
     {
         int sampleRate = 44100;
         var samples = GenerateSineWave(440, sampleRate, sampleRate, amplitude: 0.1f);
-        var engine = new MixEngine();
+        var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
         var parameters = new LayerMixParameters { GainDb = 0f };
 
         var mixAt0Db = engine.BuildMix(new[] { new MixLayerInput(0, samples, sampleRate, parameters) }, sampleRate, masterVolumeDb: 0f);

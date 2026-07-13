@@ -2,6 +2,7 @@ using Acapella.Engine.Host;
 
 namespace Acapella.Engine.Tests.Host;
 
+[Collection("JuceHosting")]
 public class HostedPluginInstanceTests
 {
     private const double SampleRate = 44100.0;
