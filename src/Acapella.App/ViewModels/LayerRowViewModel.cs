@@ -42,8 +42,11 @@ public class LayerRowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(Layer));
             OnPropertyChanged(nameof(HasSource));
             OnPropertyChanged(nameof(IconGlyph));
+            OnPropertyChanged(nameof(Name));
             OnPropertyChanged(nameof(DisplayName));
+            OnPropertyChanged(nameof(MixingHeaderLabel));
             OnPropertyChanged(nameof(SourceStateLabel));
+            OnPropertyChanged(nameof(CellColor));
             RefreshMixDisplayProperties();
         }
     }
@@ -58,7 +61,35 @@ public class LayerRowViewModel : INotifyPropertyChanged
         _ => "+",
     };
 
-    public string DisplayName => $"Layer {SlotNumber}";
+    /// <summary>Editable layer name (v5 P2 task 1). Blank clears back to the positional default
+    /// ("Layer N") rather than persisting an empty string as a "real" name.</summary>
+    public string Name
+    {
+        get => _layer?.Name ?? "";
+        set
+        {
+            if (_layer is null) return;
+            _layer.Name = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            OnPropertyChanged(nameof(Name));
+            OnPropertyChanged(nameof(DisplayName));
+            OnPropertyChanged(nameof(MixingHeaderLabel));
+        }
+    }
+
+    public string DisplayName => _layer?.Name is { Length: > 0 } n ? n : $"Layer {SlotNumber}";
+
+    public string MixingHeaderLabel => $"Mixing — {DisplayName}";
+
+    /// <summary>Grid-identification color chip (v5 P2 task 3), keyed by CellIndex so a layer keeps
+    /// its color as long as it stays in the same grid cell.</summary>
+    public System.Windows.Media.Brush CellColor
+    {
+        get
+        {
+            var color = Acapella.Engine.Composite.LayerColorPalette.GetColor(_layer?.CellIndex ?? SlotNumber - 1);
+            return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(color.Red, color.Green, color.Blue));
+        }
+    }
 
     public string SourceStateLabel => _layer?.Kind switch
     {
@@ -213,9 +244,8 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     public bool ShowMelodyneButton => Params?.PitchBackend == PitchBackendSelection.Manual2A;
 
-    /// <summary>Studio (overall) gain, kept from v1 -- the spec doesn't call it out as living in
-    /// a specific subtab, but it's a core mix control, not one of the visualized FX stages, so it
-    /// lives alongside pan/mute/solo in the Mixing screen's top strip.</summary>
+    /// <summary>Studio (overall) gain -- labeled "Volume" in the sidebar (v5 P2 task 2, replacing
+    /// the old Mixing-screen top-strip "Gain" slider it used to share this same property with).</summary>
     public float GainDb
     {
         get => Params?.GainDb ?? 0f;
@@ -228,6 +258,8 @@ public class LayerRowViewModel : INotifyPropertyChanged
     /// new source's stored values instead of stale defaults.</summary>
     private void RefreshMixDisplayProperties()
     {
+        OnPropertyChanged(nameof(Name)); OnPropertyChanged(nameof(DisplayName)); OnPropertyChanged(nameof(MixingHeaderLabel));
+        OnPropertyChanged(nameof(CellColor));
         OnPropertyChanged(nameof(TrimStartMs)); OnPropertyChanged(nameof(TrimEndText));
         OnPropertyChanged(nameof(GainDb)); OnPropertyChanged(nameof(GainDisplay));
         OnPropertyChanged(nameof(Pan)); OnPropertyChanged(nameof(PanDisplay));

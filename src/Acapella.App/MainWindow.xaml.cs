@@ -125,9 +125,8 @@ public partial class MainWindow : Window
                 _mixingLayer = stillPresent;
                 if (stillPresent is not null)
                 {
-                    MixingTopStripPanel.DataContext = stillPresent;
+                    MixingScreen.DataContext = stillPresent;
                     MixingContentGrid.DataContext = stillPresent;
-                    MixingHeaderText.Text = $"Mixing — {stillPresent.DisplayName}";
                 }
                 else
                 {
@@ -176,6 +175,8 @@ public partial class MainWindow : Window
     private void CommitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => PushUndoSnapshot();
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+
+    private void LayerNameTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
     // ----- Keyboard transport shortcuts (v5 P1 task 6) -----
 
@@ -283,7 +284,11 @@ public partial class MainWindow : Window
 
         if (result == true && dialog.CreatedLayer is not null)
         {
+            // CellIndex binds to the row's own position (audit B8), not LayerCollection's
+            // insertion order -- e.g. row 2 recording before row 1 must still land in grid cell 2.
+            dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
             row.Layer = dialog.CreatedLayer;
+            if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
             PushUndoSnapshot();
@@ -318,7 +323,12 @@ public partial class MainWindow : Window
         var kind = IsAudioOnlyExtension(Path.GetExtension(dialog.FileName))
             ? LayerKind.UploadedAudioOnly
             : LayerKind.UploadedVideo;
-        row.Layer = _layers.Add(kind, dialog.FileName);
+        var layer = _layers.Add(kind, dialog.FileName);
+        // CellIndex binds to the row's own position (audit B8), not LayerCollection's insertion
+        // order -- e.g. row 2 uploading before row 1 must still land in grid cell 2.
+        layer.CellIndex = row.SlotNumber - 1;
+        row.Layer = layer;
+        if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
         PushUndoSnapshot();
@@ -329,13 +339,21 @@ public partial class MainWindow : Window
         ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
         ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Rebuilds sidebar rows keyed by CellIndex, not LayerCollection's internal list
+    /// order (audit B8/B9): a project saved with gaps (e.g. only cells 0 and 2 populated) recreates
+    /// rows 1 and 3 with their layers and rows 2 empty, rather than compacting layers into the
+    /// first N rows and silently reassigning their grid cells.</summary>
     private void RestoreTracksFromLayers()
     {
         _tracks.Clear();
-        int slot = 1;
-        foreach (var layer in _layers.Layers)
+        var byCellIndex = _layers.Layers.ToDictionary(l => l.CellIndex);
+        int maxCellIndex = byCellIndex.Count > 0 ? byCellIndex.Keys.Max() : -1;
+
+        for (int cellIndex = 0; cellIndex <= maxCellIndex; cellIndex++)
         {
-            var row = new LayerRowViewModel(slot++) { Layer = layer };
+            var row = new LayerRowViewModel(cellIndex + 1);
+            if (byCellIndex.TryGetValue(cellIndex, out var layer))
+                row.Layer = layer;
             row.LiveParamChanged += DebounceRefreshPreview;
             _tracks.Add(row);
         }
@@ -349,9 +367,8 @@ public partial class MainWindow : Window
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
 
         _mixingLayer = row;
-        MixingTopStripPanel.DataContext = row;
+        MixingScreen.DataContext = row;
         MixingContentGrid.DataContext = row;
-        MixingHeaderText.Text = $"Mixing — {row.DisplayName}";
         EditorScreen.Visibility = Visibility.Collapsed;
         MixingScreen.Visibility = Visibility.Visible;
         ShowSubtab(LimiterPanel);
@@ -495,6 +512,17 @@ public partial class MainWindow : Window
     {
         if (_isScrubbing)
             TimeReadoutText.Text = $"{FormatTime(TimelineSlider.Value)} / {FormatTime(_previewEngine.DurationMs)}";
+    }
+
+    private void ShowLayerLabelsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        _previewEngine.ShowLayerLabels = ShowLayerLabelsMenuItem.IsChecked;
+        // Re-render whatever's currently visible so toggling the overlay is reflected immediately,
+        // not just on the next Play/Seek.
+        Task.Run(() =>
+        {
+            _previewEngine.Seek(_previewEngine.PositionMs);
+        });
     }
 
     private void ZoomInButton_Click(object sender, RoutedEventArgs e)

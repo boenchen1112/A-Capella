@@ -9,24 +9,10 @@ namespace Acapella.App.Tests;
 /// of being pushed off-screen by the sidebar/preview taking all the space.</summary>
 public class TransportLayoutTests
 {
-    private static void EnsureApplicationResourcesLoaded()
-    {
-        if (Application.Current is not null) return;
-
-        // Headless: no App.xaml startup, so MainWindow's StaticResource lookups (RowBrush,
-        // PanelBrush, ...) would otherwise fail. Load the same merged dictionary App.xaml uses.
-        _ = new Application();
-        var dictionary = new ResourceDictionary
-        {
-            Source = new Uri("pack://application:,,,/Acapella.App;component/Theme/DarkTheme.xaml")
-        };
-        Application.Current.Resources.MergedDictionaries.Add(dictionary);
-    }
-
     [StaFact]
     public void TransportRowAndTimeline_StayWithinWindowBounds_AtMinimumSize()
     {
-        EnsureApplicationResourcesLoaded();
+        TestAppHost.EnsureApplicationResourcesLoaded();
 
         var window = new MainWindow
         {

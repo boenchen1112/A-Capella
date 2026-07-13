@@ -33,34 +33,64 @@
         <DataTemplate x:Key="TrackRowTemplate" DataType="{x:Type vm:LayerRowViewModel}">
             <Border Background="{StaticResource RowBrush}" CornerRadius="4" Margin="0,0,0,8" Padding="10">
                 <StackPanel>
+                    <!-- Name row: icon, grid-identification color chip (task 3), editable name
+                         (task 1), state label. -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <TextBlock Text="{Binding IconGlyph}" FontSize="15" Width="22" VerticalAlignment="Center"/>
-                        <StackPanel Orientation="Vertical" Margin="6,0,0,0">
-                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                        <Border Width="10" Height="10" CornerRadius="2" Background="{Binding CellColor}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Vertical" Margin="0,0,0,0">
+                            <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Rename this layer"
+                                     Background="Transparent" BorderThickness="0" Padding="0" FontWeight="SemiBold"
+                                     LostFocus="LayerNameTextBox_LostFocus"
+                                     Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}"/>
+                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                       Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}"/>
                             <TextBlock Text="{Binding SourceStateLabel}" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
                         </StackPanel>
                     </StackPanel>
 
-                    <!-- No source yet: Record / Upload choice. -->
-                    <StackPanel Orientation="Horizontal" Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}">
-                        <Button Content="Record" Style="{StaticResource AccentButton}" Click="RecordChoice_Click" Margin="0,0,8,0" Padding="16,6"/>
-                        <Button Content="Upload" Click="UploadChoice_Click" Padding="16,6"/>
+                    <!-- No source yet: Record / Upload choice, with a hint that this row is empty
+                         and excluded from save (audit B9). -->
+                    <StackPanel Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}">
+                        <TextBlock Text="Empty — add a source, or it won't be saved with the project." FontSize="10"
+                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Record" Style="{StaticResource AccentButton}" Click="RecordChoice_Click" Margin="0,0,8,0" Padding="16,6"/>
+                            <Button Content="Upload" Click="UploadChoice_Click" Padding="16,6"/>
+                        </StackPanel>
                     </StackPanel>
 
-                    <!-- Source attached: trim + open mixing only. -->
+                    <!-- Source attached: volume/pan/mute/solo, compact trim, open mixing. -->
                     <StackPanel Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}">
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Trim start (ms)" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                            <TextBox Grid.Column="1" Text="{Binding TrimStartMs, Mode=TwoWay}" Margin="4,0,10,0" LostFocus="TrimTextBox_LostFocus"/>
-                            <TextBlock Grid.Column="2" Text="end (ms, blank = to end)" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                            <TextBox Grid.Column="3" Text="{Binding TrimEndText, Mode=TwoWay}" Margin="4,0,0,0" LostFocus="TrimTextBox_LostFocus"/>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume" VerticalAlignment="Center" FontSize="11"/>
+                            <Slider Grid.Row="0" Grid.Column="1" Style="{StaticResource CommitSlider}" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}" Margin="6,0"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GainDisplay}" FontSize="11"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Pan" VerticalAlignment="Center" FontSize="11"/>
+                            <Slider Grid.Row="1" Grid.Column="1" Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Margin="6,0"/>
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding PanDisplay}" FontSize="11"/>
                         </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <CheckBox Content="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,16,0"/>
+                            <CheckBox Content="Solo" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="In" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,4,0"/>
+                            <TextBox Text="{Binding TrimStartMs, Mode=TwoWay}" Width="70" LostFocus="TrimTextBox_LostFocus" Margin="0,0,10,0"/>
+                            <TextBlock Text="Out" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,4,0"/>
+                            <TextBox Text="{Binding TrimEndText, Mode=TwoWay}" Width="70" LostFocus="TrimTextBox_LostFocus"
+                                     Tag="end"/>
+                        </StackPanel>
                         <Button Content="Open mixing" Click="OpenMixing_Click" HorizontalAlignment="Left" Padding="14,6"/>
                     </StackPanel>
                 </StackPanel>
@@ -86,6 +116,8 @@
             <MenuItem Header="_View">
                 <MenuItem Header="Zoom _in" Click="ZoomInButton_Click"/>
                 <MenuItem Header="Zoom _out" Click="ZoomOutButton_Click"/>
+                <Separator/>
+                <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
             </MenuItem>
             <MenuItem Header="_Tools">
                 <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
@@ -175,23 +207,13 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Button Grid.Column="0" Content="← Back to editor" Click="BackToEditor_Click" Margin="0,0,16,0"/>
-                        <TextBlock Grid.Column="1" x:Name="MixingHeaderText" Text="Mixing — Layer" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" x:Name="MixingHeaderText" Text="{Binding MixingHeaderLabel}" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
                     </Grid>
                 </Border>
 
-                <!-- Top strip: pan / mute / solo / studio gain, apply regardless of subtab. -->
-                <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="16,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-                    <StackPanel x:Name="MixingTopStripPanel" Orientation="Horizontal">
-                        <CheckBox Content="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                        <CheckBox Content="Solo" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,24,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="Gain" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <Slider Style="{StaticResource CommitSlider}" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}" Width="120" VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding GainDisplay}" VerticalAlignment="Center" Margin="4,0,24,0" FontSize="11"/>
-                        <TextBlock Text="Pan" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <Slider Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Width="120" VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding PanDisplay}" VerticalAlignment="Center" Margin="4,0,0,0" FontSize="11"/>
-                    </StackPanel>
-                </Border>
+                <!-- Mute/solo/gain/pan (v1 top strip) moved to the sidebar (v5 P2 task 2):
+                     volume/pan/mute/solo now live per-layer in the Editor screen, not duplicated
+                     here. -->
 
                 <!-- Subtab selector -->
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,10,16,0">
