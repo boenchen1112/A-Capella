@@ -80,7 +80,7 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Visual Studio "18" (2026) Community, C++ workload (MSVC 14.51.36231, Windows 10 SDK 10.0.26100.0)
 - Standalone CMake 4.3.4 (`cmake` on PATH)
 - Melodyne (via FL Studio's plugin install): `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3`, v5.4.1.4. Tier/ARA-factory support unconfirmed at runtime (deferred to Phase 2A's spike).
-- **All five FabFilter v6 targets, confirmed present** under `C:\Program Files\Common Files\VST3\`: Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of v6 scope).
+- **All five FabFilter v6 targets, confirmed present** under `C:\Program Files\Common Files\VST3\FabFilter\`: Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of v6 scope). Reinstalled 2026-07-14 under this vendor subfolder — a prior install had them flat under `VST3\` directly; `HostedPluginCatalog.cs` was updated to match.
 - JUCE: not yet cloned as of this note; clone when P3a's hosting code starts (JUCE bundles its own VST3 SDK — do not also clone Steinberg's VST3 SDK separately).
 
 **Known environment defect — native (C++) toolchain:**
