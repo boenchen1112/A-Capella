@@ -451,11 +451,6 @@ public class HostedFxChainTests
         }
     }
 
-    /// <summary>Replay hygiene (Q0 acceptance, audit A5): two consecutive builds of the same
-    /// (layerId, stage) hosted stage -- i.e. two consecutive plays -- produce sample-identical
-    /// output, proving aca_reset (called by MixEngine.ApplyStage before wiring a cached instance
-    /// into a fresh chain) actually clears the plugin's internal lookahead/delay state between
-    /// runs instead of bleeding the first run's buffered audio into the second.</summary>
     /// <summary>Export/preview parity (Q2 task 1 acceptance): "what you hear is what you export."
     /// Preview and export each own a private MixEngine wrapping the one shared HostedPluginService
     /// (exactly how PreviewPlaybackEngine/ExportEngine are constructed in production -- see
@@ -526,6 +521,11 @@ public class HostedFxChainTests
         }
     }
 
+    /// <summary>Replay hygiene (Q0 acceptance, audit A5): two consecutive builds of the same
+    /// (layerId, stage) hosted stage -- i.e. two consecutive plays -- produce sample-identical
+    /// output, proving aca_reset (called by MixEngine.ApplyStage before wiring a cached instance
+    /// into a fresh chain) actually clears the plugin's internal lookahead/delay state between
+    /// runs instead of bleeding the first run's buffered audio into the second.</summary>
     [Fact]
     public void ReplayReset_TwoConsecutivePlaysOfTheSameCachedInstance_ProduceSampleIdenticalOutput()
     {
@@ -555,6 +555,83 @@ public class HostedFxChainTests
             var output2 = ReadAll(chain2, totalSamples * 2);
 
             Assert.Equal(output1, output2);
+        }
+        finally
+        {
+            service.Dispose();
+        }
+    }
+
+    /// <summary>Save/close/reopen/export parity (Q2 acceptance, second bullet): "Save -> close ->
+    /// reopen -> export produces the same file as exporting before closing." Simulates a project
+    /// close by releasing the live hosted instance from the cache (HostedPluginService.Release --
+    /// what a real layer removal or app close does) after capturing its state via
+    /// SyncLiveStateIntoParameters (what CurrentProjectDto does before every save), then simulates
+    /// reopening the project: a fresh BuildLayerChain call with those same parameters recreates the
+    /// instance via GetOrCreateInstance's initialState argument -- exactly what happens on project
+    /// load, not through PushSavedStateIntoLiveInstances (that path is for state surviving *without*
+    /// being released, e.g. an undo while the editor stays open). The reopened chain's output must
+    /// be sample-identical to the pre-close export.</summary>
+    [Fact]
+    public void SaveCloseReopenExport_ProducesSameOutputAsExportBeforeClosing()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-L 2' not found on this machine.");
+                return;
+            }
+
+        int totalSamples = SampleRate / 2;
+        var samples = new float[totalSamples];
+        const int impulseIndex = 4410;
+        samples[impulseIndex] = 1f;
+
+        var parameters = new LayerMixParameters { LimiterEnabled = true };
+        var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-L 2"));
+        try
+        {
+            using var engine = new MixEngine(service);
+
+            var chainBeforeClose = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var outputBeforeClose = ReadAll(chainBeforeClose, totalSamples * 2);
+
+            var liveInstance = engine.GetOrCreateHostedInstance(0, MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, null, SampleRate);
+            int gainParam = -1;
+            for (int i = 0; i < liveInstance.ParameterCount; i++)
+            {
+                if (liveInstance.GetParameterName(i).Contains("Gain", StringComparison.OrdinalIgnoreCase))
+                {
+                    liveInstance.SetParameterValue(i, 0.6f);
+                    gainParam = i;
+                    break;
+                }
+            }
+            Assert.True(gainParam >= 0);
+
+            var chainAfterTweak = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var outputAfterTweak = ReadAll(chainAfterTweak, totalSamples * 2);
+            Assert.NotEqual(outputBeforeClose, outputAfterTweak); // sanity: the tweak actually changed something
+
+            // "Save": pull the live tweak into parameters, exactly what CurrentProjectDto does.
+            // Must happen after a block has actually processed the parameter change (the same
+            // gotcha State_RoundTripsThroughGetAndSet documents): some VST3 plugins only commit a
+            // setValue() into their persisted component state once a block runs with it applied,
+            // not the moment setValue() returns -- ReadAll(chainAfterTweak, ...) above is that block.
+            engine.SyncLiveStateIntoParameters(0, parameters);
+            Assert.NotNull(parameters.LimiterHostedState);
+
+            // "Close": drop the live instance entirely, same as the app shutting down/releasing.
+            service.Release(0, MixEngine.LimiterStage);
+
+            // "Reopen": a fresh chain build from the saved parameters recreates the instance with
+            // GetOrCreateInstance's initialState argument -- the real project-load path.
+            var chainAfterReopen = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var outputAfterReopen = ReadAll(chainAfterReopen, totalSamples * 2);
+
+            Assert.Equal(outputAfterTweak, outputAfterReopen);
         }
         finally
         {
