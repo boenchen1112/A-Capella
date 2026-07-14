@@ -348,6 +348,60 @@ public class PreviewPlaybackEngineTests
         }
     }
 
+    /// <summary>Q1 task 1 [auto]: "Transport commands issued from the Mixing screen and Editor
+    /// screen interleaved under the Q0 stress test: single sink, consistent position." Both
+    /// screens' transport rows call into this one shared PreviewPlaybackEngine (MainWindow's
+    /// single `_previewEngine` field, per Q0's one-shared-service pattern) via the same command
+    /// queue proven race-free above -- this test represents the two screens as two concurrent
+    /// callers issuing the exact same transport verbs (Play/Stop/Seek) and additionally asserts
+    /// PositionMs stays a single well-formed, in-range value throughout and after the storm,
+    /// rather than only checking for absence of exceptions/double-plays.</summary>
+    [Fact]
+    public void TransportCommandsFromTwoScreensInterleaved_SingleSinkAndConsistentPosition()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var sink = new CountingAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            engine.FrameReady += bmp => bmp.Dispose();
+            engine.SetLayers(layers.Layers);
+
+            var observedPositions = new System.Collections.Concurrent.ConcurrentBag<double>();
+            void RecordPosition() => observedPositions.Add(engine.PositionMs);
+
+            // "Editor screen" transport calls.
+            var editorScreenCalls = Task.Run(() =>
+            {
+                for (int i = 0; i < 15; i++) { engine.Play(); RecordPosition(); engine.Seek(200); RecordPosition(); engine.Stop(); RecordPosition(); }
+            });
+            // "Mixing screen" transport calls -- same verbs, different caller thread, exactly the
+            // interleave the acceptance criterion describes.
+            var mixingScreenCalls = Task.Run(() =>
+            {
+                for (int i = 0; i < 15; i++) { engine.Seek(400); RecordPosition(); engine.Play(); RecordPosition(); engine.Stop(); RecordPosition(); }
+            });
+
+            Exception? thrown = Record.Exception(() => Task.WaitAll(new[] { editorScreenCalls, mixingScreenCalls }, TimeSpan.FromSeconds(30)));
+            Assert.Null(thrown);
+
+            engine.Stop();
+
+            Assert.True(sink.MaxObservedConcurrentPlays <= 1,
+                $"Expected at most one concurrent sink Play across both screens' transport calls, observed {sink.MaxObservedConcurrentPlays}.");
+            Assert.NotEmpty(observedPositions);
+            Assert.All(observedPositions, p => Assert.InRange(p, 0, engine.DurationMs));
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
     /// <summary>Regression test: MasterVolumeDb previously only took effect on the *next*
     /// Play/Seek's fresh mix rebuild -- moving the master volume slider during active playback had
     /// no audible effect at all. Pulls samples from the actual live graph handed to the sink,

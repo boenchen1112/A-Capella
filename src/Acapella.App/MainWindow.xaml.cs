@@ -120,7 +120,7 @@ public partial class MainWindow : Window
             overwritten?.Dispose();
             if (!alreadyQueued) Dispatcher.InvokeAsync(DrainFrameMailbox);
         };
-        _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => PlayStopButton.Content = "▶ Play");
+        _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => SetPlayStopContent("▶ Play"));
 
         Closing += (s, e) =>
         {
@@ -300,8 +300,29 @@ public partial class MainWindow : Window
         _compositedFrame = frame;
         CompositeCanvas.InvalidateVisual();
         old?.Dispose();
-        if (!_isScrubbing) TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
-        TimeReadoutText.Text = $"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(_previewEngine.DurationMs)}";
+        if (!_isScrubbing)
+        {
+            TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
+            MixingTimelineSlider.Value = Math.Min(_previewEngine.PositionMs, MixingTimelineSlider.Maximum);
+        }
+        SetTimeReadout($"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(_previewEngine.DurationMs)}");
+    }
+
+    /// <summary>v7 Q1 task 1: the Mixing screen's transport row shares Click/ValueChanged handlers
+    /// with the Editor screen's (see MainWindow.xaml), so every place that used to touch just
+    /// PlayStopButton/TimeReadoutText/TimelineSlider now goes through these two helpers (or mirrors
+    /// TimelineSlider.Value/Maximum manually where both sliders' Maximum can legitimately differ --
+    /// the Mixing slider has a fixed width and no zoom).</summary>
+    private void SetPlayStopContent(string text)
+    {
+        PlayStopButton.Content = text;
+        MixingPlayStopButton.Content = text;
+    }
+
+    private void SetTimeReadout(string text)
+    {
+        TimeReadoutText.Text = text;
+        MixingTimeReadoutText.Text = text;
     }
 
     // ----- Track sidebar: add / record / upload -----
@@ -524,7 +545,7 @@ public partial class MainWindow : Window
         if (_previewEngine.IsPlaying)
         {
             _previewEngine.Stop();
-            PlayStopButton.Content = "▶ Play";
+            SetPlayStopContent("▶ Play");
             StatusText.Text = "Preview stopped.";
             return;
         }
@@ -536,6 +557,7 @@ public partial class MainWindow : Window
         }
 
         PlayStopButton.IsEnabled = false;
+        MixingPlayStopButton.IsEnabled = false;
         StatusText.Text = "Starting preview...";
         var layersSnapshot = _layers.Layers.ToList();
 
@@ -547,7 +569,8 @@ public partial class MainWindow : Window
             Dispatcher.Invoke(() =>
             {
                 PlayStopButton.IsEnabled = true;
-                PlayStopButton.Content = "⏸ Stop";
+                MixingPlayStopButton.IsEnabled = true;
+                SetPlayStopContent("⏸ Stop");
                 StatusText.Text = "Playing preview.";
                 UpdateTimelineRangeUi();
             });
@@ -568,7 +591,7 @@ public partial class MainWindow : Window
     private void TimelineSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e)
     {
         _isScrubbing = false;
-        double target = TimelineSlider.Value;
+        double target = ((Slider)sender).Value;
         Task.Run(() =>
         {
             _previewEngine.Seek(target);
@@ -579,7 +602,7 @@ public partial class MainWindow : Window
     private void TimelineSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_isScrubbing)
-            TimeReadoutText.Text = $"{FormatTime(TimelineSlider.Value)} / {FormatTime(_previewEngine.DurationMs)}";
+            SetTimeReadout($"{FormatTime(((Slider)sender).Value)} / {FormatTime(_previewEngine.DurationMs)}");
     }
 
     private void ShowLayerLabelsMenuItem_Click(object sender, RoutedEventArgs e)
@@ -612,8 +635,13 @@ public partial class MainWindow : Window
         double durationMs = _previewEngine.DurationMs;
         TimelineSlider.Maximum = Math.Max(1, durationMs);
         TimelineSlider.Width = Math.Max(200, _pixelsPerSecond * durationMs / 1000.0);
-        if (!_isScrubbing) TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
-        TimeReadoutText.Text = $"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(durationMs)}";
+        MixingTimelineSlider.Maximum = Math.Max(1, durationMs);
+        if (!_isScrubbing)
+        {
+            TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
+            MixingTimelineSlider.Value = Math.Min(_previewEngine.PositionMs, MixingTimelineSlider.Maximum);
+        }
+        SetTimeReadout($"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(durationMs)}");
     }
 
     private static string FormatTime(double ms)

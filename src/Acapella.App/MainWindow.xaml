@@ -215,6 +215,26 @@
                      volume/pan/mute/solo now live per-layer in the Editor screen, not duplicated
                      here. -->
 
+                <!-- Transport row (v7 Q1 task 1): the same PreviewPlaybackEngine as the Editor
+                     screen's transport, so entering/leaving this screen never stops or rebuilds
+                     playback; these buttons/slider share Click/ValueChanged handlers with the
+                     Editor screen's transport (MainWindow.xaml.cs), just a second set of named
+                     controls kept in sync by those same handlers. No video canvas here per the
+                     plan (audio + meters are the feedback on this screen). -->
+                <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="MixingSeekBackButton" Content="−5s" ToolTip="Back 5s" Click="SeekBackButton_Click" Padding="8,5" Margin="0,0,4,0"/>
+                        <Button x:Name="MixingPlayStopButton" Content="▶ Play" Click="PlayStopButton_Click" Padding="10,5" Margin="0,0,4,0"/>
+                        <Button x:Name="MixingSeekForwardButton" Content="+5s" ToolTip="Forward 5s" Click="SeekForwardButton_Click" Padding="8,5" Margin="0,0,4,0"/>
+                        <Button x:Name="MixingRestartButton" Content="⏮ Restart" Click="RestartButton_Click" Padding="10,5" Margin="0,0,16,0"/>
+                        <TextBlock x:Name="MixingTimeReadoutText" Text="0:00 / 0:00" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
+                        <Slider x:Name="MixingTimelineSlider" Minimum="0" Maximum="1000" Value="0" Width="300" VerticalAlignment="Center"
+                                PreviewMouseDown="TimelineSlider_PreviewMouseDown"
+                                PreviewMouseUp="TimelineSlider_PreviewMouseUp"
+                                ValueChanged="TimelineSlider_ValueChanged"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Subtab selector -->
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,10,16,0">
                     <Button x:Name="LimiterTabButton" Content="Limiter" Click="SubtabButton_Click" Padding="14,6" Margin="0,0,4,0"/>
