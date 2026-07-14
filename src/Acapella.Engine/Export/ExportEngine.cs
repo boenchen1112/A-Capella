@@ -93,7 +93,7 @@ public class ExportEngine : IDisposable
 
                 using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath);
                 var stdin = encodeProcess.StandardInput.BaseStream;
-                FfmpegProcessUtil.DrainStderrInBackground(encodeProcess);
+                var stderrTail = FfmpegProcessUtil.DrainStderrKeepingTail(encodeProcess);
 
                 // L3: hoisted out of the per-frame loop -- every composited frame is the same
                 // fixed size, so there's no need to allocate a new byte[] on every iteration.
@@ -110,7 +110,7 @@ public class ExportEngine : IDisposable
                 encodeProcess.WaitForExit();
 
                 if (encodeProcess.ExitCode != 0)
-                    throw new InvalidOperationException($"ffmpeg export failed with exit code {encodeProcess.ExitCode}.");
+                    throw new InvalidOperationException($"ffmpeg export failed (exit {encodeProcess.ExitCode}):\n{string.Join('\n', stderrTail.GetLines())}");
             }
             finally
             {

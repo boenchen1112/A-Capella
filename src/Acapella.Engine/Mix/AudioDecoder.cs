@@ -28,6 +28,10 @@ public static class AudioDecoder
         process.StandardOutput.BaseStream.CopyTo(ms);
         process.WaitForExit();
 
+        // Note: a nonzero exit code here is not necessarily a real failure -- a video-only layer
+        // (no audio stream to map) legitimately makes ffmpeg exit nonzero while still being a
+        // valid, expected input (see ExportEngine's video-only layer handling). Zero decoded bytes
+        // is the layer's normal "no audio" case, not surfaced as an error.
         var bytes = ms.ToArray();
         int sampleCount = bytes.Length / 4;
         var samples = new float[sampleCount];
