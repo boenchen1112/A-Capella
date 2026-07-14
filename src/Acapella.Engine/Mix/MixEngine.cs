@@ -41,7 +41,14 @@ public class MixEngine : IDisposable
     public const string LimiterPluginLabel = "FabFilter Pro-L 2";
     public const string ReverbPluginLabel = "FabFilter Pro-R 2";
 
+    public const string MelodynePluginLabel = "Melodyne";
+
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
+
+    // v7 2A task 39: lazily created since it needs _hostedService, unlike AutomaticBackend's pure
+    // DSP math above. One instance per MixEngine is fine -- MelodyneAraPitchCorrector itself is
+    // stateless between Correct() calls (a fresh AraHostSession per call).
+    private IPitchCorrectionBackend? _melodyneBackend;
 
     /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
@@ -201,9 +208,19 @@ public class MixEngine : IDisposable
 
         var parameters = layer.Parameters;
 
-        float[] processedSamples = parameters.PitchBackend == PitchBackendSelection.Automatic2B
-            ? PitchCorrectionCache.GetOrCorrect(AutomaticBackend, layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate)
-            : layer.Samples;
+        // v7 2A task 39/41: Manual2A only actually routes through Melodyne's ARA pipeline if it's
+        // both installed and ARA-capable (IsAraAvailable) -- a plain-VST3-tier or missing Melodyne
+        // falls back to unprocessed passthrough (task 41's fallback-without-crash) rather than
+        // throwing mid-chain-build, the same "native math is the automatic fallback" shape every
+        // other hosted stage already uses when its matching plugin isn't detected.
+        float[] processedSamples = parameters.PitchBackend switch
+        {
+            PitchBackendSelection.Automatic2B =>
+                PitchCorrectionCache.GetOrCorrect(AutomaticBackend, layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate),
+            PitchBackendSelection.Manual2A when _hostedService.IsAraAvailable(MelodynePluginLabel) =>
+                PitchCorrectionCache.GetOrCorrect(GetOrCreateMelodyneBackend(), layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate),
+            _ => layer.Samples,
+        };
 
         ISampleProvider chain = new ArraySampleProvider(processedSamples, layer.SampleRate);
 
@@ -287,6 +304,9 @@ public class MixEngine : IDisposable
         totalHostedLatency += hosted.LatencySamples;
         return hosted;
     }
+
+    private IPitchCorrectionBackend GetOrCreateMelodyneBackend() =>
+        _melodyneBackend ??= new MelodyneAraPitchCorrector(_hostedService, HostedPluginCatalog.KnownPluginPaths[MelodynePluginLabel]);
 
     private static float DbToLinear(float db) => (float)Math.Pow(10, db / 20.0);
 }

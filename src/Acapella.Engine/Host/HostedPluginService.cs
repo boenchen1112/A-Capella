@@ -46,6 +46,28 @@ public sealed class HostedPluginService : IDisposable
 
     public bool IsAvailable(string pluginLabel) => _availability.IsAvailable(pluginLabel);
 
+    // v7 2A task 41: cached per plugin label -- TryScanAraCapability does its own file-system +
+    // VST3-factory-metadata read each call, no need to repeat that per layer/per BuildLayerChain
+    // call. Doesn't need dispatcher marshaling (safe from any thread, see AraBridge.cpp's
+    // aca_scan_ara_capability doc comment -- it never touches JUCE's MessageManager).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _araAvailability = new();
+
+    /// <summary>True only if pluginLabel is both installed and reports an ARA factory (Melodyne's
+    /// tier can be plain-VST3-only) -- the fallback-without-crash gate for the Manual2A pitch
+    /// backend (task 41): BuildLayerChain checks this before ever touching AraHostSession, so a
+    /// machine without an ARA-capable Melodyne install just silently skips pitch correction for
+    /// that layer instead of throwing mid-chain-build.</summary>
+    public bool IsAraAvailable(string pluginLabel) => _araAvailability.GetOrAdd(pluginLabel, label =>
+        HostedPluginCatalog.KnownPluginPaths.TryGetValue(label, out var path)
+        && HostedPluginInstance.TryScanAraCapability(path, out var description)
+        && description is { IsAraCapable: true });
+
+    /// <summary>v7 2A task 39: generic passthrough onto the same dispatcher thread every other
+    /// lifecycle call above uses -- for callers (MelodyneAraPitchCorrector) whose native work
+    /// doesn't fit this class's existing per-stage cache/state methods but still must run on the
+    /// one JUCE-initialized thread, not whatever thread happened to call in.</summary>
+    public T RunOnHostedThread<T>(Func<T> func) => _dispatcher.Invoke(func);
+
     /// <summary>Fetches (lazily creating, on the dispatcher thread) the single live instance for
     /// (layerId, stage) -- the same object whether the caller is the chain builder or the UI's
     /// "Open Pro-X..." launcher button.</summary>
