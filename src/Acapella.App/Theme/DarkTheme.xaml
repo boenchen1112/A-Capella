@@ -96,6 +96,29 @@
         <Setter Property="Background" Value="Transparent"/>
     </Style>
 
+    <!-- Menu bar (v7 Q1 visual fix): unstyled MenuItem falls back to the OS theme's default
+         chrome, which renders near-black header text with no explicit background; effectively
+         invisible against the dark PanelBrush/WindowBrush MainWindow.xaml puts behind it. Only the
+         top-level bar (Role=TopLevelHeader) gets the dark-theme treatment here; dropdown items
+         (Role=SubmenuHeader/SubmenuItem) are left on the OS default light popup, where the default
+         dark text already has good contrast; restyling those too would need a full ControlTemplate
+         replacement for the submenu Popup/Border, which is more than this visibility bug calls for.
+         MainWindow.xaml also switches the Menu's own Background from PanelBrush to the lighter
+         RowBrush and adds a bottom border for a clean edge against the window body. -->
+    <Style TargetType="MenuItem">
+        <Style.Triggers>
+            <Trigger Property="Role" Value="TopLevelHeader">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Padding" Value="8,5"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style TargetType="Separator">
+        <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+    </Style>
+
     <!-- Accordion track row header: icon + name + state label + built-in expander chevron. -->
     <Style TargetType="Expander">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
