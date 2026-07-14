@@ -487,7 +487,12 @@ public class PreviewPlaybackEngineTests
             engine.Seek(positionBeforeRebuild);
 
             Assert.True(engine.IsPlaying, "Toggling a slot mid-playback must not leave the transport stopped.");
-            Assert.Equal(positionBeforeRebuild, engine.PositionMs, precision: 0);
+            // SeekCore sets PositionMs = positionBeforeRebuild synchronously before restarting
+            // playback, but IsPlaying stays true throughout so the frame-loop thread keeps
+            // advancing PositionMs on its own wall-clock cadence -- some real time elapses between
+            // the Seek call returning and this read, so "position preserved" is checked as "close
+            // to where we asked to land", not bit-exact.
+            Assert.InRange(engine.PositionMs, positionBeforeRebuild - 50, positionBeforeRebuild + 500);
 
             Assert.NotNull(sink.LastMix);
             sink.LastMix!.Read(buffer, 0, buffer.Length);
@@ -497,6 +502,50 @@ public class PreviewPlaybackEngineTests
 
             Assert.True(rmsAfterToggle < rmsBeforeToggle * 0.7f,
                 $"Expected enabling the EQ slot with a deep mid-band cut to reduce live RMS; got {rmsBeforeToggle} -> {rmsAfterToggle}.");
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Q1 task 3: GetLayerLevels/GetMasterLevels must reflect the live playing mix, not
+    /// stay stuck at their pre-Play NegativeInfinity default -- these are what a Mixing-screen
+    /// meter poll timer reads.</summary>
+    [Fact]
+    public void GetLayerAndMasterLevels_WhilePlaying_ReportNonSilentLevels()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
+        try
+        {
+            var layer = new LayerModel { LayerId = 7, Kind = LayerKind.UploadedAudioOnly, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var sink = new CapturingAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            engine.FrameReady += bmp => bmp.Dispose();
+            engine.SetLayers(layers.Layers);
+
+            var (layerPeakBefore, _) = engine.GetLayerLevels(7);
+            var (masterPeakBefore, _) = engine.GetMasterLevels();
+            Assert.True(float.IsNegativeInfinity(layerPeakBefore));
+            Assert.True(float.IsNegativeInfinity(masterPeakBefore));
+
+            engine.Play();
+            Assert.NotNull(sink.LastMix);
+            var buffer = new float[8192];
+            sink.LastMix!.Read(buffer, 0, buffer.Length);
+
+            var (layerPeakAfter, layerRmsAfter) = engine.GetLayerLevels(7);
+            var (masterPeakAfter, masterRmsAfter) = engine.GetMasterLevels();
+
+            engine.Stop();
+
+            Assert.False(float.IsNegativeInfinity(layerPeakAfter), "Expected a real level for the playing layer's tap.");
+            Assert.False(float.IsNegativeInfinity(masterPeakAfter), "Expected a real level for the master bus tap.");
+            Assert.True(layerRmsAfter <= layerPeakAfter);
+            Assert.True(masterRmsAfter <= masterPeakAfter);
         }
         finally
         {

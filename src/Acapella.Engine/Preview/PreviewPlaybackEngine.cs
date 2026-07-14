@@ -424,6 +424,15 @@ public class PreviewPlaybackEngine : IDisposable
         }
     }
 
+    /// <summary>Q1 task 3: peak/RMS in dBFS for one layer's post-slot-rack meter tap, straight
+    /// from the live MixEngine this engine plays through (not the command queue -- MeterTap's
+    /// fields are volatile, so this is a safe, cheap read from any thread, including a UI poll
+    /// timer at ~30Hz).</summary>
+    public (float PeakDb, float RmsDb) GetLayerLevels(int layerId) => _mixEngine.GetLayerLevels(layerId);
+
+    /// <summary>Q1 task 3: peak/RMS in dBFS for the master bus meter tap.</summary>
+    public (float PeakDb, float RmsDb) GetMasterLevels() => _mixEngine.GetMasterLevels();
+
     public void Dispose()
     {
         Stop();

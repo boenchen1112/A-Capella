@@ -47,6 +47,10 @@ public partial class MainWindow : Window
     // tweak needs to be captured even if the user never triggers another live-param change.
     private readonly DispatcherTimer _hostedStatePollTimer;
 
+    // v7 Q1 task 3: ~30Hz meter refresh, separate timer from the 500ms hosted-state poll above
+    // since meters need to feel live even when nothing else is happening.
+    private readonly DispatcherTimer _meterPollTimer;
+
     private SKBitmap? _compositedFrame;
     private readonly object _frameMailboxLock = new();
     private SKBitmap? _pendingFrame;
@@ -100,6 +104,15 @@ public partial class MainWindow : Window
         };
         _hostedStatePollTimer.Start();
 
+        // v7 Q1 task 3: ~30Hz meter poll -- reads GetLayerLevels/GetMasterLevels straight off the
+        // live PreviewPlaybackEngine (volatile fields on its meter taps, no command-queue round
+        // trip) and drives the two ProgressBars. Only meaningful on the Mixing screen; runs
+        // regardless of screen since it's cheap and DrainFrameMailbox-style always-on polling
+        // already exists elsewhere in this file (audit consistency, not a new pattern).
+        _meterPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _meterPollTimer.Tick += (s, e) => UpdateMeters();
+        _meterPollTimer.Start();
+
         // Latest-frame-wins mailbox (audit A2/B14): FrameReady fires on the frame-loop thread, and
         // that thread must never block on the UI thread (a blocking Dispatcher.Invoke here used to
         // throttle the render loop by UI-thread availability -- slider updates, layout passes --
@@ -125,6 +138,7 @@ public partial class MainWindow : Window
         Closing += (s, e) =>
         {
             _hostedStatePollTimer.Stop();
+            _meterPollTimer.Stop();
             _previewEngine.Dispose();
             _mixEngine.Dispose();
             _hostedService.Dispose();
@@ -322,6 +336,23 @@ public partial class MainWindow : Window
     {
         TimeReadoutText.Text = text;
         MixingTimeReadoutText.Text = text;
+    }
+
+    /// <summary>v7 Q1 task 3: drives LayerMeterBar/MasterMeterBar from PreviewPlaybackEngine's
+    /// meter taps. Maps -60..0 dBFS RMS onto the ProgressBar's 0..1 range (below -60dB reads as
+    /// silence) -- a fixed floor is simpler than a full logarithmic meter ballistics model and
+    /// good enough for "the meters respond" per the plan's [human] criterion.</summary>
+    private void UpdateMeters()
+    {
+        const float FloorDb = -60f;
+        float ToUnit(float db) => float.IsNegativeInfinity(db) ? 0f : Math.Clamp((db - FloorDb) / -FloorDb, 0f, 1f);
+
+        int? layerId = _mixingLayer?.Layer?.LayerId;
+        var (_, layerRmsDb) = layerId is int id ? _previewEngine.GetLayerLevels(id) : (float.NegativeInfinity, float.NegativeInfinity);
+        var (_, masterRmsDb) = _previewEngine.GetMasterLevels();
+
+        LayerMeterBar.Value = ToUnit(layerRmsDb);
+        MasterMeterBar.Value = ToUnit(masterRmsDb);
     }
 
     // ----- Track sidebar: add / record / upload -----

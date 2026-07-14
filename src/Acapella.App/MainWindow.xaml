@@ -232,6 +232,15 @@
                                 PreviewMouseDown="TimelineSlider_PreviewMouseDown"
                                 PreviewMouseUp="TimelineSlider_PreviewMouseUp"
                                 ValueChanged="TimelineSlider_ValueChanged"/>
+
+                        <!-- Level meters (v7 Q1 task 3): peak/RMS taps read from the live
+                             PreviewPlaybackEngine at ~30Hz (MainWindow's _meterPollTimer), not
+                             data-bound; these are plain post-slot-rack/master bus dBFS readouts,
+                             not project state. -->
+                        <TextBlock Text="Layer" VerticalAlignment="Center" Margin="16,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                        <ProgressBar x:Name="LayerMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center"/>
+                        <TextBlock Text="Master" VerticalAlignment="Center" Margin="10,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                        <ProgressBar x:Name="MasterMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
