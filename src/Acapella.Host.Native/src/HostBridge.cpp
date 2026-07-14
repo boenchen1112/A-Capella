@@ -12,6 +12,9 @@
 // getTotalNumInputChannels() reported 4 (main + sidechain) -- forcing the layout here means every
 // downstream caller (P3's HostedPluginSampleProvider) can always assume exactly 2-in/2-out and never
 // has to special-case a plugin's bus layout.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 #include <memory>
@@ -166,6 +169,20 @@ extern "C"
     __declspec(dllexport) void aca_initialize()
     {
         juceInit();
+
+        // v7 Q1 visual fix: plugin editor windows (task 7) were reported rendering with tiny
+        // fonts/controls compared to the rest of the app on a scaled display. The WPF host process
+        // is Per-Monitor-V2 DPI aware by default (the .NET SDK's default.win32manifest), so WPF's
+        // own UI scales correctly with the monitor's DPI -- but a JUCE DocumentWindow created in
+        // this same process does not automatically pick that scale up for its own content; JUCE
+        // renders its component tree (including third-party plugin editors, since they're built on
+        // juce::Component) at a scale it computes itself via juce::Desktop's global scale factor,
+        // which defaults to 1.0 regardless of the OS DPI setting. GetDpiForSystem() (effective
+        // system DPI, 96 = 100%) gives a reasonable single-monitor approximation to drive that
+        // scale factor explicitly.
+        UINT systemDpi = GetDpiForSystem();
+        juce::Desktop::getInstance().setGlobalScaleFactor(static_cast<float>(systemDpi) / 96.0f);
+
         g_initialized = true;
     }
 

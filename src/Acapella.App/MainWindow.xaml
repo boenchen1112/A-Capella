@@ -253,22 +253,16 @@
                      matching plugin is hosted (the only place native controls appear at all, per
                      the plan's no-"backend"-wording rule); replaces the old per-FX subtab
                      selector with everything visible/scrollable at once, like a DAW channel strip. -->
-                <!-- v7 Q1 visual fix: the rack renders noticeably smaller than the rest of the UI
-                     at default WPF control metrics (12px text, thin sliders, tight padding);
-                     FontSize="16" on the whole rack scales every TextBlock/CheckBox/Button/ComboBox
-                     inside it by inheritance; the few explicit FontSize overrides below (secondary
-                     value readouts, "detected" labels) are bumped from 11 to 13 so they stay
-                     readable at the new scale without competing with the primary FX-name headers. -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="16" TextElement.FontSize="16">
+                    <StackPanel Margin="16">
                         <!-- Slot 1: Noise gate -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <CheckBox Content="⏻" FontSize="20" ToolTip="Enabled" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="Noise gate" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Text="FabFilter Pro-G" Foreground="{StaticResource MutedTextBrush}" FontSize="13" VerticalAlignment="Center" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-G..." Click="OpenNoiseGateEditor_Click" Padding="14,7" Margin="14,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Noise gate" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="FabFilter Pro-G" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-G..." Click="OpenNoiseGateEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -276,23 +270,23 @@
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="0" Grid.Column="1" Height="26" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GateDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GateDisplay}" FontSize="11" Margin="4"/>
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="1" Grid.Column="1" Height="26" Minimum="10" Maximum="500" Value="{Binding NoiseGateReleaseMs, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding GateReleaseDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="10" Maximum="500" Value="{Binding NoiseGateReleaseMs, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding GateReleaseDisplay}" FontSize="11" Margin="4"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <!-- Slot 2: Compressor -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <CheckBox Content="⏻" FontSize="20" ToolTip="Enabled" IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="Compressor" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Text="FabFilter Pro-C 3" Foreground="{StaticResource MutedTextBrush}" FontSize="13" VerticalAlignment="Center" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-C 3..." Click="OpenCompressorEditor_Click" Padding="14,7" Margin="14,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Compressor" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="FabFilter Pro-C 3" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-C 3..." Click="OpenCompressorEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsCompressorHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -300,23 +294,23 @@
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="0" Grid.Column="1" Height="26" Minimum="-60" Maximum="0" Value="{Binding CompressorThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding CompressorThresholdDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-60" Maximum="0" Value="{Binding CompressorThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding CompressorThresholdDisplay}" FontSize="11" Margin="4"/>
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Ratio" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="1" Grid.Column="1" Height="26" Minimum="1" Maximum="20" Value="{Binding CompressorRatio, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding CompressorRatioDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="1" Maximum="20" Value="{Binding CompressorRatio, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding CompressorRatioDisplay}" FontSize="11" Margin="4"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <!-- Slot 3: EQ -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <CheckBox Content="⏻" FontSize="20" ToolTip="Enabled" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="EQ" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Text="FabFilter Pro-Q 4" Foreground="{StaticResource MutedTextBrush}" FontSize="13" VerticalAlignment="Center" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-Q 4..." Click="OpenEqEditor_Click" Padding="14,7" Margin="14,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="EQ" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="FabFilter Pro-Q 4" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-Q 4..." Click="OpenEqEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsEqHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -324,41 +318,41 @@
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Low" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="0" Grid.Column="1" Height="26" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LowEqDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LowEqDisplay}" FontSize="11" Margin="4"/>
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Mid" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="1" Grid.Column="1" Height="26" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding MidEqDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding MidEqDisplay}" FontSize="11" Margin="4"/>
                                     <TextBlock Grid.Row="2" Grid.Column="0" Text="High" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="2" Grid.Column="1" Height="26" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding HighEqDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding HighEqDisplay}" FontSize="11" Margin="4"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <!-- Slot 4: Reverb (hosted-only, no native fallback: v6 P3 task 5) -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
-                                    <CheckBox Content="⏻" FontSize="20" ToolTip="Enabled" IsChecked="{Binding ReverbEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,14,0" VerticalAlignment="Center" IsEnabled="{Binding IsReverbHosted}"/>
-                                    <TextBlock Text="Reverb" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Text="FabFilter Pro-R 2" Foreground="{StaticResource MutedTextBrush}" FontSize="13" VerticalAlignment="Center" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-R 2..." Click="OpenReverbEditor_Click" Padding="14,7" Margin="14,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding ReverbEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center" IsEnabled="{Binding IsReverbHosted}"/>
+                                    <TextBlock Text="Reverb" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="FabFilter Pro-R 2" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-R 2..." Click="OpenReverbEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <TextBlock Visibility="{Binding IsReverbHosted, Converter={StaticResource InverseBoolToVis}}"
                                            Text="Requires FabFilter Pro-R 2 (not detected on this machine) -- there is no native fallback."
-                                           Foreground="{StaticResource MutedTextBrush}" FontSize="13" TextWrapping="Wrap" MaxWidth="440" Margin="0,10,0,0"/>
+                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" MaxWidth="400" Margin="0,8,0,0"/>
                             </StackPanel>
                         </Border>
 
                         <!-- Slot 5: Limiter -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                    <CheckBox Content="⏻" FontSize="20" ToolTip="Enabled" IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="Limiter" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Text="FabFilter Pro-L 2" Foreground="{StaticResource MutedTextBrush}" FontSize="13" VerticalAlignment="Center" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-L 2..." Click="OpenLimiterEditor_Click" Padding="14,7" Margin="14,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Limiter" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <TextBlock Text="FabFilter Pro-L 2" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-L 2..." Click="OpenLimiterEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsLimiterHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -366,27 +360,27 @@
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Ceiling" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="0" Grid.Column="1" Height="26" Minimum="-12" Maximum="0" Value="{Binding LimiterCeilingDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LimiterCeilingDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-12" Maximum="0" Value="{Binding LimiterCeilingDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LimiterCeilingDisplay}" FontSize="11" Margin="4"/>
                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Gain" VerticalAlignment="Center"/>
-                                    <Slider Grid.Row="1" Grid.Column="1" Height="26" Minimum="-12" Maximum="24" Value="{Binding LimiterGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="10,6"/>
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding LimiterGainDisplay}" FontSize="13" Margin="6"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="-12" Maximum="24" Value="{Binding LimiterGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding LimiterGainDisplay}" FontSize="11" Margin="4"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                         <!-- Not a slot: pitch correction, kept separate from the FX rack above. -->
-                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,14" Padding="18">
+                        <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
-                                <TextBlock Text="Pitch correction (Melodyne)" FontSize="18" FontWeight="Bold" Margin="0,0,0,12"/>
-                                <ComboBox SelectedIndex="{Binding PitchBackendIndex, Mode=TwoWay}" SelectionChanged="CommitComboBox_SelectionChanged" Margin="0,2,0,12" Width="260" Height="30" HorizontalAlignment="Left">
+                                <TextBlock Text="Pitch correction (Melodyne)" FontWeight="Bold" Margin="0,0,0,8"/>
+                                <ComboBox SelectedIndex="{Binding PitchBackendIndex, Mode=TwoWay}" SelectionChanged="CommitComboBox_SelectionChanged" Margin="0,2,0,10" Width="220" HorizontalAlignment="Left">
                                     <ComboBoxItem Content="None"/>
                                     <ComboBoxItem Content="Native automatic"/>
                                     <ComboBoxItem Content="Melodyne manual"/>
                                 </ComboBox>
                                 <Button Content="Edit in Melodyne..." Click="EditMelodyne_Click"
                                         Visibility="{Binding ShowMelodyneButton, Converter={StaticResource BoolToVis}}"
-                                        HorizontalAlignment="Left" Padding="16,8" Style="{StaticResource AccentButton}"/>
+                                        HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

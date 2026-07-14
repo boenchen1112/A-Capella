@@ -100,17 +100,28 @@
          chrome, which renders near-black header text with no explicit background; effectively
          invisible against the dark PanelBrush/WindowBrush MainWindow.xaml puts behind it. Only the
          top-level bar (Role=TopLevelHeader) gets the dark-theme treatment here; dropdown items
-         (Role=SubmenuHeader/SubmenuItem) are left on the OS default light popup, where the default
-         dark text already has good contrast; restyling those too would need a full ControlTemplate
-         replacement for the submenu Popup/Border, which is more than this visibility bug calls for.
-         MainWindow.xaml also switches the Menu's own Background from PanelBrush to the lighter
-         RowBrush and adds a bottom border for a clean edge against the window body. -->
+         (Role=SubmenuHeader/SubmenuItem) are left on the OS default light popup; but Window's own
+         Foreground=TextBrush setter is an inherited property, and a MenuItem submenu's Popup still
+         picks that up from the visual tree despite being a separate render root, which turned every
+         dropdown into light text on the OS's own light popup background (invisible, the "white on
+         white" bug). Explicit SystemColors.MenuTextBrushKey on submenu roles below overrides that
+         inherited value with whatever text color actually contrasts with SystemColors.MenuBrushKey
+         (the popup's real background), which is correct regardless of the user's own Windows theme
+         instead of hardcoding black. MainWindow.xaml also switches the Menu's own Background from
+         PanelBrush to the lighter RowBrush and adds a bottom border for a clean edge against the
+         window body. -->
     <Style TargetType="MenuItem">
         <Style.Triggers>
             <Trigger Property="Role" Value="TopLevelHeader">
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Padding" Value="8,5"/>
+            </Trigger>
+            <Trigger Property="Role" Value="SubmenuHeader">
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}"/>
+            </Trigger>
+            <Trigger Property="Role" Value="SubmenuItem">
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}"/>
             </Trigger>
         </Style.Triggers>
     </Style>
