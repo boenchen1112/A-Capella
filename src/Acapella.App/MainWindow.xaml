@@ -291,20 +291,24 @@
                             <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
                                 <Path Data="M10,100 L200,100 L230,20 L400,20 L430,100 L610,100" Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,10,10,10"/>
                             </Border>
-                            <Grid Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource InverseBoolToVis}}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
-                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
-                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GateDisplay}" FontSize="11" Margin="4"/>
-                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center"/>
-                                <Slider Grid.Row="1" Grid.Column="1" Minimum="10" Maximum="500" Value="{Binding NoiseGateReleaseMs, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
-                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding GateReleaseDisplay}" FontSize="11" Margin="4"/>
-                            </Grid>
+                            <StackPanel Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource InverseBoolToVis}}">
+                                <CheckBox Content="Enabled" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,0,10"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Threshold" VerticalAlignment="Center"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-80" Maximum="0" Value="{Binding NoiseGateThresholdDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GateDisplay}" FontSize="11" Margin="4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="10" Maximum="500" Value="{Binding NoiseGateReleaseMs, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding GateReleaseDisplay}" FontSize="11" Margin="4"/>
+                                </Grid>
+                            </StackPanel>
                             <StackPanel Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="FabFilter Pro-G detected" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,0,0,8"/>
+                                <CheckBox Content="Enabled" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,0,10"/>
                                 <Button Content="Open Pro-G..." Click="OpenNoiseGateEditor_Click" HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"/>
                             </StackPanel>
                         </StackPanel>
@@ -314,23 +318,27 @@
                             <Border Height="120" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,16">
                                 <Path Data="M10,60 C150,60 150,20 300,20 C450,20 450,90 610,90" Stroke="{StaticResource TextBrush}" StrokeThickness="1.5" Margin="10,10,10,10"/>
                             </Border>
-                            <Grid Visibility="{Binding IsEqHosted, Converter={StaticResource InverseBoolToVis}}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Low" VerticalAlignment="Center"/>
-                                <Slider Grid.Row="0" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
-                                <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LowEqDisplay}" FontSize="11" Margin="4"/>
-                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Mid" VerticalAlignment="Center"/>
-                                <Slider Grid.Row="1" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
-                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding MidEqDisplay}" FontSize="11" Margin="4"/>
-                                <TextBlock Grid.Row="2" Grid.Column="0" Text="High" VerticalAlignment="Center"/>
-                                <Slider Grid.Row="2" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
-                                <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding HighEqDisplay}" FontSize="11" Margin="4"/>
-                            </Grid>
+                            <StackPanel Visibility="{Binding IsEqHosted, Converter={StaticResource InverseBoolToVis}}">
+                                <CheckBox Content="Enabled" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,0,10"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Low" VerticalAlignment="Center"/>
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding LowShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding LowEqDisplay}" FontSize="11" Margin="4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Mid" VerticalAlignment="Center"/>
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding MidBellGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding MidEqDisplay}" FontSize="11" Margin="4"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="High" VerticalAlignment="Center"/>
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="-24" Maximum="24" Value="{Binding HighShelfGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}" Margin="8,4"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding HighEqDisplay}" FontSize="11" Margin="4"/>
+                                </Grid>
+                            </StackPanel>
                             <StackPanel Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}">
                                 <TextBlock Text="FabFilter Pro-Q 4 detected" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,0,0,8"/>
+                                <CheckBox Content="Enabled" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,0,10"/>
                                 <Button Content="Open Pro-Q 4..." Click="OpenEqEditor_Click" HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"/>
                             </StackPanel>
                         </StackPanel>

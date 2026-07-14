@@ -395,6 +395,61 @@ public class PreviewPlaybackEngineTests
         return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
+    /// <summary>Q1 task 2 [auto]: a slot enable/disable flag change (e.g. a rack power button)
+    /// applied via MainWindow's real refresh path -- SetLayers then Seek(currentPosition), the
+    /// "debounced rebuild" mentioned in the acceptance criterion -- must reach the live audio on
+    /// the next block without ever leaving IsPlaying false, and the position after that rebuild
+    /// must land back at the same point (SeekCore restarts playback at the exact positionMs it was
+    /// given when wasPlaying is true).</summary>
+    [Fact]
+    public void SlotEnableToggledMidPlayback_RebuildAppliesItWithoutStoppingTransport_PositionPreserved()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.UploadedAudioOnly, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var sink = new CapturingAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            engine.FrameReady += bmp => bmp.Dispose();
+            engine.SetLayers(layers.Layers);
+            engine.Play();
+            Assert.True(engine.IsPlaying);
+
+            Assert.NotNull(sink.LastMix);
+            var buffer = new float[8192];
+            sink.LastMix!.Read(buffer, 0, buffer.Length);
+            float rmsBeforeToggle = ComputeRms(buffer);
+
+            // Flip the EQ slot's power button: a deep mid-band cut centered near the fixture's
+            // 440Hz tone, the same shape a "toggle a slot mid-playback" UI action produces.
+            layer.MixParameters.EqEnabled = true;
+            layer.MixParameters.MidBellGainDb = -24f;
+
+            double positionBeforeRebuild = engine.PositionMs;
+            engine.SetLayers(layers.Layers);
+            engine.Seek(positionBeforeRebuild);
+
+            Assert.True(engine.IsPlaying, "Toggling a slot mid-playback must not leave the transport stopped.");
+            Assert.Equal(positionBeforeRebuild, engine.PositionMs, precision: 0);
+
+            Assert.NotNull(sink.LastMix);
+            sink.LastMix!.Read(buffer, 0, buffer.Length);
+            float rmsAfterToggle = ComputeRms(buffer);
+
+            engine.Stop();
+
+            Assert.True(rmsAfterToggle < rmsBeforeToggle * 0.7f,
+                $"Expected enabling the EQ slot with a deep mid-band cut to reduce live RMS; got {rmsBeforeToggle} -> {rmsAfterToggle}.");
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
     [Fact]
     public void SetLayers_ComputesDurationFromLongestLayer()
     {

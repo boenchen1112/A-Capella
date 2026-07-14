@@ -161,6 +161,12 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     // ----- EQ subtab -----
 
+    public bool EqEnabled
+    {
+        get => Params?.EqEnabled ?? false;
+        set { if (Params is null) return; Params.EqEnabled = value; OnPropertyChanged(nameof(EqEnabled)); LiveParamChanged?.Invoke(); }
+    }
+
     public float LowShelfGainDb
     {
         get => Params?.LowShelfGainDb ?? 0f;
@@ -183,6 +189,15 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public string HighEqDisplay => $"{HighShelfGainDb:F1} dB";
 
     // ----- Noise gate subtab -----
+
+    // v7 Q1 task 2: Q0 added the Enabled flag to LayerMixParameters (FL-style insert slot, off by
+    // default) but never surfaced it here -- without this the slot's power button has nothing to
+    // bind to.
+    public bool NoiseGateEnabled
+    {
+        get => Params?.NoiseGateEnabled ?? false;
+        set { if (Params is null) return; Params.NoiseGateEnabled = value; OnPropertyChanged(nameof(NoiseGateEnabled)); LiveParamChanged?.Invoke(); }
+    }
 
     public float NoiseGateThresholdDb
     {
@@ -350,8 +365,10 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(LowShelfGainDb)); OnPropertyChanged(nameof(LowEqDisplay));
         OnPropertyChanged(nameof(MidBellGainDb)); OnPropertyChanged(nameof(MidEqDisplay));
         OnPropertyChanged(nameof(HighShelfGainDb)); OnPropertyChanged(nameof(HighEqDisplay));
+        OnPropertyChanged(nameof(NoiseGateEnabled));
         OnPropertyChanged(nameof(NoiseGateThresholdDb)); OnPropertyChanged(nameof(GateDisplay));
         OnPropertyChanged(nameof(NoiseGateReleaseMs)); OnPropertyChanged(nameof(GateReleaseDisplay));
+        OnPropertyChanged(nameof(EqEnabled));
         OnPropertyChanged(nameof(CompressorEnabled));
         OnPropertyChanged(nameof(CompressorThresholdDb)); OnPropertyChanged(nameof(CompressorThresholdDisplay));
         OnPropertyChanged(nameof(CompressorRatio)); OnPropertyChanged(nameof(CompressorRatioDisplay));
