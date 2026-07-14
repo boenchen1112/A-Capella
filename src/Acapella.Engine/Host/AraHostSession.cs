@@ -4,11 +4,10 @@ using System.Text;
 namespace Acapella.Engine.Host;
 
 /// <summary>
-/// v7 2A task 38: thin managed wrapper around the native ARA hosting bridge (AraBridge.cpp's
+/// v7 2A tasks 38-39: thin managed wrapper around the native ARA hosting bridge (AraBridge.cpp's
 /// aca_ara_* functions) -- creates a Document Controller bound to an ARA-capable plugin instance
-/// (Melodyne) and registers audio sources against it. Deliberately minimal: analysis triggering,
-/// content-availability polling, and rendering back through a PlaybackRegion are task 39's job
-/// (MixEngine pitch-stage integration), which is where this class's real caller lives.
+/// (Melodyne), registers audio sources against it, attaches playback regions so Melodyne analyzes
+/// them, and renders the (pitch-corrected) output back.
 ///
 /// Requires HostedPluginInstance.Initialize() to have already run on this thread, same as every
 /// other hosted-plugin lifecycle call.
@@ -67,6 +66,33 @@ public sealed class AraHostSession : IDisposable
         _pinnedBuffers.AddRange(pins);
         _audioSources.Add(source);
         return source;
+    }
+
+    /// <summary>Attaches audioSourceHandle to a playback region spanning its whole length --
+    /// required before analysis progress or rendering means anything for that source. Melodyne
+    /// begins analyzing once the region is attached and its samples are readable (already enabled
+    /// at RegisterAudioSource time).</summary>
+    public void AddPlaybackRegion(IntPtr audioSourceHandle)
+    {
+        var errorBuf = new byte[512];
+        if (NativeHostBridge.aca_ara_add_playback_region(_handle, audioSourceHandle, errorBuf, errorBuf.Length) == 0)
+            throw new InvalidOperationException($"Failed to add ARA playback region: {ToString(errorBuf)}");
+    }
+
+    /// <summary>-1 if analysis hasn't reported any progress yet, else 0..1 (1.0 = complete).</summary>
+    public float GetAnalysisProgress(IntPtr audioSourceHandle) =>
+        NativeHostBridge.aca_ara_get_analysis_progress(_handle, audioSourceHandle);
+
+    /// <summary>Renders numSamples of stereo output starting at startSampleInRegion (relative to
+    /// the start of the source) through Melodyne's playback renderer. AddPlaybackRegion must have
+    /// already run for this source.</summary>
+    public (float[] Left, float[] Right) RenderBlock(IntPtr audioSourceHandle, long startSampleInRegion, int numSamples)
+    {
+        var outL = new float[numSamples];
+        var outR = new float[numSamples];
+        if (NativeHostBridge.aca_ara_render_block(_handle, audioSourceHandle, startSampleInRegion, outL, outR, numSamples) == 0)
+            throw new InvalidOperationException("ARA render block failed -- was AddPlaybackRegion called for this source?");
+        return (outL, outR);
     }
 
     public void ReleaseAudioSource(IntPtr audioSourceHandle)

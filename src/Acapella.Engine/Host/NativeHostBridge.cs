@@ -88,6 +88,20 @@ internal static class NativeHostBridge
         string persistentId,
         byte[] outError, int outErrorSize);
 
+    // v7 2A task 39: attaches a registered audio source to a playback region so Melodyne analyzes
+    // it and can render output back. Must be called before aca_ara_get_analysis_progress or
+    // aca_ara_render_block for that source.
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_ara_add_playback_region(IntPtr sessionHandle, IntPtr audioSourceHandle, byte[] outError, int outErrorSize);
+
+    /// <summary>-1 = no progress reported yet, 0..1 = in progress/complete (1.0 = complete).</summary>
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern float aca_ara_get_analysis_progress(IntPtr sessionHandle, IntPtr audioSourceHandle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_ara_render_block(IntPtr sessionHandle, IntPtr audioSourceHandle,
+        long startSampleInRegion, float[] outL, float[] outR, int numSamples);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_ara_release_audio_source(IntPtr sessionHandle, IntPtr audioSourceHandle);
 

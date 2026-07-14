@@ -17,6 +17,8 @@
 #include <memory>
 #include <vector>
 #include <algorithm>
+#include <mutex>
+#include <map>
 
 using namespace juce;
 
@@ -31,6 +33,22 @@ namespace
         size_t len = std::min(static_cast<size_t>(destSize - 1), strlen(utf8));
         memcpy(dest, utf8, len);
         dest[len] = '\0';
+    }
+
+    // Mirrors HostBridge.cpp's normalizeToStereo (private to that translation unit, so duplicated
+    // here rather than shared across a header -- same reasoning as copyToBuffer above). Forces the
+    // ARA-hosted instance's main bus to plain stereo so aca_ara_render_block can always assume
+    // exactly 2 output channels regardless of Melodyne's default layout.
+    void normalizeToStereo(AudioPluginInstance& instance)
+    {
+        auto layout = instance.getBusesLayout();
+        for (int i = 0; i < layout.inputBuses.size(); ++i)
+            layout.inputBuses.getReference(i) = (i == 0) ? AudioChannelSet::stereo() : AudioChannelSet::disabled();
+        for (int i = 0; i < layout.outputBuses.size(); ++i)
+            layout.outputBuses.getReference(i) = (i == 0) ? AudioChannelSet::stereo() : AudioChannelSet::disabled();
+
+        if (instance.checkBusesLayoutSupported(layout))
+            instance.setBusesLayout(layout);
     }
 
     // aca_initialize() (HostBridge.cpp) is the only thing allowed to bind JUCE's MessageManager --
@@ -115,25 +133,122 @@ namespace
         ARA::ARAPersistentID getDocumentArchiveID(ARA::ARAArchiveReaderHostRef) noexcept override { return "com.acapella.ara.archive.v1"; }
     };
 
+    // Task 39: ContentAccessControllerInterface and PlaybackControllerInterface are optional per
+    // ARAHostDocumentController::create()'s signature (defaultable to nullptr), but Melodyne did
+    // not begin analysis at all when they were omitted -- passing real (if minimal) stub
+    // implementations, matching JUCE's own reference ARA host
+    // (extras/AudioPluginHost/Source/Plugins/ARAPlugin.h), fixed it. Reports no musical-context
+    // content available (tempo/bar signatures) since this host has none to offer; Melodyne's own
+    // pitch analysis of the audio source itself doesn't depend on that.
+    class AcaContentAccessController : public ARA::Host::ContentAccessControllerInterface
+    {
+    public:
+        bool isMusicalContextContentAvailable(ARA::ARAMusicalContextHostRef, ARA::ARAContentType) noexcept override { return false; }
+        ARA::ARAContentGrade getMusicalContextContentGrade(ARA::ARAMusicalContextHostRef, ARA::ARAContentType) noexcept override { return ARA::kARAContentGradeInitial; }
+        ARA::ARAContentReaderHostRef createMusicalContextContentReader(ARA::ARAMusicalContextHostRef, ARA::ARAContentType, const ARA::ARAContentTimeRange*) noexcept override { return nullptr; }
+        bool isAudioSourceContentAvailable(ARA::ARAAudioSourceHostRef, ARA::ARAContentType) noexcept override { return false; }
+        ARA::ARAContentGrade getAudioSourceContentGrade(ARA::ARAAudioSourceHostRef, ARA::ARAContentType) noexcept override { return ARA::kARAContentGradeInitial; }
+        ARA::ARAContentReaderHostRef createAudioSourceContentReader(ARA::ARAAudioSourceHostRef, ARA::ARAContentType, const ARA::ARAContentTimeRange*) noexcept override { return nullptr; }
+        ARA::ARAInt32 getContentReaderEventCount(ARA::ARAContentReaderHostRef) noexcept override { return 0; }
+        const void* getContentReaderDataForEvent(ARA::ARAContentReaderHostRef, ARA::ARAInt32) noexcept override { return nullptr; }
+        void destroyContentReader(ARA::ARAContentReaderHostRef) noexcept override {}
+    };
+
+    class AcaPlaybackController : public ARA::Host::PlaybackControllerInterface
+    {
+    public:
+        void requestStartPlayback() noexcept override {}
+        void requestStopPlayback() noexcept override {}
+        void requestSetPlaybackPosition(ARA::ARATimePosition) noexcept override {}
+        void requestSetCycleRange(ARA::ARATimePosition, ARA::ARATimeDuration) noexcept override {}
+        void requestEnableCycle(bool) noexcept override {}
+    };
+
+    // Task 39: mandatory ModelUpdateControllerInterface -- Melodyne reports analysis progress
+    // through this as it processes a registered audio source (started -> updated* -> completed).
+    // Keyed by the same host ref AcaAudioAccessController uses (the AraAudioSourceBuffer*), so
+    // aca_ara_get_analysis_progress can look a source's progress up directly with no extra mapping.
+    class AcaModelUpdateController : public ARA::Host::ModelUpdateControllerInterface
+    {
+    public:
+        void notifyAudioSourceAnalysisProgress(ARA::ARAAudioSourceHostRef audioSourceHostRef, ARA::ARAAnalysisProgressState state, float value) noexcept override
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+            float progress = (state == ARA::kARAAnalysisProgressCompleted) ? 1.0f : value;
+            progressByHostRef[audioSourceHostRef] = progress;
+        }
+
+        void notifyAudioSourceContentChanged(ARA::ARAAudioSourceHostRef, const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept override {}
+        void notifyAudioModificationContentChanged(ARA::ARAAudioModificationHostRef, const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept override {}
+        void notifyPlaybackRegionContentChanged(ARA::ARAPlaybackRegionHostRef, const ARA::ARAContentTimeRange*, ARA::ContentUpdateScopes) noexcept override {}
+
+        // -1 if this source has never reported progress yet (analysis not started/requested).
+        float getProgress(ARA::ARAAudioSourceHostRef audioSourceHostRef) noexcept
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+            auto it = progressByHostRef.find(audioSourceHostRef);
+            return it != progressByHostRef.end() ? it->second : -1.0f;
+        }
+
+    private:
+        std::mutex mutex;
+        std::map<ARA::ARAAudioSourceHostRef, float> progressByHostRef;
+    };
+
+    // Task 39: minimal AudioPlayHead so Melodyne's playback renderer knows which sample range to
+    // render on each processBlock call -- an ARA plugin in playback-renderer role generates output
+    // purely from its model driven by playhead time, ignoring the input buffer entirely (matches
+    // JUCE's own reference host's SimplePlayHead).
+    struct AraPlayHead : public juce::AudioPlayHead
+    {
+        Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo info;
+            info.setTimeInSamples(timeInSamples.load());
+            info.setIsPlaying(true);
+            return info;
+        }
+
+        std::atomic<int64> timeInSamples{ 0 };
+    };
+
     // Task 38: one registered ARA audio source -- the model object plus the raw buffer it reads
     // from. Held alive by the owning AcaAraSession until aca_ara_release_audio_source or the
-    // session itself is destroyed.
+    // session itself is destroyed. Task 39 adds the optional playback-region chain (modification +
+    // region), created lazily by aca_ara_add_playback_region once analysis/render is needed --
+    // registering a source and rendering it are separate steps in the real ARA lifecycle.
     struct AcaAraAudioSourceHandle
     {
         std::unique_ptr<ARAHostModel::AudioSource> araSource;
         std::unique_ptr<AraAudioSourceBuffer> buffer;
+        std::unique_ptr<ARAHostModel::AudioModification> modification;
+        std::unique_ptr<ARAHostModel::PlaybackRegion> playbackRegion;
     };
 
     // Task 38: one ARA hosting session -- a Melodyne instance bound to its own DocumentController.
-    // Member order matters for destruction (reverse declaration order): audioSources must be torn
-    // down (deregistered from the DocumentController) before documentController itself is
-    // destroyed, and documentController (whose destructor calls back into the plugin) must run
-    // before instance is destroyed.
+    // Member order matters for destruction (reverse declaration order) -- audioSources is declared
+    // LAST specifically so it's destroyed FIRST: each AcaAraAudioSourceHandle's PlaybackRegion and
+    // AudioModification reference this session's musicalContext/regionSequence (by ARA plugin ref,
+    // not a live C++ pointer, but the plugin-side model graph still expects the referenced objects
+    // to still exist), so those must outlive every audio source's model objects. playbackRenderer's
+    // own destructor is safe regardless of whether it runs before or after a given PlaybackRegion's
+    // (see PlaybackRegionRegistry's doc comment -- either order is a supported case), so its
+    // position relative to audioSources doesn't matter, but everything must still precede
+    // documentController (whose destructor calls back into the plugin) and instance (destroyed last
+    // of all).
     struct AcaAraSession
     {
         std::unique_ptr<AudioPluginInstance> instance;
         std::unique_ptr<ARAHostDocumentController> documentController;
         ARAHostModel::PlugInExtensionInstance extensionInstance;
+        ARAHostModel::PlaybackRendererInterface playbackRenderer;
+        AraPlayHead playHead;
+        bool prepared = false;
+        double sampleRate = 44100.0;
+        int maxBlockSize = 512;
+        AcaModelUpdateController* modelUpdateController = nullptr; // owned by documentController, borrowed here for polling
+        std::unique_ptr<ARAHostModel::MusicalContext> musicalContext;
+        std::unique_ptr<ARAHostModel::RegionSequence> regionSequence;
         std::vector<std::unique_ptr<AcaAraAudioSourceHandle>> audioSources;
     };
 }
@@ -206,6 +321,8 @@ extern "C"
             return nullptr;
         }
 
+        normalizeToStereo(*instance);
+
         ARAFactoryWrapper factory;
         createARAFactoryAsync(*instance, [&factory](ARAFactoryWrapper f) { factory = std::move(f); });
         if (factory.get() == nullptr)
@@ -214,10 +331,20 @@ extern "C"
             return nullptr;
         }
 
+        // Task 39: modelUpdateController's raw pointer is captured before the unique_ptr is moved
+        // into create() -- ARAHostDocumentController::Impl keeps the unique_ptr alive for the
+        // DocumentController's whole lifetime (see juce_ARAHosting.cpp's Impl), so the raw pointer
+        // stays valid for as long as the session's documentController does.
+        auto modelUpdateControllerOwned = std::make_unique<AcaModelUpdateController>();
+        auto* modelUpdateControllerRaw = modelUpdateControllerOwned.get();
+
         auto documentController = ARAHostDocumentController::create(
             factory, "Acapella Document",
             std::make_unique<AcaAudioAccessController>(),
-            std::make_unique<AcaArchivingController>());
+            std::make_unique<AcaArchivingController>(),
+            std::make_unique<AcaContentAccessController>(),
+            std::move(modelUpdateControllerOwned),
+            std::make_unique<AcaPlaybackController>());
         if (documentController == nullptr)
         {
             copyToBuffer(outError, outErrorSize, "ARAHostDocumentController::create failed");
@@ -239,6 +366,11 @@ extern "C"
         session->instance = std::move(instance);
         session->documentController = std::move(documentController);
         session->extensionInstance = extensionInstance;
+        session->modelUpdateController = modelUpdateControllerRaw;
+        session->playbackRenderer = extensionInstance.getPlaybackRendererInterface();
+        session->sampleRate = sampleRate;
+        session->maxBlockSize = maxBlockSize;
+        session->instance->setPlayHead(&session->playHead);
         return session;
     }
 
@@ -291,6 +423,118 @@ extern "C"
         auto* raw = handle.get();
         session->audioSources.push_back(std::move(handle));
         return raw;
+    }
+
+    // Task 39: attaches a registered audio source to a playback region so Melodyne will analyze it
+    // and the host can render its (pitch-corrected) output back. Lazily creates the session's one
+    // shared MusicalContext/RegionSequence on first call (a single-track document is enough for one
+    // layer's pitch stage). The region spans the whole source untransformed (kARAPlaybackTransformationNoChanges
+    // -- 2A only needs "run it through Melodyne's model," not time-stretch/pitch-shift region editing).
+    // Adding a region must happen while the instance is unprepared (ARA's documented requirement --
+    // see PlaybackRegionRegistry's doc comment), so this also does the session's one-time
+    // prepareToPlay *after* the region is added, not before.
+    __declspec(dllexport) int aca_ara_add_playback_region(void* sessionHandle, void* audioSourceHandle, char* outError, int outErrorSize)
+    {
+        if (sessionHandle == nullptr || audioSourceHandle == nullptr)
+        {
+            copyToBuffer(outError, outErrorSize, "null session or audio source handle");
+            return 0;
+        }
+
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto* source = static_cast<AcaAraAudioSourceHandle*>(audioSourceHandle);
+        auto& dc = session->documentController->getDocumentController();
+
+        if (session->musicalContext == nullptr)
+        {
+            auto contextProps = ARAHostModel::MusicalContext::getEmptyProperties();
+            contextProps.name = "Acapella Document";
+            contextProps.orderIndex = 0;
+            contextProps.color = nullptr;
+            session->musicalContext = std::make_unique<ARAHostModel::MusicalContext>(
+                reinterpret_cast<ARA::ARAMusicalContextHostRef>(session), dc, contextProps);
+
+            auto sequenceProps = ARAHostModel::RegionSequence::getEmptyProperties();
+            sequenceProps.name = "Acapella Track";
+            sequenceProps.orderIndex = 0;
+            sequenceProps.musicalContextRef = session->musicalContext->getPluginRef();
+            sequenceProps.color = nullptr;
+            session->regionSequence = std::make_unique<ARAHostModel::RegionSequence>(
+                reinterpret_cast<ARA::ARARegionSequenceHostRef>(session), dc, sequenceProps);
+        }
+
+        auto modProps = ARAHostModel::AudioModification::getEmptyProperties();
+        modProps.persistentID = "acapella-modification";
+        source->modification = std::make_unique<ARAHostModel::AudioModification>(
+            reinterpret_cast<ARA::ARAAudioModificationHostRef>(source), dc, *source->araSource, modProps);
+
+        double durationSeconds = (double) source->buffer->numSamples / source->buffer->sampleRate;
+
+        auto regionProps = ARAHostModel::PlaybackRegion::getEmptyProperties();
+        regionProps.transformationFlags = ARA::kARAPlaybackTransformationNoChanges;
+        regionProps.startInModificationTime = 0.0;
+        regionProps.durationInModificationTime = durationSeconds;
+        regionProps.startInPlaybackTime = 0.0;
+        regionProps.durationInPlaybackTime = durationSeconds;
+        regionProps.musicalContextRef = session->musicalContext->getPluginRef();
+        regionProps.regionSequenceRef = session->regionSequence->getPluginRef();
+        regionProps.name = nullptr;
+        regionProps.color = nullptr;
+
+        source->playbackRegion = std::make_unique<ARAHostModel::PlaybackRegion>(
+            reinterpret_cast<ARA::ARAPlaybackRegionHostRef>(source), dc, *source->modification, regionProps);
+
+        session->playbackRenderer.add(*source->playbackRegion);
+
+        if (!session->prepared)
+        {
+            session->instance->prepareToPlay(session->sampleRate, session->maxBlockSize);
+            session->prepared = true;
+        }
+
+        return 1;
+    }
+
+    // Task 39: -1 if this source's analysis hasn't reported any progress yet, else 0..1 (1 meaning
+    // kARAAnalysisProgressCompleted). Melodyne triggers analysis itself once it has read access to
+    // a source with an attached playback region -- there is no separate "start analysis" call in
+    // this bridge (enableAudioSourceSamplesAccess(true), already set at registration, plus a region
+    // attached via aca_ara_add_playback_region is what Melodyne needs to begin).
+    __declspec(dllexport) float aca_ara_get_analysis_progress(void* sessionHandle, void* audioSourceHandle)
+    {
+        if (sessionHandle == nullptr || audioSourceHandle == nullptr) return -1.0f;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto* source = static_cast<AcaAraAudioSourceHandle*>(audioSourceHandle);
+        if (session->modelUpdateController == nullptr) return -1.0f;
+
+        auto hostRef = reinterpret_cast<ARA::ARAAudioSourceHostRef>(source->buffer.get());
+        return session->modelUpdateController->getProgress(hostRef);
+    }
+
+    // Task 39: renders numSamples of stereo output starting at startSampleInRegion (region-relative,
+    // i.e. 0 is the start of the source) through Melodyne's playback renderer. The plugin ignores
+    // whatever's in the input buffer in this role -- output is generated purely from the model
+    // driven by the play head this bridge sets just before each call. Requires
+    // aca_ara_add_playback_region to have already run for this source (prepareToPlay happens there).
+    __declspec(dllexport) int aca_ara_render_block(void* sessionHandle, void* audioSourceHandle,
+                                                    int64 startSampleInRegion,
+                                                    float* outL, float* outR, int numSamples)
+    {
+        if (sessionHandle == nullptr || audioSourceHandle == nullptr) return 0;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto* source = static_cast<AcaAraAudioSourceHandle*>(audioSourceHandle);
+        if (!session->prepared || source->playbackRegion == nullptr) return 0;
+
+        session->playHead.timeInSamples.store(startSampleInRegion);
+
+        AudioBuffer<float> buffer(2, numSamples);
+        buffer.clear();
+        MidiBuffer midi;
+        session->instance->processBlock(buffer, midi);
+
+        std::memcpy(outL, buffer.getReadPointer(0), sizeof(float) * (size_t) numSamples);
+        std::memcpy(outR, buffer.getReadPointer(1), sizeof(float) * (size_t) numSamples);
+        return 1;
     }
 
     // Task 38: deregisters and frees one audio source. Safe to call with a handle from a different
