@@ -184,7 +184,6 @@ public partial class MainWindow : Window
                 if (stillPresent is not null)
                 {
                     MixingScreen.DataContext = stillPresent;
-                    MixingContentGrid.DataContext = stillPresent;
                 }
                 else
                 {
@@ -447,10 +446,8 @@ public partial class MainWindow : Window
 
         _mixingLayer = row;
         MixingScreen.DataContext = row;
-        MixingContentGrid.DataContext = row;
         EditorScreen.Visibility = Visibility.Collapsed;
         MixingScreen.Visibility = Visibility.Visible;
-        ShowSubtab(LimiterPanel);
     }
 
     private void BackToEditor_Click(object sender, RoutedEventArgs e)
@@ -460,26 +457,6 @@ public partial class MainWindow : Window
         _mixingLayer = null;
     }
 
-    private void SubtabButton_Click(object sender, RoutedEventArgs e)
-    {
-        var panel = sender switch
-        {
-            _ when ReferenceEquals(sender, LimiterTabButton) => LimiterPanel,
-            _ when ReferenceEquals(sender, CompressorTabButton) => CompressorPanel,
-            _ when ReferenceEquals(sender, NoiseGateTabButton) => NoiseGatePanel,
-            _ when ReferenceEquals(sender, EqTabButton) => EqPanel,
-            _ when ReferenceEquals(sender, ReverbTabButton) => ReverbPanel,
-            _ when ReferenceEquals(sender, MelodyneTabButton) => MelodynePanel,
-            _ => LimiterPanel,
-        };
-        ShowSubtab(panel);
-    }
-
-    private void ShowSubtab(StackPanel selected)
-    {
-        foreach (var panel in new[] { LimiterPanel, CompressorPanel, NoiseGatePanel, EqPanel, ReverbPanel, MelodynePanel })
-            panel.Visibility = ReferenceEquals(panel, selected) ? Visibility.Visible : Visibility.Collapsed;
-    }
 
     private void EditMelodyne_Click(object sender, RoutedEventArgs e)
     {
