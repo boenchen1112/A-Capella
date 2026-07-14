@@ -96,11 +96,18 @@ public partial class MainWindow : Window
         // v7 Q0 task 8 (v6 task 9): poll the currently open Mixing-screen layer's hosted editors for
         // state changes every 500ms so a plugin tweak is captured (and the preview refreshed) even
         // if the user never triggers another live-param change while the editor is open.
+        // v7 Q2 task 2: also pushes an undo snapshot per detected change burst -- previously a
+        // plugin tweak refreshed the live preview but was invisible to undo/redo entirely (every
+        // other mix-parameter edit pushes a snapshot via CommitSlider/CommitCheckBox_Click, but
+        // nothing calls those for a knob dragged inside a plugin's own native editor window).
         _hostedStatePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _hostedStatePollTimer.Tick += (s, e) =>
         {
             if (_mixingLayer?.PollHostedStateChanges() == true)
+            {
                 DebounceRefreshPreview();
+                PushUndoSnapshot();
+            }
         };
         _hostedStatePollTimer.Start();
 
