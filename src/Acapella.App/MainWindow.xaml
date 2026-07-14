@@ -264,7 +264,7 @@
                                     <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                     <TextBlock Text="Noise gate" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBlock Text="FabFilter Pro-G" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-G..." Click="OpenNoiseGateEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-G..." ToolTip="Opens Pro-G's own native editor window for this layer's live instance" Click="OpenNoiseGateEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -288,7 +288,7 @@
                                     <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                     <TextBlock Text="Compressor" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBlock Text="FabFilter Pro-C 3" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-C 3..." Click="OpenCompressorEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-C 3..." ToolTip="Opens Pro-C 3's own native editor window for this layer's live instance" Click="OpenCompressorEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsCompressorHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsCompressorHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -312,7 +312,7 @@
                                     <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                     <TextBlock Text="EQ" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBlock Text="FabFilter Pro-Q 4" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-Q 4..." Click="OpenEqEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-Q 4..." ToolTip="Opens Pro-Q 4's own native editor window for this layer's live instance" Click="OpenEqEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsEqHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsEqHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
@@ -339,7 +339,7 @@
                                     <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding ReverbEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center" IsEnabled="{Binding IsReverbHosted}"/>
                                     <TextBlock Text="Reverb" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBlock Text="FabFilter Pro-R 2" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-R 2..." Click="OpenReverbEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-R 2..." ToolTip="Opens Pro-R 2's own native editor window for this layer's live instance" Click="OpenReverbEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsReverbHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <TextBlock Visibility="{Binding IsReverbHosted, Converter={StaticResource InverseBoolToVis}}"
                                            Text="Requires FabFilter Pro-R 2 (not detected on this machine) -- there is no native fallback."
@@ -354,7 +354,7 @@
                                     <CheckBox Content="⏻" ToolTip="Enabled" IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                     <TextBlock Text="Limiter" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <TextBlock Text="FabFilter Pro-L 2" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
-                                    <Button Content="Open Pro-L 2..." Click="OpenLimiterEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
+                                    <Button Content="Open Pro-L 2..." ToolTip="Opens Pro-L 2's own native editor window for this layer's live instance" Click="OpenLimiterEditor_Click" Padding="10,4" Margin="10,0,0,0" Style="{StaticResource AccentButton}" Visibility="{Binding IsLimiterHosted, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsLimiterHosted, Converter={StaticResource InverseBoolToVis}}">
                                     <Grid.ColumnDefinitions>
