@@ -327,6 +327,70 @@ public class HostedFxChainTests
     /// output, proving aca_reset (called by MixEngine.ApplyStage before wiring a cached instance
     /// into a fresh chain) actually clears the plugin's internal lookahead/delay state between
     /// runs instead of bleeding the first run's buffered audio into the second.</summary>
+    /// <summary>Export/preview parity (Q2 task 1 acceptance): "what you hear is what you export."
+    /// Preview and export each own a private MixEngine wrapping the one shared HostedPluginService
+    /// (exactly how PreviewPlaybackEngine/ExportEngine are constructed in production -- see
+    /// MainWindow's single `_hostedService` field). A plugin parameter tweaked live (as if the
+    /// user opened its editor while previewing) must be baked into both mixdowns identically,
+    /// including a hosted stage's own reported latency compensation (Pro-L 2's lookahead), since
+    /// export builds its chain through the exact same BuildLayerChain/ApplyStage/reset path preview
+    /// does -- this test proves that sharing holds end-to-end, not just that the two code paths
+    /// happen to look similar.</summary>
+    [Fact]
+    public void ExportParity_TwoMixEnginesSharingOneServiceProduceIdenticalOutput_IncludingLatencyCompensation()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
+            return;
+
+        int totalSamples = SampleRate / 2;
+        var samples = new float[totalSamples];
+        const int impulseIndex = 4410;
+        samples[impulseIndex] = 1f;
+
+        var parameters = new LayerMixParameters { LimiterEnabled = true };
+        var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-L 2"));
+        try
+        {
+            // "Preview" engine: builds the chain first, as if the user pressed Play, then the user
+            // tweaks the live Pro-L 2 instance's gain (as if via its editor window) mid-session.
+            using var previewEngine = new MixEngine(service);
+            var previewChain = previewEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var previewOutput = ReadAll(previewChain, totalSamples * 2);
+
+            var liveInstance = previewEngine.GetOrCreateHostedInstance(0, MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, null, SampleRate);
+            int gainParam = -1;
+            for (int i = 0; i < liveInstance.ParameterCount; i++)
+            {
+                if (liveInstance.GetParameterName(i).Contains("Gain", StringComparison.OrdinalIgnoreCase))
+                {
+                    liveInstance.SetParameterValue(i, 0.9f);
+                    gainParam = i;
+                    break;
+                }
+            }
+            Assert.True(gainParam >= 0);
+
+            // A second preview rebuild (e.g. the user's tweak triggered a debounced refresh) now
+            // reflects the live tweak.
+            var previewChainAfterTweak = previewEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var previewOutputAfterTweak = ReadAll(previewChainAfterTweak, totalSamples * 2);
+
+            // "Export" engine: a separate MixEngine (mirroring ExportEngine's own private instance)
+            // sharing the same HostedPluginService, built after the tweak -- exactly what happens
+            // when the user clicks Export right after adjusting a plugin in the live preview.
+            using var exportEngine = new MixEngine(service);
+            var exportChain = exportEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
+            var exportOutput = ReadAll(exportChain, totalSamples * 2);
+
+            Assert.Equal(previewOutputAfterTweak, exportOutput);
+            Assert.NotEqual(previewOutput, previewOutputAfterTweak); // sanity: the tweak actually changed something
+        }
+        finally
+        {
+            service.Dispose();
+        }
+    }
+
     [Fact]
     public void ReplayReset_TwoConsecutivePlaysOfTheSameCachedInstance_ProduceSampleIdenticalOutput()
     {
