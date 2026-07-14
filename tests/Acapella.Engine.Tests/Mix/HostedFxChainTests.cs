@@ -142,6 +142,55 @@ public class HostedFxChainTests
         Assert.InRange(peakIndex, impulseIndex - window, impulseIndex + window);
     }
 
+    /// <summary>Cross-layer sync-parity (Q2 task 3): the single-layer HostedLimiter_
+    /// StaysSampleAlignedWithUnprocessedLayer test above proves one layer's own latency trim works
+    /// in isolation, but MixEngine sums every layer's independently-latency-trimmed chain into one
+    /// MixingSampleProvider (BuildMixWithMasterVolumeHandle) -- this proves that summing doesn't
+    /// reintroduce a cross-layer offset: two layers, each with an impulse at the identical sample
+    /// index, one running through Pro-L 2 (non-zero lookahead) and one left native (zero latency),
+    /// must both land at the same position in the final mixed output.</summary>
+    [Fact]
+    public void HostedLimiterOnOneLayerOnly_StaysSampleAlignedWithUnprocessedLayer_InTheSummedMix()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
+            return;
+
+        int totalSamples = SampleRate; // 1 second
+        const int impulseIndex = 4410;
+
+        var layerAWithLimiter = new float[totalSamples];
+        layerAWithLimiter[impulseIndex] = 1f;
+        var layerBNative = new float[totalSamples];
+        layerBNative[impulseIndex] = 1f;
+
+        var paramsA = new LayerMixParameters { LimiterEnabled = true };
+        var paramsB = new LayerMixParameters();
+
+        using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-L 2"));
+        var mix = engine.BuildMix(new[]
+        {
+            new MixLayerInput(0, layerAWithLimiter, SampleRate, paramsA),
+            new MixLayerInput(1, layerBNative, SampleRate, paramsB),
+        }, SampleRate);
+
+        var output = ReadAll(mix, totalSamples * 2);
+
+        const int window = 8;
+        int searchStart = Math.Max(0, impulseIndex - window);
+        int searchEnd = Math.Min(totalSamples, impulseIndex + window + 1);
+
+        float peak = 0f;
+        int peakIndex = searchStart;
+        for (int i = searchStart; i < searchEnd; i++)
+        {
+            float l = Math.Abs(output[i * 2]);
+            if (l > peak) { peak = l; peakIndex = i; }
+        }
+
+        Assert.True(peak > 0f, "expected a non-zero response near the latency-compensated impulse index in the summed mix");
+        Assert.InRange(peakIndex, impulseIndex - window, impulseIndex + window);
+    }
+
     /// <summary>Chain-order parity (v6 P3 Acceptance bullet 2): the hosted EQ stage must land at
     /// the exact same chain position as the native EQ (between compressor and pan) -- verified via
     /// a gate-then-EQ vs EQ-then-gate style artifact check: a heavily gain-boosted low band on a
@@ -199,6 +248,44 @@ public class HostedFxChainTests
             if (Math.Abs(output[frame * 2]) > 0.0005f) { hasTailEnergy = true; break; }
         }
         Assert.True(hasTailEnergy, "expected measurable reverb decay tail past the source's last sample");
+    }
+
+    /// <summary>Q2 task 3: PreviewPlaybackEngine.LayerDurationMs/ExportEngine.LayerDurationSeconds
+    /// both extend a layer's computed duration by GetReverbTailSeconds so a Pro-R 2 decay isn't
+    /// silently truncated (BuildLayerChain happily keeps producing tail audio past the source's own
+    /// length, but nothing previously told either engine's duration/sample-count calculation there
+    /// was more to read). Tested here directly against MixEngine -- calling it synchronously on the
+    /// test's own thread, like every other real-plugin test in this file, rather than through
+    /// PreviewPlaybackEngine's internal command thread, which uses an inline (non-marshaling)
+    /// dispatcher by default in tests and would call the native bridge from a thread other than the
+    /// one JUCE's MessageManager is bound to (the exact hazard flagged in HostedPluginServiceDispatcherTests'
+    /// doc comment). "Extends duration exactly once" (the plan's wording): a second call for the
+    /// same unchanged layer reports the same tail, not a growing one.</summary>
+    [Fact]
+    public void GetReverbTailSeconds_ReturnsClampedTailAndIsStableAcrossRepeatedCalls()
+    {
+        if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-R 2"], out _))
+            return;
+
+        var parameters = new LayerMixParameters { ReverbEnabled = true };
+        using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-R 2"));
+
+        double tail1 = engine.GetReverbTailSeconds(0, parameters, SampleRate);
+        Assert.True(tail1 > 0.0, "expected Pro-R 2 to report a non-zero tail once reverb is enabled");
+        Assert.True(tail1 <= 12.0, "expected the tail to respect MixEngine's 12s clamp");
+
+        double tail2 = engine.GetReverbTailSeconds(0, parameters, SampleRate);
+        Assert.Equal(tail1, tail2, precision: 6);
+    }
+
+    /// <summary>Q2 task 3 (disabled-slot guard): a layer with reverb off must contribute zero tail,
+    /// so a project with reverb-capable slots never silently gains extra duration it didn't ask for.</summary>
+    [Fact]
+    public void GetReverbTailSeconds_ReturnsZero_WhenReverbDisabled()
+    {
+        using var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
+        double tail = engine.GetReverbTailSeconds(0, new LayerMixParameters { ReverbEnabled = false }, SampleRate);
+        Assert.Equal(0.0, tail);
     }
 
     /// <summary>Reverb tail extension (v6 P3 Acceptance bullet 4, second half): reverb off is

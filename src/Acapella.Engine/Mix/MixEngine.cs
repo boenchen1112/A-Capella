@@ -96,6 +96,25 @@ public class MixEngine : IDisposable
     public (float PeakDb, float RmsDb) GetMasterLevels() =>
         _masterTap is { } tap ? (tap.PeakDb, tap.RmsDb) : (float.NegativeInfinity, float.NegativeInfinity);
 
+    /// <summary>Q2 task 3: how much a layer's own reverb tail extends past its source material,
+    /// in seconds, clamped the same way BuildLayerChain clamps it (audit's inf-tail guard). 0 if
+    /// reverb isn't enabled or Pro-R 2 isn't hosted. Callers use this to extend a layer's computed
+    /// duration by exactly the tail this layer's own chain will actually produce -- BuildLayerChain
+    /// itself only ever *plays* the tail (HostedPluginSampleProvider keeps returning frames for
+    /// tailFrames after the source runs out); nothing previously told PreviewPlaybackEngine's or
+    /// ExportEngine's own duration/sample-count calculations that extra audio existed, so a reverb
+    /// tail was silently truncated by both (never heard in preview past the nominal end, never
+    /// written to an export). Exposed as its own method (not folded into BuildLayerChain) since
+    /// duration needs to be known before the mix graph is built.</summary>
+    public double GetReverbTailSeconds(int layerId, LayerMixParameters parameters, int sampleRate = 44100)
+    {
+        if (!parameters.ReverbEnabled || !_hostedService.IsAvailable(ReverbPluginLabel))
+            return 0.0;
+
+        var instance = GetOrCreateHostedInstance(layerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, sampleRate);
+        return Math.Clamp(instance.TailSeconds, 0.0, MaxReverbTailSeconds);
+    }
+
     /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
     /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on
     /// -- both go through the one shared HostedPluginService, so this is never an orphaned second

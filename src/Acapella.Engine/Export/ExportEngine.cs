@@ -127,7 +127,9 @@ public class ExportEngine : IDisposable
 
     /// <summary>Mirrors PreviewPlaybackEngine.LayerDurationMs -- trim/shift applied to the
     /// ffprobe'd container duration rather than a decoded sample count, so it works for
-    /// video-only layers (see A5).</summary>
+    /// video-only layers (see A5). Extended by the layer's own reverb tail (Q2 task 3), same
+    /// reasoning as the preview side: without this, export's maxSamples calc would truncate the
+    /// mixdown before a Pro-R 2 decay finishes.</summary>
     private double LayerDurationSeconds(LayerModel layer, int sampleRate)
     {
         double rawMs = Ffmpeg.MediaProbe.GetDurationSeconds(layer.SourcePath, _ffprobePath) * 1000.0;
@@ -136,7 +138,9 @@ public class ExportEngine : IDisposable
 
         double shiftMs = layer.GetShiftMs();
         double totalMs = shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
-        return totalMs / 1000.0;
+
+        double tailSeconds = _mixEngine.GetReverbTailSeconds(layer.LayerId, layer.MixParameters, sampleRate);
+        return totalMs / 1000.0 + tailSeconds;
     }
 
     private ILayerFrameSource CreateFrameSource(LayerModel layer, int cellWidth, int cellHeight, int fps)

@@ -215,7 +215,9 @@ public class PreviewPlaybackEngine : IDisposable
     /// <summary>Layer duration from ffprobe's container duration (audit A5) -- correct for
     /// video-only and audio-only layers alike, and avoids a full ffmpeg audio decode just to
     /// measure length (audit B2). Trim/shift are applied to the probed duration the same way
-    /// TrimHelper/AudioShiftHelper apply them to decoded sample arrays.</summary>
+    /// TrimHelper/AudioShiftHelper apply them to decoded sample arrays. Extended by the layer's own
+    /// reverb tail (Q2 task 3), if any, so a Pro-R 2 decay isn't cut off mid-tail -- BuildLayerChain
+    /// happily keeps producing tail audio past this point, but nothing reads that far without this.</summary>
     internal double LayerDurationMs(LayerModel layer)
     {
         double rawMs = Ffmpeg.MediaProbe.GetDurationSeconds(layer.SourcePath, _ffprobePath) * 1000.0;
@@ -223,7 +225,10 @@ public class PreviewPlaybackEngine : IDisposable
         double trimmedMs = Math.Max(0, trimEndMs - layer.TrimStartMs);
 
         double shiftMs = layer.GetShiftMs();
-        return shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
+        double totalMs = shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
+
+        double tailMs = _mixEngine.GetReverbTailSeconds(layer.LayerId, layer.MixParameters, _sampleRate) * 1000.0;
+        return totalMs + tailMs;
     }
 
     public void Play() => Enqueue(PlayCore);
