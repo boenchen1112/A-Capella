@@ -291,7 +291,7 @@ public partial class MainWindow : Window
     private void SeekRelative(double deltaMs)
     {
         double target = Math.Max(0, Math.Min(_previewEngine.DurationMs, _previewEngine.PositionMs + deltaMs));
-        Task.Run(() =>
+        RunPreviewTask(() =>
         {
             _previewEngine.Seek(target);
             Dispatcher.Invoke(UpdateTimelineRangeUi);
@@ -541,6 +541,26 @@ public partial class MainWindow : Window
         _previewDebounceTimer.Start();
     }
 
+    /// <summary>Q3 task 33: every one of the preview engine's off-thread calls (Play/Seek/Restart/
+    /// SetLayers) previously ran via a bare Task.Run with no try/catch -- a bridge exception (e.g.
+    /// a native hosted-plugin error) would vanish as an unobserved task exception instead of
+    /// reaching the status bar, unlike Save/Open/Export which already surface their errors. This
+    /// wraps the same fire-and-forget pattern with a status-bar report on failure.</summary>
+    private void RunPreviewTask(Action work)
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                work();
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => StatusText.Text = $"Preview error: {ex.Message}");
+            }
+        });
+    }
+
     /// <summary>Rebinds the engine to the current layer set and refreshes whatever's currently
     /// visible (a live-playing frame, or a static frame if paused) at the same timeline position
     /// -- this is the "no manual refresh step" mechanism the spec calls for.</summary>
@@ -561,7 +581,7 @@ public partial class MainWindow : Window
         int generation = ++_previewRefreshGeneration;
         double positionMs = _previewEngine.PositionMs;
 
-        Task.Run(() =>
+        RunPreviewTask(() =>
         {
             _previewEngine.SetLayers(layersSnapshot);
             _previewEngine.Seek(positionMs);
@@ -597,23 +617,36 @@ public partial class MainWindow : Window
 
         Task.Run(() =>
         {
-            _previewEngine.SetLayers(layersSnapshot);
-            _previewEngine.Play();
-
-            Dispatcher.Invoke(() =>
+            try
             {
-                PlayStopButton.IsEnabled = true;
-                MixingPlayStopButton.IsEnabled = true;
-                SetPlayStopContent("⏸ Stop");
-                StatusText.Text = "Playing preview.";
-                UpdateTimelineRangeUi();
-            });
+                _previewEngine.SetLayers(layersSnapshot);
+                _previewEngine.Play();
+
+                Dispatcher.Invoke(() =>
+                {
+                    PlayStopButton.IsEnabled = true;
+                    MixingPlayStopButton.IsEnabled = true;
+                    SetPlayStopContent("⏸ Stop");
+                    StatusText.Text = "Playing preview.";
+                    UpdateTimelineRangeUi();
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    PlayStopButton.IsEnabled = true;
+                    MixingPlayStopButton.IsEnabled = true;
+                    SetPlayStopContent("▶ Play");
+                    StatusText.Text = $"Preview error: {ex.Message}";
+                });
+            }
         });
     }
 
     private void RestartButton_Click(object sender, RoutedEventArgs e)
     {
-        Task.Run(() =>
+        RunPreviewTask(() =>
         {
             _previewEngine.Restart();
             Dispatcher.Invoke(UpdateTimelineRangeUi);
@@ -626,7 +659,7 @@ public partial class MainWindow : Window
     {
         _isScrubbing = false;
         double target = ((Slider)sender).Value;
-        Task.Run(() =>
+        RunPreviewTask(() =>
         {
             _previewEngine.Seek(target);
             Dispatcher.Invoke(UpdateTimelineRangeUi);
@@ -644,10 +677,7 @@ public partial class MainWindow : Window
         _previewEngine.ShowLayerLabels = ShowLayerLabelsMenuItem.IsChecked;
         // Re-render whatever's currently visible so toggling the overlay is reflected immediately,
         // not just on the next Play/Seek.
-        Task.Run(() =>
-        {
-            _previewEngine.Seek(_previewEngine.PositionMs);
-        });
+        RunPreviewTask(() => _previewEngine.Seek(_previewEngine.PositionMs));
     }
 
     private void ZoomInButton_Click(object sender, RoutedEventArgs e)
