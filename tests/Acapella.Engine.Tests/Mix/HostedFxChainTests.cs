@@ -111,7 +111,13 @@ public class HostedFxChainTests
     public void HostedLimiter_StaysSampleAlignedWithUnprocessedLayer()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
-            return; // plugin not present on this machine -- skip rather than fail (per P3a's own convention)
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-L 2' not found on this machine.");
+                return;
+            }
 
         int totalSamples = SampleRate; // 1 second
         var samples = new float[totalSamples];
@@ -153,7 +159,13 @@ public class HostedFxChainTests
     public void HostedLimiterOnOneLayerOnly_StaysSampleAlignedWithUnprocessedLayer_InTheSummedMix()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-L 2' not found on this machine.");
+                return;
+            }
 
         int totalSamples = SampleRate; // 1 second
         const int impulseIndex = 4410;
@@ -200,7 +212,13 @@ public class HostedFxChainTests
     public void HostedEq_LandsAtSameChainPositionAsNativeEq()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-Q 4' not found on this machine.");
+                return;
+            }
 
         var samples = GenerateSineWave(110, SampleRate, SampleRate, amplitude: 0.1f);
         // A gate threshold above the signal's amplitude would silence everything if EQ ran before
@@ -227,7 +245,13 @@ public class HostedFxChainTests
     public void ReverbEnabled_ExtendsOutputPastSourceEnd_WithMeasurableTail()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-R 2"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-R 2' not found on this machine.");
+                return;
+            }
 
         int totalSamples = SampleRate / 2; // 0.5s
         var samples = GenerateSineWave(440, SampleRate, totalSamples, amplitude: 0.5f);
@@ -265,7 +289,13 @@ public class HostedFxChainTests
     public void GetReverbTailSeconds_ReturnsClampedTailAndIsStableAcrossRepeatedCalls()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-R 2"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-R 2' not found on this machine.");
+                return;
+            }
 
         var parameters = new LayerMixParameters { ReverbEnabled = true };
         using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-R 2"));
@@ -344,7 +374,13 @@ public class HostedFxChainTests
     public void Identity_UiAndChainMixEnginesSharingOneServiceGetTheSameLiveInstance()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-Q 4' not found on this machine.");
+                return;
+            }
 
         var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-Q 4"));
         try
@@ -374,7 +410,13 @@ public class HostedFxChainTests
     public void StateRoundTrip_SyncLiveStateIntoParameters_MatchesLiveGetState()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-Q 4"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-Q 4' not found on this machine.");
+                return;
+            }
 
         var service = new HostedPluginService(new OnlyAvailable("FabFilter Pro-Q 4"));
         try
@@ -427,7 +469,13 @@ public class HostedFxChainTests
     public void ExportParity_TwoMixEnginesSharingOneServiceProduceIdenticalOutput_IncludingLatencyCompensation()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-L 2' not found on this machine.");
+                return;
+            }
 
         int totalSamples = SampleRate / 2;
         var samples = new float[totalSamples];
@@ -482,7 +530,13 @@ public class HostedFxChainTests
     public void ReplayReset_TwoConsecutivePlaysOfTheSameCachedInstance_ProduceSampleIdenticalOutput()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-L 2"], out _))
-            return;
+            {
+                // v7 Q2 task 4 (audit B12): a silent `return;` here made a missing plugin look
+                // identical to a passing test in dotnet test's summary counts -- loud enough to
+                // notice in the test log without failing the run over an environment gap.
+                Console.WriteLine($"SKIPPED: 'FabFilter Pro-L 2' not found on this machine.");
+                return;
+            }
 
         int totalSamples = SampleRate / 4;
         var samples = new float[totalSamples];
