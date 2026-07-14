@@ -344,15 +344,20 @@ extern "C"
         static_cast<AcaPluginInstance*>(handle)->instance->setStateInformation(data, dataSize);
     }
 
-    // Task 7: opens the plugin's own editor in its own top-level window (never embedded). No-op if
-    // already open (bringing it to front is left to a future polish pass -- not needed for the
-    // launcher's "Open Pro-Q 4..." button to work). Must be called on the same thread as
-    // aca_initialize(). Returns 1 on success, 0 if the plugin has no editor.
+    // Task 7: opens the plugin's own editor in its own top-level window (never embedded). If
+    // already open, brings the existing window to front instead of no-opping (v7 Q1 task 4,
+    // audit B9): relaunching "Open Pro-Q 4..." from the rack while its editor is already open
+    // (e.g. behind other windows) should surface it, not silently do nothing. Must be called on
+    // the same thread as aca_initialize(). Returns 1 on success, 0 if the plugin has no editor.
     __declspec(dllexport) int aca_show_editor_window(void* handle, const char* title)
     {
         if (handle == nullptr) return 0;
         auto* h = static_cast<AcaPluginInstance*>(handle);
-        if (h->editorWindow != nullptr) return 1;
+        if (h->editorWindow != nullptr)
+        {
+            h->editorWindow->toFront(true);
+            return 1;
+        }
 
         auto* editor = h->instance->createEditorIfNeeded();
         if (editor == nullptr) return 0;
