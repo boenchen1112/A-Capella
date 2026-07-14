@@ -19,4 +19,16 @@
     <ProjectReference Include="..\..\src\Acapella.App\Acapella.App.csproj" />
   </ItemGroup>
 
+  <!-- v7 Q2: this project's own test host process needs AcapellaHostNative.dll alongside its
+       binaries too; MainWindow's constructor unconditionally calls HostedPluginInstance.
+       Initialize(), and Acapella.App.csproj's matching copy target only lands the DLL in that
+       project's own output folder, not a referencing project's. Discovered when this whole test
+       project turned out to have been silently failing on DllNotFoundException. -->
+  <Target Name="CopyAcapellaHostNative" AfterTargets="Build">
+    <ItemGroup>
+      <AcapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\..\src\Acapella.Host.Native\build\bin\$(Configuration)\AcapellaHostNative.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AcapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(AcapellaHostNativeDll.Identity)')" />
+  </Target>
+
 </Project>
