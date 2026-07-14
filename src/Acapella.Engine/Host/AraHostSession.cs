@@ -95,6 +95,44 @@ public sealed class AraHostSession : IDisposable
         return (outL, outR);
     }
 
+    // Mirrors HostedPluginInstance.GetState's cap and optimistic-buffer-then-retry shape (task 40).
+    private const int MaxArchiveBytes = 1024 * 1024;
+    private const int OptimisticArchiveBufferBytes = 8192;
+
+    /// <summary>Serializes the whole document's analyzed state (every registered audio source's
+    /// Melodyne edits) into one blob -- the caller stores this keyed by whatever identifies the
+    /// layer/source it belongs to (task 40's (layerId, sourceAudioHash) key lives at the caller's
+    /// level, not in this bridge). Empty array if the document has no state yet.</summary>
+    public byte[] ExportState()
+    {
+        var buf = new byte[OptimisticArchiveBufferBytes];
+        int written = NativeHostBridge.aca_ara_export_state(_handle, buf, buf.Length, out int requiredSize);
+        if (requiredSize <= 0)
+            return Array.Empty<byte>();
+        if (written == requiredSize)
+            return buf[..written];
+
+        if (requiredSize > MaxArchiveBytes)
+            throw new InvalidOperationException($"ARA session reported an archive size ({requiredSize} bytes) beyond the {MaxArchiveBytes}-byte cap.");
+
+        buf = new byte[requiredSize];
+        written = NativeHostBridge.aca_ara_export_state(_handle, buf, buf.Length, out int requiredSize2);
+        if (written != requiredSize || requiredSize2 != requiredSize)
+            throw new InvalidOperationException("ARA archive size changed between query and read; failed to capture a consistent state blob.");
+        return buf;
+    }
+
+    /// <summary>Restores previously-exported state. Every audio source referenced by the archive
+    /// must already be registered with the same persistentId it was exported under -- archived
+    /// objects are matched to the current graph by persistent ID, not re-created.</summary>
+    public void ImportState(byte[] data)
+    {
+        if (data.Length == 0 || data.Length > MaxArchiveBytes)
+            return;
+        if (NativeHostBridge.aca_ara_import_state(_handle, data, data.Length) == 0)
+            throw new InvalidOperationException("Failed to import ARA archive state.");
+    }
+
     public void ReleaseAudioSource(IntPtr audioSourceHandle)
     {
         if (_handle == IntPtr.Zero) return;

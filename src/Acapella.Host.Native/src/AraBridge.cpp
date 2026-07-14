@@ -116,18 +116,46 @@ namespace
         struct ReaderState { AraAudioSourceBuffer* source; bool use64BitSamples; };
     };
 
-    // Task 38 (minimal slice): mandatory ArchivingControllerInterface implementation. Real
-    // save/load persistence keyed by (layerId, sourceAudioHash) is task 40's job -- this satisfies
-    // ARAHostDocumentController::create()'s required parameter with a working-but-empty archive so
-    // Document Controller creation and audio source registration (this task's actual scope) can be
-    // exercised without task 40 existing yet. A plugin that never triggers document persistence
-    // during analysis-only use (Melodyne doesn't) never calls into this in that flow.
+    // Task 40: a single in-memory byte buffer backing one export or import call. The host ref ARA
+    // passes back into ArchivingControllerInterface's callbacks is exactly this buffer's address --
+    // same "host ref IS the pointer" pattern as AraAudioSourceBuffer, no separate map needed.
+    struct AcaArchiveBuffer
+    {
+        std::vector<ARA::ARAByte> bytes;
+    };
+
+    // Task 40: real ArchivingControllerInterface backed by AcaArchiveBuffer, used by
+    // aca_ara_export_state/aca_ara_import_state to persist a document's whole analyzed state
+    // (all audio sources, modifications, regions -- Melodyne's own pitch-edit data included) as one
+    // opaque blob the caller stores keyed by (layerId, sourceAudioHash) in the project file, the
+    // same shape every other hosted plugin's *HostedState blob already uses (see
+    // HostedStageStateBindings). Task 38's stub (getArchiveSize always 0, writes silently
+    // discarded) is replaced here since a real save/load round-trip needs real bytes.
     class AcaArchivingController : public ARA::Host::ArchivingControllerInterface
     {
     public:
-        ARA::ARASize getArchiveSize(ARA::ARAArchiveReaderHostRef) noexcept override { return 0; }
-        bool readBytesFromArchive(ARA::ARAArchiveReaderHostRef, ARA::ARASize, ARA::ARASize, ARA::ARAByte[]) noexcept override { return false; }
-        bool writeBytesToArchive(ARA::ARAArchiveWriterHostRef, ARA::ARASize, ARA::ARASize, const ARA::ARAByte[]) noexcept override { return true; }
+        ARA::ARASize getArchiveSize(ARA::ARAArchiveReaderHostRef archiveReaderHostRef) noexcept override
+        {
+            return reinterpret_cast<AcaArchiveBuffer*>(archiveReaderHostRef)->bytes.size();
+        }
+
+        bool readBytesFromArchive(ARA::ARAArchiveReaderHostRef archiveReaderHostRef, ARA::ARASize position, ARA::ARASize length, ARA::ARAByte buffer[]) noexcept override
+        {
+            auto* archive = reinterpret_cast<AcaArchiveBuffer*>(archiveReaderHostRef);
+            if (position + length > archive->bytes.size()) return false;
+            std::memcpy(buffer, archive->bytes.data() + position, length);
+            return true;
+        }
+
+        bool writeBytesToArchive(ARA::ARAArchiveWriterHostRef archiveWriterHostRef, ARA::ARASize position, ARA::ARASize length, const ARA::ARAByte buffer[]) noexcept override
+        {
+            auto* archive = reinterpret_cast<AcaArchiveBuffer*>(archiveWriterHostRef);
+            if (archive->bytes.size() < position + length)
+                archive->bytes.resize(position + length);
+            std::memcpy(archive->bytes.data() + position, buffer, length);
+            return true;
+        }
+
         void notifyDocumentArchivingProgress(float) noexcept override {}
         void notifyDocumentUnarchivingProgress(float) noexcept override {}
         ARA::ARAPersistentID getDocumentArchiveID(ARA::ARAArchiveReaderHostRef) noexcept override { return "com.acapella.ara.archive.v1"; }
@@ -535,6 +563,55 @@ extern "C"
         std::memcpy(outL, buffer.getReadPointer(0), sizeof(float) * (size_t) numSamples);
         std::memcpy(outR, buffer.getReadPointer(1), sizeof(float) * (size_t) numSamples);
         return 1;
+    }
+
+    // Task 40: serializes the whole document's analyzed state (every audio source, modification,
+    // and playback region Melodyne has processed for this session) into a caller-provided buffer.
+    // Two-call convention matches HostBridge.cpp's aca_get_state exactly: outRequiredSize is always
+    // set; the return value is the actual byte count written (0 if outBuffer is null/too small --
+    // call again with a buffer of at least outRequiredSize bytes).
+    __declspec(dllexport) int aca_ara_export_state(void* sessionHandle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
+    {
+        if (sessionHandle == nullptr)
+        {
+            if (outRequiredSize != nullptr) *outRequiredSize = 0;
+            return 0;
+        }
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto& dc = session->documentController->getDocumentController();
+
+        AcaArchiveBuffer archive;
+        auto writerRef = reinterpret_cast<ARA::ARAArchiveWriterHostRef>(&archive);
+        // storeObjectsToArchive requires the document not be mid-edit (per its own doc comment) --
+        // no ARAEditGuard wraps this call, matching that every model-object constructor above
+        // already closes its own edit scope before returning.
+        bool ok = dc.storeObjectsToArchive(writerRef, nullptr); // null filter = store everything
+
+        auto n = (int) archive.bytes.size();
+        if (outRequiredSize != nullptr) *outRequiredSize = n;
+        if (!ok || n <= 0 || outBuffer == nullptr || n > bufferSize) return 0;
+        std::memcpy(outBuffer, archive.bytes.data(), (size_t) n);
+        return n;
+    }
+
+    // Task 40: restores a document's analyzed state from a blob previously produced by
+    // aca_ara_export_state. Every audio source referenced by the archive must already be
+    // registered (via aca_ara_register_audio_source with the same persistentId used when it was
+    // exported) before calling this -- restoreObjectsFromArchive matches archived objects to the
+    // current graph by persistent ID, it doesn't create new audio sources itself.
+    __declspec(dllexport) int aca_ara_import_state(void* sessionHandle, const unsigned char* data, int dataSize)
+    {
+        if (sessionHandle == nullptr || data == nullptr || dataSize <= 0) return 0;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto& dc = session->documentController->getDocumentController();
+
+        AcaArchiveBuffer archive;
+        archive.bytes.assign(data, data + dataSize);
+        auto readerRef = reinterpret_cast<ARA::ARAArchiveReaderHostRef>(&archive);
+
+        const ARAEditGuard editGuard(dc); // restoreObjectsFromArchive requires editable state
+        bool ok = dc.restoreObjectsFromArchive(readerRef, nullptr); // null filter = restore everything
+        return ok ? 1 : 0;
     }
 
     // Task 38: deregisters and frees one audio source. Safe to call with a handle from a different

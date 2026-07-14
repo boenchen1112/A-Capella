@@ -102,6 +102,13 @@ internal static class NativeHostBridge
     public static extern int aca_ara_render_block(IntPtr sessionHandle, IntPtr audioSourceHandle,
         long startSampleInRegion, float[] outL, float[] outR, int numSamples);
 
+    // v7 2A task 40: whole-document archive persistence, same two-call convention as aca_get_state.
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_ara_export_state(IntPtr sessionHandle, byte[]? outBuffer, int bufferSize, out int outRequiredSize);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_ara_import_state(IntPtr sessionHandle, byte[] data, int dataSize);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_ara_release_audio_source(IntPtr sessionHandle, IntPtr audioSourceHandle);
 
