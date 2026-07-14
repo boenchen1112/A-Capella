@@ -4,6 +4,11 @@ namespace Acapella.Engine.Host;
 
 public sealed record HostedPluginDescription(string Name, string Version);
 
+/// <summary>v7 2A task 37: a plugin can be a valid VST3 (HostedPluginDescription/TryScan already
+/// proves that) while still not exposing the ARA factory extension -- IsAraCapable is the third
+/// state TryScan's bool can't represent.</summary>
+public sealed record AraCapabilityDescription(string Name, string Version, bool IsAraCapable);
+
 /// <summary>
 /// Managed wrapper around one native-hosted VST3 plugin instance (v6 Phase P3a). The native side
 /// always normalizes to plain stereo in/out, so ProcessBlock here always deals in stereo float
@@ -34,6 +39,23 @@ public sealed class HostedPluginInstance : IDisposable
             return false;
         }
         description = new HostedPluginDescription(ToString(nameBuf), ToString(versionBuf));
+        return true;
+    }
+
+    /// <summary>v7 2A task 37: mirrors TryScan, but calls aca_scan_ara_capability instead of
+    /// aca_scan_plugin -- safe to call without Initialize() first (reads factory metadata only, no
+    /// MessageManager touch; see AraBridge.cpp's doc comment).</summary>
+    public static bool TryScanAraCapability(string pluginPath, out AraCapabilityDescription? description)
+    {
+        var nameBuf = new byte[256];
+        var versionBuf = new byte[64];
+        int result = NativeHostBridge.aca_scan_ara_capability(pluginPath, nameBuf, nameBuf.Length, versionBuf, versionBuf.Length);
+        if (result == 0)
+        {
+            description = null;
+            return false;
+        }
+        description = new AraCapabilityDescription(ToString(nameBuf), ToString(versionBuf), result == 2);
         return true;
     }
 

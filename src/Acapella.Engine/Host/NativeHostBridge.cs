@@ -25,6 +25,13 @@ internal static class NativeHostBridge
         byte[] outName, int outNameSize,
         byte[] outVersion, int outVersionSize);
 
+    /// <summary>v7 2A task 37: 0 = not found, 1 = found but not ARA-capable, 2 = ARA-capable.
+    /// Safe to call without aca_initialize() first -- see AraBridge.cpp's doc comment.</summary>
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_scan_ara_capability(string pluginPath,
+        byte[] outName, int outNameSize,
+        byte[] outVersion, int outVersionSize);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern IntPtr aca_create_instance(string pluginPath,
         double sampleRate, int maxBlockSize,
