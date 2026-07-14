@@ -54,6 +54,14 @@ public class MixEngine : IDisposable
     private const double MaxReverbTailSeconds = 12.0;
 
     private readonly HostedPluginService _hostedService;
+
+    // Q1 task 3: latest per-layer / master meter taps from the most recent BuildMix* call. Rebuilt
+    // (replaced, not mutated) on every rebuild, so a UI poll always reads the tap actually wired
+    // into the live chain -- an old tap from a torn-down chain just stops receiving Read() calls
+    // and freezes at its last value, which GetLayerLevels/GetMasterLevels callers should treat as
+    // stale if PositionMs isn't advancing rather than something this class needs to clear itself.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, MeterTapSampleProvider> _layerTaps = new();
+    private volatile MeterTapSampleProvider? _masterTap;
     // True only when this MixEngine created its own private HostedPluginService (the
     // availability-only constructor, kept for callers/tests that don't need to share one service
     // across the whole app session) -- only then does Dispose() also dispose the service. A
@@ -77,6 +85,16 @@ public class MixEngine : IDisposable
     }
 
     public bool IsHosted(string pluginLabel) => _hostedService.IsAvailable(pluginLabel);
+
+    /// <summary>Peak/RMS in dBFS for the given layer's post-slot-rack tap from the most recent
+    /// chain rebuild (Q1 task 3). NegativeInfinity for both if that layer hasn't been built yet
+    /// (e.g. before the first Play).</summary>
+    public (float PeakDb, float RmsDb) GetLayerLevels(int layerId) =>
+        _layerTaps.TryGetValue(layerId, out var tap) ? (tap.PeakDb, tap.RmsDb) : (float.NegativeInfinity, float.NegativeInfinity);
+
+    /// <summary>Peak/RMS in dBFS for the master bus tap from the most recent BuildMix* call.</summary>
+    public (float PeakDb, float RmsDb) GetMasterLevels() =>
+        _masterTap is { } tap ? (tap.PeakDb, tap.RmsDb) : (float.NegativeInfinity, float.NegativeInfinity);
 
     /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
     /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on
@@ -145,7 +163,10 @@ public class MixEngine : IDisposable
         // Bus limiter sits after master volume so preview and export share one ceiling regardless
         // of how loud the mix or the master fader is pushed.
         ISampleProvider mix = new LimiterSampleProvider(masterVolumeStage, MasterCeilingDb, makeupGainDb: 0f);
-        return (mix, masterVolumeStage);
+
+        var masterTap = new MeterTapSampleProvider(mix);
+        _masterTap = masterTap;
+        return (masterTap, masterVolumeStage);
     }
 
     public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)
@@ -223,7 +244,11 @@ public class MixEngine : IDisposable
                 s => new LimiterSampleProvider(s, parameters.LimiterCeilingDb, parameters.LimiterGainDb));
         }
 
-        return totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
+        ISampleProvider finished = totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
+
+        var layerTap = new MeterTapSampleProvider(finished);
+        _layerTaps[layer.LayerId] = layerTap;
+        return layerTap;
     }
 
     /// <summary>Auto-selects hosted vs. native for one stage (v6 P3 task 1): if hostedPluginLabel
