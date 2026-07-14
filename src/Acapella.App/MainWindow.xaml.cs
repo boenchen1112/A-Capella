@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -387,6 +388,24 @@ public partial class MainWindow : Window
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
         OpenRecordSetupForRow(row);
+    }
+
+    /// <summary>v7 Q3 (media-folder hygiene): recorded layerN.mkv files accumulate silently in
+    /// _mediaDir with no visibility into how much disk they're using. Read-only report -- no
+    /// deletion here, since deleting recorded media is a CLAUDE.md Pause Rule 1 action (needs the
+    /// user's explicit say, not an automatic cleanup on close).</summary>
+    private void RecordingsFolderSizeMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (!Directory.Exists(_mediaDir))
+        {
+            MessageBox.Show(this, "No recordings folder yet.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var files = Directory.GetFiles(_mediaDir, "*", SearchOption.AllDirectories);
+        long totalBytes = files.Sum(f => new FileInfo(f).Length);
+        double mb = totalBytes / (1024.0 * 1024.0);
+        MessageBox.Show(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>Shared by a track row's own "Record" button and the Tools menu's "Recording

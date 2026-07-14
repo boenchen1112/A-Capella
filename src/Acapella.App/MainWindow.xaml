@@ -122,6 +122,8 @@
             <MenuItem Header="_Tools">
                 <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
                 <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
+                <Separator/>
+                <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Header="_About" Click="AboutMenuItem_Click"/>
@@ -238,9 +240,9 @@
                              data-bound; these are plain post-slot-rack/master bus dBFS readouts,
                              not project state. -->
                         <TextBlock Text="Layer" VerticalAlignment="Center" Margin="16,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        <ProgressBar x:Name="LayerMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center"/>
+                        <ProgressBar x:Name="LayerMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center" ToolTip="Selected layer's RMS level, -60 to 0 dBFS"/>
                         <TextBlock Text="Master" VerticalAlignment="Center" Margin="10,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        <ProgressBar x:Name="MasterMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center"/>
+                        <ProgressBar x:Name="MasterMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center" ToolTip="Master bus RMS level, -60 to 0 dBFS"/>
                     </StackPanel>
                 </Border>
 
