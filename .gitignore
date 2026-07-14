@@ -6,3 +6,4 @@ recordings/
 .vs/
 src/Acapella.Host.Native/build/
 src/Acapella.Host.Native/JUCE/
+src/Acapella.Host.Native/ARA_SDK/
