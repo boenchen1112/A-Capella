@@ -70,4 +70,27 @@ internal static class NativeHostBridge
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_release_instance(IntPtr handle);
+
+    // v7 2A task 38: ARA hosting session (Document Controller + audio source registration bridge).
+    // Requires aca_initialize() to have already run on this thread, same as aca_create_instance.
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern IntPtr aca_ara_create_session(string pluginPath,
+        double sampleRate, int maxBlockSize,
+        byte[] outError, int outErrorSize);
+
+    /// <summary>channelBuffers is an array of pointers, one per channel, each pointing at a pinned
+    /// caller-owned float buffer of at least numSamples floats -- the native side reads directly
+    /// from these pointers (see AraBridge.cpp's AraAudioSourceBuffer), so the caller must keep them
+    /// pinned and alive for as long as the returned handle is in use.</summary>
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern IntPtr aca_ara_register_audio_source(IntPtr sessionHandle,
+        IntPtr[] channelBuffers, int numChannels, long numSamples, double sourceSampleRate,
+        string persistentId,
+        byte[] outError, int outErrorSize);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_ara_release_audio_source(IntPtr sessionHandle, IntPtr audioSourceHandle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_ara_destroy_session(IntPtr sessionHandle);
 }
