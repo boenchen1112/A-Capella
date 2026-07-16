@@ -114,5 +114,108 @@ public sealed class HostedPluginService : IDisposable
     /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>
     public void Release(int layerId, string stage) => _dispatcher.Invoke(() => _cache.Release(layerId, stage));
 
-    public void Dispose() => _dispatcher.Invoke(_cache.Dispose);
+    // Bug audit A1: persistent per-layer ARA session, mirroring _cache's per-(layerId, stage)
+    // model. Unlike a plain hosted instance, an ARA session's audio source must be registered with
+    // real content before it's useful -- there's no "blank" session to create ahead of time -- so
+    // these are populated by GetOrCreateAraLayerSource (called from MixEngine's pitch stage on
+    // every BuildLayerChain), not eagerly. Never released mid-session: this project has no layer-
+    // removal feature yet (confirmed by audit; every existing per-layer hosted resource already
+    // lives until Dispose()), so these follow the same whole-app-lifetime pattern as _cache.
+    private sealed class AraLayerSessionEntry
+    {
+        public readonly AraHostSession Session;
+        public IntPtr AudioSource;
+        public string? ContentKey;
+        public int EditGeneration;
+        public byte[]? LastExportedState;
+
+        public AraLayerSessionEntry(AraHostSession session) => Session = session;
+    }
+
+    private readonly Dictionary<int, AraLayerSessionEntry> _araLayerSessions = new();
+
+    /// <summary>Gets this layer's persistent ARA session (creating it on first call), re-registering
+    /// its audio source only when contentKey changes from what's currently registered (e.g. a new
+    /// recording/trim) rather than on every call -- this is what lets "Edit in Melodyne..." open the
+    /// same live, already-analyzed session MixEngine's pitch stage renders through, instead of a
+    /// disposable one-shot session. Must be called on this thread or any other -- internally
+    /// dispatcher-marshaled.</summary>
+    public (AraHostSession Session, IntPtr AudioSource) GetOrCreateAraLayerSource(
+        int layerId, string pluginPath, double sampleRate, int maxBlockSize, float[] samples, string contentKey) =>
+        _dispatcher.Invoke(() =>
+        {
+            if (!_araLayerSessions.TryGetValue(layerId, out var entry))
+            {
+                entry = new AraLayerSessionEntry(AraHostSession.Create(pluginPath, sampleRate, maxBlockSize));
+                _araLayerSessions[layerId] = entry;
+            }
+
+            if (entry.ContentKey != contentKey)
+            {
+                if (entry.AudioSource != IntPtr.Zero)
+                    entry.Session.ReleaseAudioSource(entry.AudioSource);
+
+                entry.AudioSource = entry.Session.RegisterAudioSource(new[] { samples }, samples.Length, sampleRate, $"acapella-layer-{layerId}");
+                entry.Session.AddPlaybackRegion(entry.AudioSource);
+                entry.ContentKey = contentKey;
+                // Baseline snapshot so PollAraStateChanged's first poll compares against "just
+                // registered, no edits yet" rather than null (which would report a spurious change
+                // the moment any archive bytes exist at all).
+                entry.LastExportedState = entry.Session.ExportState();
+            }
+
+            return (entry.Session, entry.AudioSource);
+        });
+
+    /// <summary>Opens Melodyne's own editor GUI for this layer's persistent ARA session. False if
+    /// no session exists yet for this layer (the layer's chain has never been built with Manual2A
+    /// selected) -- callers should tell the user to play the layer once first rather than treating
+    /// this as an error.</summary>
+    public bool ShowAraEditor(int layerId, string title) => _dispatcher.Invoke(() =>
+        _araLayerSessions.TryGetValue(layerId, out var entry) && entry.Session.ShowEditorWindow(title));
+
+    /// <summary>Closes this layer's Melodyne editor if open. Safe to call when none is open.</summary>
+    public void CloseAraEditor(int layerId) => _dispatcher.Invoke(() =>
+    {
+        if (_araLayerSessions.TryGetValue(layerId, out var entry))
+            entry.Session.CloseEditorWindow();
+    });
+
+    /// <summary>Bug audit A5 ("stale correction cache"): exports this layer's ARA archive and
+    /// compares it against the last-seen snapshot, bumping its edit generation on a real
+    /// difference -- the same poll-and-diff shape LayerRowViewModel.PollHostedStateChanges already
+    /// uses for FabFilter stages (there's no native "editor window closed" event to hook, so this
+    /// detects an edit by its actual effect on the document rather than by window lifecycle).
+    /// False (no session, or nothing changed) means nothing to do; call this from the same 500ms
+    /// poll timer that already drives the FabFilter equivalent.</summary>
+    public bool PollAraStateChanged(int layerId) => _dispatcher.Invoke(() =>
+    {
+        if (!_araLayerSessions.TryGetValue(layerId, out var entry)) return false;
+
+        var newState = entry.Session.ExportState();
+        bool changed = entry.LastExportedState is null
+            ? newState.Length > 0
+            : !newState.AsSpan().SequenceEqual(entry.LastExportedState);
+
+        if (changed)
+        {
+            entry.LastExportedState = newState;
+            entry.EditGeneration++;
+        }
+        return changed;
+    });
+
+    /// <summary>0 if this layer has never had a state change detected; otherwise increments once
+    /// per PollAraStateChanged call that found a real difference. MixEngine folds this into the
+    /// Manual2A PitchCorrectionCache key so an edit forces a fresh Correct() call.</summary>
+    public int GetAraEditGeneration(int layerId) =>
+        _araLayerSessions.TryGetValue(layerId, out var entry) ? entry.EditGeneration : 0;
+
+    public void Dispose() => _dispatcher.Invoke(() =>
+    {
+        _cache.Dispose();
+        foreach (var entry in _araLayerSessions.Values)
+            entry.Session.Dispose();
+        _araLayerSessions.Clear();
+    });
 }

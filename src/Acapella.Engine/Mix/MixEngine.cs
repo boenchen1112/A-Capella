@@ -45,10 +45,10 @@ public class MixEngine : IDisposable
 
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
 
-    // v7 2A task 39: lazily created since it needs _hostedService, unlike AutomaticBackend's pure
-    // DSP math above. One instance per MixEngine is fine -- MelodyneAraPitchCorrector itself is
-    // stateless between Correct() calls (a fresh AraHostSession per call).
-    private IPitchCorrectionBackend? _melodyneBackend;
+    // Bug audit A1: one MelodyneAraPitchCorrector per layer (each captures its own layerId, needed
+    // to key HostedPluginService's persistent per-layer ARA session) rather than one shared
+    // instance -- a single shared corrector couldn't route different layers to different sessions.
+    private readonly Dictionary<int, IPitchCorrectionBackend> _melodyneBackends = new();
 
     /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
@@ -217,8 +217,16 @@ public class MixEngine : IDisposable
         {
             PitchBackendSelection.Automatic2B =>
                 PitchCorrectionCache.GetOrCorrect(AutomaticBackend, layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate),
+            // Bug audit A5 ("stale correction cache"): the edit generation is folded into the cache
+            // key so closing Melodyne's editor (HostedPluginService.CloseAraEditor bumps it) forces
+            // a fresh Correct() call on the next rebuild instead of replaying PitchCorrectionCache's
+            // pre-edit output -- the layer's own SourceKey alone never changes just because the
+            // user tweaked pitch inside Melodyne's own editor.
             PitchBackendSelection.Manual2A when _hostedService.IsAraAvailable(MelodynePluginLabel) =>
-                PitchCorrectionCache.GetOrCorrect(GetOrCreateMelodyneBackend(), layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate),
+                PitchCorrectionCache.GetOrCorrect(
+                    GetOrCreateMelodyneBackend(layer.LayerId), layer.LayerId,
+                    layer.SourceKey is null ? null : $"{layer.SourceKey}-araEdit{_hostedService.GetAraEditGeneration(layer.LayerId)}",
+                    layer.Samples, layer.SampleRate),
             _ => layer.Samples,
         };
 
@@ -305,8 +313,15 @@ public class MixEngine : IDisposable
         return hosted;
     }
 
-    private IPitchCorrectionBackend GetOrCreateMelodyneBackend() =>
-        _melodyneBackend ??= new MelodyneAraPitchCorrector(_hostedService, HostedPluginCatalog.KnownPluginPaths[MelodynePluginLabel]);
+    private IPitchCorrectionBackend GetOrCreateMelodyneBackend(int layerId)
+    {
+        if (!_melodyneBackends.TryGetValue(layerId, out var backend))
+        {
+            backend = new MelodyneAraPitchCorrector(_hostedService, HostedPluginCatalog.KnownPluginPaths[MelodynePluginLabel], layerId);
+            _melodyneBackends[layerId] = backend;
+        }
+        return backend;
+    }
 
     private static float DbToLinear(float db) => (float)Math.Pow(10, db / 20.0);
 }

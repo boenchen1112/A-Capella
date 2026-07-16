@@ -63,6 +63,37 @@ public class MelodyneAraPitchStageTests
         Assert.Contains(output, s => Math.Abs(s) > 1e-6f);
     }
 
+    /// <summary>Bug audit A1: proves the persistent-per-layer-session redesign actually persists --
+    /// building the same layer's chain twice (same MixEngine, same layerId, unchanged content) must
+    /// not throw or error on the second call (which exercises HostedPluginService.
+    /// GetOrCreateAraLayerSource's "session already exists, content key unchanged" branch, not the
+    /// "create fresh" branch every other test only ever exercises once) and should reproduce the
+    /// same rendered output since nothing about the source changed.</summary>
+    [Fact]
+    public void Manual2A_SecondBuildForSameLayer_ReusesSessionWithoutError()
+    {
+        if (!HostedPluginInstance.TryScanAraCapability(HostedPluginCatalog.KnownPluginPaths["Melodyne"], out var capability)
+            || capability is null || !capability.IsAraCapable)
+        {
+            Console.WriteLine("SKIPPED: Melodyne is not ARA-capable on this machine (or not found).");
+            return;
+        }
+
+        var samples = GenerateSineWave(440, SampleRate, SampleRate / 4);
+        var parameters = new LayerMixParameters { PitchBackend = PitchBackendSelection.Manual2A };
+
+        using var engine = new MixEngine(new OnlyAvailable());
+        var input = new MixLayerInput(0, samples, SampleRate, parameters, SourceKey: "melodyne-reuse-test");
+
+        var firstChain = engine.BuildLayerChain(input, anySolo: false, SampleRate);
+        var firstOutput = ReadAll(firstChain, samples.Length * 2);
+
+        var secondChain = engine.BuildLayerChain(input, anySolo: false, SampleRate);
+        var secondOutput = ReadAll(secondChain, samples.Length * 2);
+
+        Assert.Equal(firstOutput, secondOutput);
+    }
+
     /// <summary>Task 41: a layer selecting Manual2A on a machine where Melodyne isn't ARA-capable
     /// (or isn't installed at all) must still build a working chain -- silently falling back to
     /// unprocessed passthrough, never throwing mid-BuildLayerChain. Simulated here by pointing

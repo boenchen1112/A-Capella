@@ -343,6 +343,29 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     public bool ShowMelodyneButton => Params?.PitchBackend == PitchBackendSelection.Manual2A;
 
+    /// <summary>Bug audit A1: opens Melodyne's own editor GUI for this layer's persistent ARA
+    /// session (the same live, already-analyzed session MixEngine's pitch stage renders through --
+    /// not a disposable stand-in). Returns false if that session doesn't exist yet, which happens
+    /// when the layer's chain has never been built with Manual2A selected (e.g. Play hasn't run
+    /// since switching the dropdown to "Melodyne manual") -- the caller should tell the user to
+    /// play the layer once first rather than treating this as an error.</summary>
+    public bool OpenMelodyneEditor()
+    {
+        if (_layer is null || SharedHostedService is null) return false;
+        return SharedHostedService.ShowAraEditor(_layer.LayerId, $"Melodyne — {DisplayName}");
+    }
+
+    /// <summary>Bug audit A5 ("stale correction cache"): polls this layer's ARA archive for a real
+    /// change since the last poll (there's no native "editor closed" event to hook), bumping the
+    /// edit generation MixEngine folds into its Manual2A cache key so the next rebuild re-renders
+    /// through Melodyne instead of replaying stale output. Mirrors PollHostedStateChanges's
+    /// poll-and-diff shape for the FabFilter stages -- call from the same timer.</summary>
+    public bool PollMelodyneStateChanged()
+    {
+        if (_layer is null || SharedHostedService is null) return false;
+        return SharedHostedService.PollAraStateChanged(_layer.LayerId);
+    }
+
     /// <summary>Studio (overall) gain -- labeled "Volume" in the sidebar (v5 P2 task 2, replacing
     /// the old Mixing-screen top-strip "Gain" slider it used to share this same property with).</summary>
     public float GainDb

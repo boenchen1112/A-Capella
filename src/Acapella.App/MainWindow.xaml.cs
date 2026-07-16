@@ -104,7 +104,11 @@ public partial class MainWindow : Window
         _hostedStatePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _hostedStatePollTimer.Tick += (s, e) =>
         {
-            if (_mixingLayer?.PollHostedStateChanges() == true)
+            // Bug audit A5: bitwise OR (not ||) so PollMelodyneStateChanged always runs even when
+            // the FabFilter check already found a change -- both need to execute every tick, not
+            // just one short-circuited by the other.
+            bool changed = (_mixingLayer?.PollHostedStateChanges() == true) | (_mixingLayer?.PollMelodyneStateChanged() == true);
+            if (changed)
             {
                 DebounceRefreshPreview();
                 PushUndoSnapshot();
@@ -515,9 +519,16 @@ public partial class MainWindow : Window
     }
 
 
+    // Bug audit A1/C3/C5: replaces the old stub (a plain dialog explaining itself) with a real
+    // launcher for the layer's persistent ARA session's own Melodyne editor GUI -- mirrors
+    // OpenEqEditor_Click etc. below. Returns false only when the layer's chain has never been built
+    // with Manual2A selected yet (no session exists to show an editor for), which the status bar
+    // message below explains rather than silently no-opping.
     private void EditMelodyne_Click(object sender, RoutedEventArgs e)
     {
-        new MelodyneEditorWindow { Owner = this }.ShowDialog();
+        if (_mixingLayer is null) return;
+        if (!_mixingLayer.OpenMelodyneEditor())
+            StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
     }
 
     // ----- v6 P3: hosted FabFilter launcher buttons. Each stage panel already switches between
