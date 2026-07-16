@@ -68,6 +68,11 @@ public sealed class HostedPluginService : IDisposable
     /// one JUCE-initialized thread, not whatever thread happened to call in.</summary>
     public T RunOnHostedThread<T>(Func<T> func) => _dispatcher.Invoke(func);
 
+    /// <summary>Void overload -- bug audit A4: the analysis-wait loop needs many short dispatcher
+    /// round-trips (pump + check) rather than one call wrapping a whole blocking wait, so this
+    /// exists to avoid every caller needing a throwaway return value.</summary>
+    public void RunOnHostedThread(Action action) => _dispatcher.Invoke(action);
+
     /// <summary>Fetches (lazily creating, on the dispatcher thread) the single live instance for
     /// (layerId, stage) -- the same object whether the caller is the chain builder or the UI's
     /// "Open Pro-X..." launcher button.</summary>

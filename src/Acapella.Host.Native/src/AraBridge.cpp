@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <mutex>
 #include <map>
+#include <string>
 
 using namespace juce;
 
@@ -70,6 +71,10 @@ namespace
         int64 numSamples = 0;
         int numChannels = 0;
         double sampleRate = 44100.0;
+        // Bug audit A5: kept so aca_ara_add_playback_region can derive a per-source modification ID
+        // from it ("{persistentId}-mod") instead of the old hardcoded "acapella-modification",
+        // which collided across every source in a document with more than one.
+        std::string persistentId;
     };
 
     // Task 38: host-side implementation of ARA's mandatory AudioAccessControllerInterface. The
@@ -278,6 +283,52 @@ namespace
         std::unique_ptr<ARAHostModel::MusicalContext> musicalContext;
         std::unique_ptr<ARAHostModel::RegionSequence> regionSequence;
         std::vector<std::unique_ptr<AcaAraAudioSourceHandle>> audioSources;
+
+        // Bug audit B4: reused across aca_ara_render_block calls instead of allocating a fresh
+        // AudioBuffer<float> per call (the render loop calls this once per block for a whole
+        // track). setSize(..., avoidReallocating=true) only grows, never reallocates once large
+        // enough.
+        AudioBuffer<float> renderScratch{ 2, 512 };
+
+        // Bug audit A1: own top-level editor window for Melodyne's real GUI (mirrors HostBridge.
+        // cpp's PluginEditorWindow/AcaPluginInstance::alive pattern exactly -- see that file's doc
+        // comment for the deferred-close-vs-destroy race this guards against).
+        std::unique_ptr<juce::DocumentWindow> editorWindow;
+        std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
+    };
+
+    // Bug audit A1: mirrors HostBridge.cpp's PluginEditorWindow, retargeted at AcaAraSession so the
+    // persistent per-layer ARA session (not just a plain hosted instance) can show Melodyne's own
+    // editor. Kept as a separate class rather than templating/sharing with HostBridge.cpp's version
+    // since the two owner types differ and this module intentionally doesn't share headers with it.
+    class AraEditorWindow : public juce::DocumentWindow
+    {
+    public:
+        AraEditorWindow(const juce::String& name, juce::AudioProcessorEditor* editor, AcaAraSession* owner)
+            : DocumentWindow(name, juce::Colours::darkgrey, DocumentWindow::closeButton),
+              _owner(owner), _ownerAlive(owner->alive)
+        {
+            setUsingNativeTitleBar(true);
+            setContentOwned(editor, true);
+            centreWithSize(getWidth(), getHeight());
+            setResizable(editor->isResizable(), false);
+            setVisible(true);
+        }
+
+        void closeButtonPressed() override
+        {
+            auto* ownerCopy = _owner;
+            auto ownerAlive = _ownerAlive;
+            juce::MessageManager::callAsync([ownerCopy, ownerAlive]
+            {
+                if (*ownerAlive)
+                    ownerCopy->editorWindow.reset();
+            });
+        }
+
+    private:
+        AcaAraSession* _owner;
+        std::shared_ptr<std::atomic<bool>> _ownerAlive;
     };
 }
 
@@ -431,6 +482,7 @@ extern "C"
         buffer->numSamples = numSamples;
         buffer->numChannels = numChannels;
         buffer->sampleRate = sourceSampleRate;
+        buffer->persistentId = persistentId != nullptr ? persistentId : "";
 
         auto props = ARAHostModel::AudioSource::getEmptyProperties();
         props.name = "Acapella Layer";
@@ -473,6 +525,22 @@ extern "C"
         auto* source = static_cast<AcaAraAudioSourceHandle*>(audioSourceHandle);
         auto& dc = session->documentController->getDocumentController();
 
+        // Bug audit B2: aca_ara_render_block drives Melodyne's playback renderer purely by play-
+        // head position against every region ever added to it, ignoring which source's handle the
+        // caller passed in -- with more than one region in the same session, "render source A"
+        // would actually return the sum of every overlapping region. Enforcing one source per
+        // session here (matching the per-layer architecture MixEngine actually uses) is simpler
+        // than making rendering source-aware, and callers needing more sources should open more
+        // sessions.
+        for (auto& existing : session->audioSources)
+        {
+            if (existing->playbackRegion != nullptr && existing.get() != source)
+            {
+                copyToBuffer(outError, outErrorSize, "this session already has a playback region attached to a different audio source -- one source per ARA session only");
+                return 0;
+            }
+        }
+
         if (session->musicalContext == nullptr)
         {
             auto contextProps = ARAHostModel::MusicalContext::getEmptyProperties();
@@ -491,8 +559,13 @@ extern "C"
                 reinterpret_cast<ARA::ARARegionSequenceHostRef>(session), dc, sequenceProps);
         }
 
+        // Bug audit A5: was hardcoded to the single literal "acapella-modification" for every
+        // source in a document -- restoreObjectsFromArchive matches objects by persistentID, so
+        // this collided the moment a document held more than one source. Derived from the source's
+        // own (now-stable, see AraHostSession.cs) persistent ID instead.
+        std::string modificationId = source->buffer->persistentId + "-mod";
         auto modProps = ARAHostModel::AudioModification::getEmptyProperties();
-        modProps.persistentID = "acapella-modification";
+        modProps.persistentID = modificationId.c_str();
         source->modification = std::make_unique<ARAHostModel::AudioModification>(
             reinterpret_cast<ARA::ARAAudioModificationHostRef>(source), dc, *source->araSource, modProps);
 
@@ -523,11 +596,27 @@ extern "C"
         return 1;
     }
 
+    // Bug audit A3: ARA model-update notifications (including analysis progress) are pull-based --
+    // the plugin queues them and the host must call ARADocumentControllerInterface::
+    // notifyModelUpdates() periodically from the thread that's bound to JUCE's MessageManager for
+    // them to ever be delivered. Without this export, aca_ara_get_analysis_progress could never
+    // observe anything (confirmed: it always returned -1 in every test before this fix). Callers
+    // must invoke this periodically (e.g. once per poll-loop iteration) on the hosted thread while
+    // waiting for analysis, matching how a real DAW's UI timer works.
+    __declspec(dllexport) void aca_ara_pump_model_updates(void* sessionHandle)
+    {
+        if (sessionHandle == nullptr) return;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        session->documentController->getDocumentController().notifyModelUpdates();
+    }
+
     // Task 39: -1 if this source's analysis hasn't reported any progress yet, else 0..1 (1 meaning
     // kARAAnalysisProgressCompleted). Melodyne triggers analysis itself once it has read access to
     // a source with an attached playback region -- there is no separate "start analysis" call in
     // this bridge (enableAudioSourceSamplesAccess(true), already set at registration, plus a region
-    // attached via aca_ara_add_playback_region is what Melodyne needs to begin).
+    // attached via aca_ara_add_playback_region is what Melodyne needs to begin). Progress only ever
+    // updates if the caller also calls aca_ara_pump_model_updates (A3) -- without it, this always
+    // returns whatever it last returned (-1 if never pumped).
     __declspec(dllexport) float aca_ara_get_analysis_progress(void* sessionHandle, void* audioSourceHandle)
     {
         if (sessionHandle == nullptr || audioSourceHandle == nullptr) return -1.0f;
@@ -555,13 +644,13 @@ extern "C"
 
         session->playHead.timeInSamples.store(startSampleInRegion);
 
-        AudioBuffer<float> buffer(2, numSamples);
-        buffer.clear();
+        session->renderScratch.setSize(2, numSamples, /*keepExistingContent*/ false, /*clearExtraSpace*/ false, /*avoidReallocating*/ true);
+        session->renderScratch.clear();
         MidiBuffer midi;
-        session->instance->processBlock(buffer, midi);
+        session->instance->processBlock(session->renderScratch, midi);
 
-        std::memcpy(outL, buffer.getReadPointer(0), sizeof(float) * (size_t) numSamples);
-        std::memcpy(outR, buffer.getReadPointer(1), sizeof(float) * (size_t) numSamples);
+        std::memcpy(outL, session->renderScratch.getReadPointer(0), sizeof(float) * (size_t) numSamples);
+        std::memcpy(outR, session->renderScratch.getReadPointer(1), sizeof(float) * (size_t) numSamples);
         return 1;
     }
 
@@ -614,6 +703,35 @@ extern "C"
         return ok ? 1 : 0;
     }
 
+    // Bug audit A1: opens Melodyne's own editor GUI for this session (mirrors HostBridge.cpp's
+    // aca_show_editor_window -- brings an already-open window to front instead of no-opping on a
+    // second call). Must be called on the same thread as aca_initialize(). Returns 1 on success, 0
+    // if the plugin has no editor.
+    __declspec(dllexport) int aca_ara_show_editor_window(void* sessionHandle, const char* title)
+    {
+        if (sessionHandle == nullptr) return 0;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        if (session->editorWindow != nullptr)
+        {
+            session->editorWindow->toFront(true);
+            return 1;
+        }
+
+        auto* editor = session->instance->createEditorIfNeeded();
+        if (editor == nullptr) return 0;
+
+        session->editorWindow = std::make_unique<AraEditorWindow>(String(title), editor, session);
+        return 1;
+    }
+
+    // Closes the editor window if open. Safe to call when none is open. Must be called on the same
+    // thread as aca_initialize().
+    __declspec(dllexport) void aca_ara_close_editor_window(void* sessionHandle)
+    {
+        if (sessionHandle == nullptr) return;
+        static_cast<AcaAraSession*>(sessionHandle)->editorWindow.reset();
+    }
+
     // Task 38: deregisters and frees one audio source. Safe to call with a handle from a different
     // session (no-op) since it only searches this session's own list.
     __declspec(dllexport) void aca_ara_release_audio_source(void* sessionHandle, void* audioSourceHandle)
@@ -629,9 +747,15 @@ extern "C"
     }
 
     // Task 38: tears down the whole session (audio sources, document controller, plugin instance)
-    // in the safe order -- see AcaAraSession's member-order comment.
+    // in the safe order -- see AcaAraSession's member-order comment. A1: flips `alive` false and
+    // closes any open editor window first, same reasoning as HostBridge.cpp's aca_release_instance
+    // (a queued closeButtonPressed callback must not touch a session that's mid-teardown).
     __declspec(dllexport) void aca_ara_destroy_session(void* sessionHandle)
     {
-        delete static_cast<AcaAraSession*>(sessionHandle);
+        if (sessionHandle == nullptr) return;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        *session->alive = false;
+        session->editorWindow.reset();
+        delete session;
     }
 }

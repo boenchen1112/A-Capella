@@ -94,7 +94,14 @@ internal static class NativeHostBridge
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern int aca_ara_add_playback_region(IntPtr sessionHandle, IntPtr audioSourceHandle, byte[] outError, int outErrorSize);
 
-    /// <summary>-1 = no progress reported yet, 0..1 = in progress/complete (1.0 = complete).</summary>
+    /// <summary>Bug audit A3: ARA model-update notifications (including analysis progress) are
+    /// pull-based -- they're only delivered when the host calls this periodically. Must be called
+    /// on the same thread as aca_initialize().</summary>
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_ara_pump_model_updates(IntPtr sessionHandle);
+
+    /// <summary>-1 = no progress reported yet, 0..1 = in progress/complete (1.0 = complete). Only
+    /// ever updates if the caller also calls aca_ara_pump_model_updates.</summary>
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern float aca_ara_get_analysis_progress(IntPtr sessionHandle, IntPtr audioSourceHandle);
 
@@ -108,6 +115,14 @@ internal static class NativeHostBridge
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern int aca_ara_import_state(IntPtr sessionHandle, byte[] data, int dataSize);
+
+    // Bug audit A1: Melodyne's own editor GUI for a persistent ARA session, mirroring
+    // aca_show_editor_window/aca_close_editor_window.
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_ara_show_editor_window(IntPtr sessionHandle, string title);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_ara_close_editor_window(IntPtr sessionHandle);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_ara_release_audio_source(IntPtr sessionHandle, IntPtr audioSourceHandle);
