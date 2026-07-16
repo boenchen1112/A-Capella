@@ -48,19 +48,25 @@ public sealed class HostedPluginService : IDisposable
 
     // v7 2A task 41: cached per plugin label -- TryScanAraCapability does its own file-system +
     // VST3-factory-metadata read each call, no need to repeat that per layer/per BuildLayerChain
-    // call. Doesn't need dispatcher marshaling (safe from any thread, see AraBridge.cpp's
-    // aca_scan_ara_capability doc comment -- it never touches JUCE's MessageManager).
+    // call.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _araAvailability = new();
 
     /// <summary>True only if pluginLabel is both installed and reports an ARA factory (Melodyne's
     /// tier can be plain-VST3-only) -- the fallback-without-crash gate for the Manual2A pitch
     /// backend (task 41): BuildLayerChain checks this before ever touching AraHostSession, so a
     /// machine without an ARA-capable Melodyne install just silently skips pitch correction for
-    /// that layer instead of throwing mid-chain-build.</summary>
+    /// that layer instead of throwing mid-chain-build.
+    ///
+    /// Bug audit C4: originally claimed safe from any thread on the theory that a factory-metadata
+    /// read never touches JUCE's MessageManager -- true, but VST3PluginFormat::findAllTypesForFile
+    /// still loads the plugin module to read it, which can race a UI-thread scan/load of the same
+    /// binary. Routed through the dispatcher like every other scan in this class; the per-label
+    /// cache means this only actually costs a dispatcher round-trip once per plugin label.</summary>
     public bool IsAraAvailable(string pluginLabel) => _araAvailability.GetOrAdd(pluginLabel, label =>
-        HostedPluginCatalog.KnownPluginPaths.TryGetValue(label, out var path)
-        && HostedPluginInstance.TryScanAraCapability(path, out var description)
-        && description is { IsAraCapable: true });
+        _dispatcher.Invoke(() =>
+            HostedPluginCatalog.KnownPluginPaths.TryGetValue(label, out var path)
+            && HostedPluginInstance.TryScanAraCapability(path, out var description)
+            && description is { IsAraCapable: true }));
 
     /// <summary>v7 2A task 39: generic passthrough onto the same dispatcher thread every other
     /// lifecycle call above uses -- for callers (MelodyneAraPitchCorrector) whose native work
