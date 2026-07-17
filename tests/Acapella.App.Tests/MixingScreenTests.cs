@@ -6,14 +6,14 @@ using Xunit;
 
 namespace Acapella.App.Tests;
 
-/// <summary>Regression test for v5 P2 task 2: the sidebar's per-layer Volume slider (bound to
-/// LayerRowViewModel.GainDb) replaces the old Mixing-screen top-strip "Gain" slider that used to
-/// share the same property -- the Mixing screen itself must not expose a second Slider bound to
-/// GainDb outside the Limiter panel (LimiterGainDb is a distinct property and is fine).</summary>
+/// <summary>Regression test for v5 P2 task 2 (v8: mixer strip replaces the old sidebar): the
+/// mixer strip's per-layer Volume fader (bound to LayerRowViewModel.GainDb) is the only control
+/// for that property -- the FX panel itself must not expose a second Slider bound to GainDb
+/// outside the Limiter panel (LimiterGainDb is a distinct property and is fine).</summary>
 public class MixingScreenTests
 {
     [StaFact]
-    public void MixingScreen_HasNoSliderBoundToGainDb()
+    public void FxPanel_HasNoSliderBoundToGainDb()
     {
         TestAppHost.EnsureApplicationResourcesLoaded();
 
@@ -23,7 +23,7 @@ public class MixingScreenTests
             window.Show();
             window.UpdateLayout();
 
-            var slidersBoundToGainDb = FindDescendants<Slider>(window.MixingScreen)
+            var slidersBoundToGainDb = FindDescendants<Slider>(window.FxPanel)
                 .Where(s => BindingOperations.GetBindingExpression(s, Slider.ValueProperty)?.ParentBinding.Path.Path == "GainDb")
                 .ToList();
 

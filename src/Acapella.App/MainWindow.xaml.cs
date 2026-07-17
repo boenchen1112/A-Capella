@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using Acapella.App.ViewModels;
 using Acapella.Engine.Devices;
@@ -52,19 +55,33 @@ public partial class MainWindow : Window
     // since meters need to feel live even when nothing else is happening.
     private readonly DispatcherTimer _meterPollTimer;
 
+    // v8 redesign: 1Hz CPU/memory readout in the toolbar. Separate from the 33ms meter timer since
+    // TotalProcessorTime deltas need a slower, coarser sampling interval to read as a stable percent.
+    private readonly DispatcherTimer _perfPollTimer;
+    private TimeSpan _lastCpuTime;
+    private DateTime _lastCpuSampleAt;
+
     private SKBitmap? _compositedFrame;
     private readonly object _frameMailboxLock = new();
     private SKBitmap? _pendingFrame;
     private bool _framePumpQueued;
     private double? _lastCalibratedOffsetMs;
     // Metronome now lives only inside RecordSetupWindow (see UI_Design_Spec.md); this just carries
-    // the last-used BPM forward across dialogs and into project save/load.
+    // the last-used BPM forward across dialogs and into project save/load, and (v8 redesign) the
+    // toolbar's own BPM textbox.
     private double _metronomeBpm = 120;
     private float _masterVolumeDb;
+    private bool _monitorMuted;
+    private bool _syncingMasterVolume;
     private int _previewRefreshGeneration;
     private bool _isScrubbing;
     private double _pixelsPerSecond = 60;
-    private LayerRowViewModel? _mixingLayer;
+
+    // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
+    // mixer strip (a layer, or the Master strip) is selected at a time, driving the FX panel's
+    // DataContext. Null LayerRowViewModel + _masterSelected=true means the Master strip.
+    private LayerRowViewModel? _selectedLayer;
+    private bool _masterSelected = true;
 
     // Undo/redo (v5 P1 task 2): snapshots the whole project DTO on each discrete edit (slider
     // release/focus-loss, not per-tick). _applyingHistory guards against re-pushing a snapshot
@@ -90,6 +107,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
         UpdateAddLayerButtonState();
+        MetronomeBpmTextBox.Text = _metronomeBpm.ToString("F3");
+        SelectMasterStrip();
 
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _previewDebounceTimer.Tick += (s, e) => { _previewDebounceTimer.Stop(); RefreshPreviewLive(); };
@@ -107,7 +126,7 @@ public partial class MainWindow : Window
             // Bug audit A5: bitwise OR (not ||) so PollMelodyneStateChanged always runs even when
             // the FabFilter check already found a change -- both need to execute every tick, not
             // just one short-circuited by the other.
-            bool changed = (_mixingLayer?.PollHostedStateChanges() == true) | (_mixingLayer?.PollMelodyneStateChanged() == true);
+            bool changed = (_selectedLayer?.PollHostedStateChanges() == true) | (_selectedLayer?.PollMelodyneStateChanged() == true);
             if (changed)
             {
                 DebounceRefreshPreview();
@@ -124,6 +143,12 @@ public partial class MainWindow : Window
         _meterPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _meterPollTimer.Tick += (s, e) => UpdateMeters();
         _meterPollTimer.Start();
+
+        _lastCpuTime = Process.GetCurrentProcess().TotalProcessorTime;
+        _lastCpuSampleAt = DateTime.UtcNow;
+        _perfPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _perfPollTimer.Tick += (s, e) => UpdatePerfCounters();
+        _perfPollTimer.Start();
 
         // Latest-frame-wins mailbox (audit A2/B14): FrameReady fires on the frame-loop thread, and
         // that thread must never block on the UI thread (a blocking Dispatcher.Invoke here used to
@@ -145,12 +170,13 @@ public partial class MainWindow : Window
             overwritten?.Dispose();
             if (!alreadyQueued) Dispatcher.InvokeAsync(DrainFrameMailbox);
         };
-        _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => SetPlayStopContent("▶ Play"));
+        _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => SetPlayStopContent(false));
 
         Closing += (s, e) =>
         {
             _hostedStatePollTimer.Stop();
             _meterPollTimer.Stop();
+            _perfPollTimer.Stop();
             _previewEngine.Dispose();
             _mixEngine.Dispose();
             _hostedService.Dispose();
@@ -203,18 +229,13 @@ public partial class MainWindow : Window
                 _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
 
             RestoreTracksFromLayers();
-            if (_mixingLayer is not null)
+            if (!_masterSelected && _selectedLayer is not null)
             {
-                var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _mixingLayer.Layer?.LayerId);
-                _mixingLayer = stillPresent;
+                var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId);
                 if (stillPresent is not null)
-                {
-                    MixingScreen.DataContext = stillPresent;
-                }
+                    SelectMixerStrip(stillPresent);
                 else
-                {
-                    BackToEditor_Click(this, new RoutedEventArgs());
-                }
+                    SelectMasterStrip();
             }
             RefreshPreviewLive();
         }
@@ -271,7 +292,8 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Space:
-                PlayStopButton_Click(this, new RoutedEventArgs());
+                if (_previewEngine.IsPlaying) StopButton_Click(this, new RoutedEventArgs());
+                else PlayButton_Click(this, new RoutedEventArgs());
                 e.Handled = true;
                 break;
             case Key.Left:
@@ -302,13 +324,72 @@ public partial class MainWindow : Window
         });
     }
 
+    /// <summary>Toolbar master-volume knob and the mixer's Master-strip fader both control the
+    /// same value (image shows both) -- kept as two independent Sliders synced here rather than a
+    /// shared binding source, guarded against the re-entrant ValueChanged each Slider.Value write
+    /// below would otherwise trigger.</summary>
     private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (_syncingMasterVolume) return;
         _masterVolumeDb = (float)e.NewValue;
-        _previewEngine.MasterVolumeDb = _masterVolumeDb;
+        ApplyMasterVolume();
+        _syncingMasterVolume = true;
+        MixerMasterFader.Value = e.NewValue;
+        _syncingMasterVolume = false;
+    }
+
+    private void MixerMasterFader_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_syncingMasterVolume) return;
+        _masterVolumeDb = (float)e.NewValue;
+        ApplyMasterVolume();
+        _syncingMasterVolume = true;
+        MasterVolumeSlider.Value = e.NewValue;
+        _syncingMasterVolume = false;
+    }
+
+    /// <summary>Applies the stored master volume unless the Monitor toggle has muted the output --
+    /// muting never touches _masterVolumeDb itself so un-muting restores exactly what the sliders
+    /// still show.</summary>
+    private void ApplyMasterVolume() => _previewEngine.MasterVolumeDb = _monitorMuted ? -96f : _masterVolumeDb;
+
+    private void MonitorToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        _monitorMuted = MonitorToggle.IsChecked != true;
+        ApplyMasterVolume();
     }
 
     private void MasterVolumeSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+
+    private void MetronomeBpmTextBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (double.TryParse(MetronomeBpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm) && bpm > 0)
+            _metronomeBpm = bpm;
+        else
+            MetronomeBpmTextBox.Text = _metronomeBpm.ToString("F3");
+    }
+
+    /// <summary>v8 redesign: 1Hz CPU/memory readout. CPU% derived from the process's own
+    /// TotalProcessorTime delta over the wall-clock delta, normalized by core count (matches Task
+    /// Manager's per-process convention, not a single-core-pegged 100%-per-core reading).</summary>
+    private void UpdatePerfCounters()
+    {
+        var process = Process.GetCurrentProcess();
+        var now = DateTime.UtcNow;
+        var cpuNow = process.TotalProcessorTime;
+
+        double wallElapsedMs = (now - _lastCpuSampleAt).TotalMilliseconds;
+        if (wallElapsedMs > 0)
+        {
+            double cpuElapsedMs = (cpuNow - _lastCpuTime).TotalMilliseconds;
+            double cpuPercent = 100.0 * cpuElapsedMs / (wallElapsedMs * Environment.ProcessorCount);
+            CpuLoadText.Text = $"CPU {Math.Clamp(cpuPercent, 0, 100):F0}%";
+        }
+        _lastCpuTime = cpuNow;
+        _lastCpuSampleAt = now;
+
+        MemoryUsageText.Text = $"{process.WorkingSet64 / (1024 * 1024)} MB";
+    }
 
     private void DrainFrameMailbox()
     {
@@ -326,45 +407,74 @@ public partial class MainWindow : Window
         CompositeCanvas.InvalidateVisual();
         old?.Dispose();
         if (!_isScrubbing)
-        {
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
-            MixingTimelineSlider.Value = Math.Min(_previewEngine.PositionMs, MixingTimelineSlider.Maximum);
-        }
-        SetTimeReadout($"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(_previewEngine.DurationMs)}");
+        SetTimeReadout(_previewEngine.PositionMs, _previewEngine.DurationMs);
     }
 
-    /// <summary>v7 Q1 task 1: the Mixing screen's transport row shares Click/ValueChanged handlers
-    /// with the Editor screen's (see MainWindow.xaml), so every place that used to touch just
-    /// PlayStopButton/TimeReadoutText/TimelineSlider now goes through these two helpers (or mirrors
-    /// TimelineSlider.Value/Maximum manually where both sliders' Maximum can legitimately differ --
-    /// the Mixing slider has a fixed width and no zoom).</summary>
-    private void SetPlayStopContent(string text)
+    /// <summary>v8 redesign: Current timing and Total Duration are now two separate toolbar
+    /// fields (image shows them apart), each h:mm:ss -- replaces the old single "0:00 / 0:00"
+    /// combined readout.</summary>
+    /// <summary>Highlights whichever of the separate Play/Stop buttons reflects the current
+    /// transport state (image shows them as distinct buttons, not one toggling label).</summary>
+    private void SetPlayStopContent(bool isPlaying)
     {
-        PlayStopButton.Content = text;
-        MixingPlayStopButton.Content = text;
+        PlayButton.Background = isPlaying ? (System.Windows.Media.Brush)Resources["AccentBrush"] : (System.Windows.Media.Brush)Resources["RowBrush"];
     }
 
-    private void SetTimeReadout(string text)
+    private void SetTimeReadout(double positionMs, double durationMs)
     {
-        TimeReadoutText.Text = text;
-        MixingTimeReadoutText.Text = text;
+        CurrentTimeText.Text = FormatTime(positionMs);
+        TotalDurationText.Text = FormatTime(durationMs);
     }
 
-    /// <summary>v7 Q1 task 3: drives LayerMeterBar/MasterMeterBar from PreviewPlaybackEngine's
-    /// meter taps. Maps -60..0 dBFS RMS onto the ProgressBar's 0..1 range (below -60dB reads as
-    /// silence) -- a fixed floor is simpler than a full logarithmic meter ballistics model and
-    /// good enough for "the meters respond" per the plan's [human] criterion.</summary>
+    // ----- Hint panel (v8 redesign): shows a short instruction for whatever the pointer is over.
+    // Only wired to a curated set of controls (transport, Melodyne launcher) per Q1's "create one,
+    // show instruction to user" -- not every widget, to avoid the project's no-gold-plating rule. -----
+
+    private const string DefaultHint = "Click a mixer channel to edit its FX. Space = Play/Stop.";
+
+    private void Hint_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (((FrameworkElement)sender).Tag is string hint)
+            HintText.Text = hint;
+    }
+
+    // ----- Custom window chrome (v8 redesign): minimize/restore/close glyphs in the toolbar,
+    // wired through the standard SystemCommands so they behave exactly like OS titlebar buttons. -----
+
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+
+    private void RestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
+
+    private void MainWindow_StateChanged(object? sender, EventArgs e) =>
+        RestoreButton.Content = WindowState == WindowState.Maximized ? "🗗" : "🗖";
+
+    /// <summary>v7 Q1 task 3 (v8: per-strip meters). Maps -60..0 dBFS RMS onto the 0..1 range
+    /// (below -60dB reads as silence) -- a fixed floor is simpler than a full logarithmic meter
+    /// ballistics model and good enough for "the meters respond" per the plan's [human] criterion.
+    /// Now drives every visible mixer strip's MeterLevel (bound property) plus the master strip's
+    /// two meter bars, instead of a single "currently mixing layer" bar.</summary>
     private void UpdateMeters()
     {
         const float FloorDb = -60f;
         float ToUnit(float db) => float.IsNegativeInfinity(db) ? 0f : Math.Clamp((db - FloorDb) / -FloorDb, 0f, 1f);
 
-        int? layerId = _mixingLayer?.Layer?.LayerId;
-        var (_, layerRmsDb) = layerId is int id ? _previewEngine.GetLayerLevels(id) : (float.NegativeInfinity, float.NegativeInfinity);
-        var (_, masterRmsDb) = _previewEngine.GetMasterLevels();
+        foreach (var row in _tracks)
+        {
+            if (row.Layer is null) { row.MeterLevel = 0; continue; }
+            var (_, rmsDb) = _previewEngine.GetLayerLevels(row.Layer.LayerId);
+            row.MeterLevel = ToUnit(rmsDb);
+        }
 
-        LayerMeterBar.Value = ToUnit(layerRmsDb);
+        var (masterPeakDb, masterRmsDb) = _previewEngine.GetMasterLevels();
         MasterMeterBar.Value = ToUnit(masterRmsDb);
+        ToolbarPeakMeter.Value = ToUnit(masterPeakDb);
     }
 
     // ----- Track sidebar: add / record / upload -----
@@ -387,6 +497,8 @@ public partial class MainWindow : Window
 
     private void UpdateAddLayerButtonState() =>
         AddLayerButton.IsEnabled = _tracks.Count < LayerCollection.MaxLayers;
+
+    private void AddLayerMenuItem_Click(object sender, RoutedEventArgs e) => AddLayerButton_Click(sender, e);
 
     private void RecordChoice_Click(object sender, RoutedEventArgs e)
     {
@@ -499,25 +611,40 @@ public partial class MainWindow : Window
         UpdateAddLayerButtonState();
     }
 
-    // ----- Screen switch: Editor <-> Mixing (UI_Design_Spec v2) -----
+    // ----- Mixer strip selection (v8 redesign, replaces the old Editor/Mixing screen switch) -----
+    // Clicking a strip's Border (MixerStripTemplate/Master strip in MainWindow.xaml) switches which
+    // layer's FX chain the FX panel shows; the Master strip has no FX (locked product decision) so
+    // it shows a placeholder instead.
 
-    private void OpenMixing_Click(object sender, RoutedEventArgs e)
+    private void MixerStrip_MouseDown(object sender, MouseButtonEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
-
-        _mixingLayer = row;
-        MixingScreen.DataContext = row;
-        EditorScreen.Visibility = Visibility.Collapsed;
-        MixingScreen.Visibility = Visibility.Visible;
+        SelectMixerStrip(row);
     }
 
-    private void BackToEditor_Click(object sender, RoutedEventArgs e)
+    private void MasterStrip_MouseDown(object sender, MouseButtonEventArgs e) => SelectMasterStrip();
+
+    private void SelectMixerStrip(LayerRowViewModel row)
     {
-        MixingScreen.Visibility = Visibility.Collapsed;
-        EditorScreen.Visibility = Visibility.Visible;
-        _mixingLayer = null;
+        foreach (var track in _tracks) track.IsSelected = track == row;
+        _selectedLayer = row;
+        _masterSelected = false;
+        FxPanel.DataContext = row;
+        FxHeaderText.Text = $"FX — {row.DisplayName}";
+        FxPlaceholderText.Visibility = Visibility.Collapsed;
+        FxRackScrollViewer.Visibility = Visibility.Visible;
     }
 
+    private void SelectMasterStrip()
+    {
+        foreach (var track in _tracks) track.IsSelected = false;
+        _selectedLayer = null;
+        _masterSelected = true;
+        FxPanel.DataContext = null;
+        FxHeaderText.Text = "FX — Master";
+        FxPlaceholderText.Visibility = Visibility.Visible;
+        FxRackScrollViewer.Visibility = Visibility.Collapsed;
+    }
 
     // Bug audit A1/C3/C5: replaces the old stub (a plain dialog explaining itself) with a real
     // launcher for the layer's persistent ARA session's own Melodyne editor GUI -- mirrors
@@ -526,19 +653,19 @@ public partial class MainWindow : Window
     // message below explains rather than silently no-opping.
     private void EditMelodyne_Click(object sender, RoutedEventArgs e)
     {
-        if (_mixingLayer is null) return;
-        if (!_mixingLayer.OpenMelodyneEditor())
+        if (_selectedLayer is null) return;
+        if (!_selectedLayer.OpenMelodyneEditor())
             StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
     }
 
     // ----- v6 P3: hosted FabFilter launcher buttons. Each stage panel already switches between
     // native controls and this launcher via IsXHosted-bound Visibility in XAML; these handlers just
     // open the live plugin instance's own editor window (never embedded -- P3a task 7). -----
-    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenEqEditor();
-    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenNoiseGateEditor();
-    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenCompressorEditor();
-    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenLimiterEditor();
-    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _mixingLayer?.OpenReverbEditor();
+    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenEqEditor();
+    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenNoiseGateEditor();
+    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenCompressorEditor();
+    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenLimiterEditor();
+    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenReverbEditor();
 
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom (UI_Design_Spec v2) -----
     //
@@ -605,15 +732,9 @@ public partial class MainWindow : Window
         });
     }
 
-    private void PlayStopButton_Click(object sender, RoutedEventArgs e)
+    private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_previewEngine.IsPlaying)
-        {
-            _previewEngine.Stop();
-            SetPlayStopContent("▶ Play");
-            StatusText.Text = "Preview stopped.";
-            return;
-        }
+        if (_previewEngine.IsPlaying) return;
 
         if (_layers.Layers.Count == 0)
         {
@@ -621,8 +742,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        PlayStopButton.IsEnabled = false;
-        MixingPlayStopButton.IsEnabled = false;
+        PlayButton.IsEnabled = false;
         StatusText.Text = "Starting preview...";
         var layersSnapshot = _layers.Layers.ToList();
 
@@ -635,9 +755,8 @@ public partial class MainWindow : Window
 
                 Dispatcher.Invoke(() =>
                 {
-                    PlayStopButton.IsEnabled = true;
-                    MixingPlayStopButton.IsEnabled = true;
-                    SetPlayStopContent("⏸ Stop");
+                    PlayButton.IsEnabled = true;
+                    SetPlayStopContent(true);
                     StatusText.Text = "Playing preview.";
                     UpdateTimelineRangeUi();
                 });
@@ -646,14 +765,25 @@ public partial class MainWindow : Window
             {
                 Dispatcher.Invoke(() =>
                 {
-                    PlayStopButton.IsEnabled = true;
-                    MixingPlayStopButton.IsEnabled = true;
-                    SetPlayStopContent("▶ Play");
+                    PlayButton.IsEnabled = true;
+                    SetPlayStopContent(false);
                     StatusText.Text = $"Preview error: {ex.Message}";
                 });
             }
         });
     }
+
+    private void StopButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_previewEngine.IsPlaying) return;
+        _previewEngine.Stop();
+        SetPlayStopContent(false);
+        StatusText.Text = "Preview stopped.";
+    }
+
+    /// <summary>Toolbar's Record button (image shows it distinct from Play/Stop): opens the same
+    /// capture-setup dialog as Tools > Recording setup... for the next empty layer slot.</summary>
+    private void RecordButton_Click(object sender, RoutedEventArgs e) => RecordingSetupMenuItem_Click(sender, e);
 
     private void RestartButton_Click(object sender, RoutedEventArgs e)
     {
@@ -680,7 +810,7 @@ public partial class MainWindow : Window
     private void TimelineSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_isScrubbing)
-            SetTimeReadout($"{FormatTime(((Slider)sender).Value)} / {FormatTime(_previewEngine.DurationMs)}");
+            SetTimeReadout(((Slider)sender).Value, _previewEngine.DurationMs);
     }
 
     private void ShowLayerLabelsMenuItem_Click(object sender, RoutedEventArgs e)
@@ -710,19 +840,17 @@ public partial class MainWindow : Window
         double durationMs = _previewEngine.DurationMs;
         TimelineSlider.Maximum = Math.Max(1, durationMs);
         TimelineSlider.Width = Math.Max(200, _pixelsPerSecond * durationMs / 1000.0);
-        MixingTimelineSlider.Maximum = Math.Max(1, durationMs);
         if (!_isScrubbing)
-        {
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
-            MixingTimelineSlider.Value = Math.Min(_previewEngine.PositionMs, MixingTimelineSlider.Maximum);
-        }
-        SetTimeReadout($"{FormatTime(_previewEngine.PositionMs)} / {FormatTime(durationMs)}");
+        SetTimeReadout(_previewEngine.PositionMs, durationMs);
     }
 
+    /// <summary>v8 redesign: h:mm:ss (Q1 answer switches the reference layout's B:S:T bars/beats
+    /// format to plain time, since Acapella has no bars/beats sequencing).</summary>
     private static string FormatTime(double ms)
     {
         var ts = TimeSpan.FromMilliseconds(Math.Max(0, ms));
-        return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+        return $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}";
     }
 
     private void CompositeCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)

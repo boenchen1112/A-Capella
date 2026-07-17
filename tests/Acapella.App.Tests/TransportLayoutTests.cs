@@ -30,12 +30,12 @@ public class TransportLayoutTests
 
             var windowBounds = new Rect(0, 0, window.ActualWidth, window.ActualHeight);
 
-            AssertWithinBounds(window, window.PlayStopButton, windowBounds, "PlayStopButton");
+            AssertWithinBounds(window, window.PlayButton, windowBounds, "PlayButton");
             // The timeline Slider itself can be wider than its viewport when zoomed in (that's
             // what makes it scrollable) -- what must never be pushed off-screen is its scrollable
             // *container*, not the (possibly oversized) content inside it.
             AssertWithinBounds(window, window.TimelineScrollViewer, windowBounds, "TimelineScrollViewer");
-            AssertWithinBounds(window, window.TimeReadoutText, windowBounds, "TimeReadoutText");
+            AssertWithinBounds(window, window.CurrentTimeText, windowBounds, "CurrentTimeText");
         }
         finally
         {

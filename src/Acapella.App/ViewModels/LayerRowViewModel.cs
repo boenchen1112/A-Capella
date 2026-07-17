@@ -48,6 +48,28 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     public int SlotNumber { get; }
 
+    private bool _isSelected;
+
+    /// <summary>Mixer-strip selection (redesigned single-screen layout): exactly one strip
+    /// (a layer, or the master strip via MainWindow's separate master-selected flag) is selected at
+    /// a time, driving which FX chain the FX panel's DataContext currently shows.</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set { _isSelected = value; OnPropertyChanged(nameof(IsSelected)); }
+    }
+
+    private double _meterLevel;
+
+    /// <summary>0..1 unit-scaled RMS level for this strip's vertical meter, refreshed by
+    /// MainWindow's existing ~30Hz meter-poll timer (mirrors the old LayerMeterBar, now per-strip
+    /// instead of a single "currently mixing layer" bar since all strips are visible at once).</summary>
+    public double MeterLevel
+    {
+        get => _meterLevel;
+        set { _meterLevel = value; OnPropertyChanged(nameof(MeterLevel)); }
+    }
+
     public LayerModel? Layer
     {
         get => _layer;

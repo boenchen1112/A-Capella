@@ -6,9 +6,20 @@
         xmlns:local="clr-namespace:Acapella.App"
         xmlns:vm="clr-namespace:Acapella.App.ViewModels"
         xmlns:conv="clr-namespace:Acapella.App.Converters"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
-        Title="Acapella" Height="820" Width="1180" MinWidth="820" MinHeight="560">
+        Title="Acapella" Height="820" Width="1280" MinWidth="960" MinHeight="600"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" StateChanged="MainWindow_StateChanged">
+    <!-- Custom chrome (v8 redesign): WindowChrome is a stock WPF class (System.Windows.Shell),
+         not a new dependency; lets the toolbar row itself act as the caption (drag-to-move,
+         double-click-to-maximize) while still exposing the OS resize border, with our own
+         minimize/restore/close glyphs at the position the reference layout puts them. Every
+         interactive control inside the CaptionHeight band needs IsHitTestVisibleInChrome="True"
+         or it would only ever drag the window instead of receiving its own clicks. -->
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Control" Command="{x:Static local:MainWindow.UndoCommand}"/>
         <KeyBinding Key="Y" Modifiers="Control" Command="{x:Static local:MainWindow.RedoCommand}"/>
@@ -28,235 +39,294 @@
             <EventSetter Event="PreviewMouseUp" Handler="CommitSlider_PreviewMouseUp"/>
         </Style>
 
-        <!-- Editor screen: one sidebar row per layer. Minimal per UI_Design_Spec v2, just
-             source-in (Record/Upload) or trim + "Open Mixing"; all FX live on Screen 2. -->
-        <DataTemplate x:Key="TrackRowTemplate" DataType="{x:Type vm:LayerRowViewModel}">
-            <Border Background="{StaticResource RowBrush}" CornerRadius="4" Margin="0,0,0,8" Padding="10">
+        <!-- Small icon-only toolbar button (transport, undo/redo, monitor, window chrome). -->
+        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="MinWidth" Value="30"/>
+            <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+        </Style>
+
+        <Style x:Key="ToolbarText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="6,0,10,0"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+        </Style>
+
+        <!-- Mixer strip: one per layer, plus a fixed Master strip. Selecting a strip (click
+             anywhere on its Border) switches the FX panel's DataContext; replaces the old
+             separate Editor/Mixing screens' "Open mixing" button entirely (v8 redesign). -->
+        <DataTemplate x:Key="MixerStripTemplate" DataType="{x:Type vm:LayerRowViewModel}">
+            <Border Width="76" Margin="0,0,6,0" Padding="6" CornerRadius="3"
+                    Background="{StaticResource RowBrush}"
+                    MouseDown="MixerStrip_MouseDown">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter Property="BorderThickness" Value="2"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <StackPanel>
-                    <!-- Name row: icon, grid-identification color chip (task 3), editable name
-                         (task 1), state label. -->
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                        <TextBlock Text="{Binding IconGlyph}" FontSize="15" Width="22" VerticalAlignment="Center"/>
-                        <Border Width="10" Height="10" CornerRadius="2" Background="{Binding CellColor}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                        <StackPanel Orientation="Vertical" Margin="0,0,0,0">
-                            <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                     ToolTip="Rename this layer"
-                                     Background="Transparent" BorderThickness="0" Padding="0" FontWeight="SemiBold"
-                                     LostFocus="LayerNameTextBox_LostFocus"
-                                     Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}"/>
-                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
-                                       Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}"/>
-                            <TextBlock Text="{Binding SourceStateLabel}" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
-                        </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                        <Border Width="8" Height="8" CornerRadius="2" Background="{Binding CellColor}" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding DisplayName}" FontSize="10" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
 
-                    <!-- No source yet: Record / Upload choice, with a hint that this row is empty
-                         and excluded from save (audit B9). -->
+                    <!-- Empty strip: record/upload choice (moved from the old Editor-screen sidebar). -->
                     <StackPanel Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}">
-                        <TextBlock Text="Empty — add a source, or it won't be saved with the project." FontSize="10"
-                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,6"/>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="Record" Style="{StaticResource AccentButton}" Click="RecordChoice_Click" Margin="0,0,8,0" Padding="16,6"/>
-                            <Button Content="Upload" Click="UploadChoice_Click" Padding="16,6"/>
-                        </StackPanel>
+                        <Button Content="Rec" ToolTip="Record this layer" Style="{StaticResource AccentButton}" Click="RecordChoice_Click" Padding="4,4" Margin="0,0,0,3" FontSize="10"/>
+                        <Button Content="Upload" ToolTip="Upload a file for this layer" Click="UploadChoice_Click" Padding="4,4" FontSize="10"/>
                     </StackPanel>
 
-                    <!-- Source attached: volume/pan/mute/solo, compact trim, open mixing. -->
+                    <!-- Populated strip: mute/solo, vertical fader + meter, pan, compact trim. -->
                     <StackPanel Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}">
-                        <Grid Margin="0,0,0,6">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,4">
+                            <CheckBox Content="M" ToolTip="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,6,0"/>
+                            <CheckBox Content="S" ToolTip="Solo" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click"/>
+                        </StackPanel>
+                        <Grid Height="150" Margin="0,0,0,4">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="14"/>
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition/>
-                                <RowDefinition/>
-                            </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Volume" VerticalAlignment="Center" FontSize="11"/>
-                            <Slider Grid.Row="0" Grid.Column="1" Style="{StaticResource CommitSlider}" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}" Margin="6,0"/>
-                            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding GainDisplay}" FontSize="11"/>
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Pan" VerticalAlignment="Center" FontSize="11"/>
-                            <Slider Grid.Row="1" Grid.Column="1" Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Margin="6,0"/>
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding PanDisplay}" FontSize="11"/>
+                            <Slider Grid.Column="0" Style="{StaticResource CommitSlider}" Orientation="Vertical" Minimum="-60" Maximum="12"
+                                    Value="{Binding GainDb, Mode=TwoWay}" HorizontalAlignment="Center" ToolTip="Volume"/>
+                            <ProgressBar Grid.Column="1" Orientation="Vertical" Minimum="0" Maximum="1" Value="{Binding MeterLevel}" Width="8" ToolTip="Level"/>
                         </Grid>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <CheckBox Content="Mute" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,16,0"/>
-                            <CheckBox Content="Solo" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click"/>
+                        <TextBlock Text="{Binding GainDisplay}" FontSize="9" HorizontalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
+                        <Slider Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" ToolTip="Pan" Margin="0,0,0,4"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                            <TextBlock Text="In" FontSize="8" Foreground="{StaticResource MutedTextBrush}" Width="14"/>
+                            <TextBox Text="{Binding TrimStartMs, Mode=TwoWay}" FontSize="8" Padding="1" LostFocus="TrimTextBox_LostFocus"/>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <TextBlock Text="In" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,4,0"/>
-                            <TextBox Text="{Binding TrimStartMs, Mode=TwoWay}" Width="70" LostFocus="TrimTextBox_LostFocus" Margin="0,0,10,0"/>
-                            <TextBlock Text="Out" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,4,0"/>
-                            <TextBox Text="{Binding TrimEndText, Mode=TwoWay}" Width="70" LostFocus="TrimTextBox_LostFocus"
-                                     Tag="end"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Out" FontSize="8" Foreground="{StaticResource MutedTextBrush}" Width="14"/>
+                            <TextBox Text="{Binding TrimEndText, Mode=TwoWay}" FontSize="8" Padding="1" LostFocus="TrimTextBox_LostFocus" Tag="end"/>
                         </StackPanel>
-                        <Button Content="Open mixing" Click="OpenMixing_Click" HorizontalAlignment="Left" Padding="14,6"/>
                     </StackPanel>
                 </StackPanel>
             </Border>
         </DataTemplate>
     </Window.Resources>
 
-    <DockPanel>
-        <!-- Menu bar (both screens), replacing the old top-bar text+buttons (v5 P1 task 1). The
-             "Acapella" label stays only in the OS title bar (Window.Title), not the client area. -->
-        <Menu DockPanel.Dock="Top" Background="{StaticResource RowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" FontSize="13">
-            <MenuItem Header="_File">
-                <MenuItem Header="_New" Click="NewProjectMenuItem_Click"/>
-                <MenuItem Header="_Open..." Click="OpenProjectButton_Click"/>
-                <MenuItem Header="_Save..." Click="SaveProjectButton_Click"/>
-                <Separator/>
-                <MenuItem x:Name="ExportMenuItem" Header="_Export MP4..." Click="ExportButton_Click"/>
-            </MenuItem>
-            <MenuItem Header="_Edit">
-                <MenuItem Header="_Undo" Click="UndoMenuItem_Click" InputGestureText="Ctrl+Z"/>
-                <MenuItem Header="_Redo" Click="RedoMenuItem_Click" InputGestureText="Ctrl+Y"/>
-            </MenuItem>
-            <MenuItem Header="_View">
-                <MenuItem Header="Zoom _in" Click="ZoomInButton_Click"/>
-                <MenuItem Header="Zoom _out" Click="ZoomOutButton_Click"/>
-                <Separator/>
-                <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
-            </MenuItem>
-            <MenuItem Header="_Tools">
-                <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
-                <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
-                <Separator/>
-                <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
-            </MenuItem>
-            <MenuItem Header="_Help">
-                <MenuItem Header="_About" Click="AboutMenuItem_Click"/>
-            </MenuItem>
-        </Menu>
+    <DockPanel LastChildFill="True">
+        <!-- ===================== Row 1: toolbar (caption band) ===================== -->
+        <Border DockPanel.Dock="Top" Height="40" Background="{StaticResource RowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="6,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Menu Grid.Column="0" Background="Transparent" BorderThickness="0" FontSize="13" VerticalAlignment="Center"
+                      shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <MenuItem Header="_File">
+                        <MenuItem Header="_New" Click="NewProjectMenuItem_Click"/>
+                        <MenuItem Header="_Open..." Click="OpenProjectButton_Click"/>
+                        <MenuItem Header="_Save..." Click="SaveProjectButton_Click"/>
+                        <Separator/>
+                        <MenuItem x:Name="ExportMenuItem" Header="_Export MP4..." Click="ExportButton_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_Edit">
+                        <MenuItem Header="_Undo" Click="UndoMenuItem_Click" InputGestureText="Ctrl+Z"/>
+                        <MenuItem Header="_Redo" Click="RedoMenuItem_Click" InputGestureText="Ctrl+Y"/>
+                    </MenuItem>
+                    <MenuItem Header="_Add">
+                        <MenuItem Header="Add _layer" Click="AddLayerMenuItem_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_View">
+                        <MenuItem Header="Zoom _in" Click="ZoomInButton_Click"/>
+                        <MenuItem Header="Zoom _out" Click="ZoomOutButton_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_Options">
+                        <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_Tools">
+                        <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
+                        <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
+                        <Separator/>
+                        <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_Help">
+                        <MenuItem Header="_About" Click="AboutMenuItem_Click"/>
+                    </MenuItem>
+                </Menu>
+
+                <!-- Master volume knob (compact slider stands in for a true rotary knob; same
+                     position/function, see redesign notes). Two-way synced with the mixer's Master
+                     strip fader further right (MasterVolumeSlider_ValueChanged mirrors both). -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <Slider x:Name="MasterVolumeSlider" Minimum="-24" Maximum="12" Value="0" Width="60" VerticalAlignment="Center"
+                            ToolTip="Master volume" ValueChanged="MasterVolumeSlider_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                </StackPanel>
+
+                <!-- Play / Stop / Record: split into three distinct buttons (image shows them
+                     separate, unlike the old single toggling Play/Stop button). Record opens the
+                     same capture-setup dialog as Tools > Recording setup... for the next open slot. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <Button x:Name="PlayButton" Content="▶" ToolTip="Play (Space)" Click="PlayButton_Click" Style="{StaticResource IconButton}"
+                            MouseEnter="Hint_MouseEnter" Tag="Play the timeline from the current position."/>
+                    <Button x:Name="StopButton" Content="■" ToolTip="Stop (Space)" Click="StopButton_Click" Style="{StaticResource IconButton}"
+                            MouseEnter="Hint_MouseEnter" Tag="Stop playback."/>
+                    <Button x:Name="RecordButton" Content="⏺" ToolTip="Record a layer" Click="RecordButton_Click" Foreground="#E05252" Style="{StaticResource IconButton}"
+                            MouseEnter="Hint_MouseEnter" Tag="Open the recording setup dialog for the next empty layer."/>
+                </StackPanel>
+
+                <TextBlock Grid.Column="3" Text="BPM" Style="{StaticResource ToolbarText}" Margin="10,0,4,0"/>
+                <TextBox x:Name="MetronomeBpmTextBox" Grid.Column="4" Text="130.000" Width="64" VerticalAlignment="Center"
+                         ToolTip="Metronome tempo" LostFocus="MetronomeBpmTextBox_LostFocus" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+
+                <TextBlock x:Name="CurrentTimeText" Grid.Column="5" Text="0:00:00" Style="{StaticResource ToolbarText}" ToolTip="Current position" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"/>
+                <TextBlock x:Name="TotalDurationText" Grid.Column="6" Text="0:00:00" Style="{StaticResource ToolbarText}" ToolTip="Total duration" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"/>
+
+                <ToggleButton x:Name="MonitorToggle" Grid.Column="7" Content="🔊" ToolTip="Monitor master output" IsChecked="True"
+                              Checked="MonitorToggle_Changed" Unchecked="MonitorToggle_Changed" Padding="6,4" Margin="6,0" VerticalAlignment="Center"
+                              shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+
+                <StackPanel Grid.Column="8" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
+                    <TextBlock Text="Peak" Style="{StaticResource ToolbarText}" Margin="0,0,4,0"/>
+                    <ProgressBar x:Name="ToolbarPeakMeter" Minimum="0" Maximum="1" Value="0" Width="60" Height="10" ToolTip="Master peak level"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="9" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
+                    <TextBlock x:Name="CpuLoadText" Text="CPU 0%" Style="{StaticResource ToolbarText}" Margin="0,0,10,0"/>
+                    <TextBlock x:Name="MemoryUsageText" Text="0 MB" Style="{StaticResource ToolbarText}"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="10" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="UndoButton" Content="↩" ToolTip="Undo (Ctrl+Z)" Click="UndoMenuItem_Click" Style="{StaticResource IconButton}"/>
+                    <Button x:Name="RedoButton" Content="↪" ToolTip="Redo (Ctrl+Y)" Click="RedoMenuItem_Click" Style="{StaticResource IconButton}"/>
+                </StackPanel>
+
+                <!-- Column 11 (*) is the draggable spacer. -->
+
+                <StackPanel Grid.Column="12" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="MinimizeButton" Content="🗕" ToolTip="Minimize" Click="MinimizeButton_Click" Style="{StaticResource IconButton}"/>
+                    <Button x:Name="RestoreButton" Content="🗗" ToolTip="Restore/Maximize" Click="RestoreButton_Click" Style="{StaticResource IconButton}"/>
+                    <Button x:Name="CloseButton" Content="✕" ToolTip="Close" Click="CloseButton_Click" Style="{StaticResource IconButton}" Margin="0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===================== Row 2: hint panel + song position ===================== -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="10,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="300"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="HintText" Grid.Column="0" Text="Click a mixer channel to edit its FX. Space = Play/Stop." FontSize="11"
+                           Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <ScrollViewer x:Name="TimelineScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="28">
+                    <Slider x:Name="TimelineSlider" Minimum="0" Maximum="1000" Value="0" Height="22" Width="640" VerticalAlignment="Top"
+                            ToolTip="Song position (zoom via View menu)"
+                            PreviewMouseDown="TimelineSlider_PreviewMouseDown"
+                            PreviewMouseUp="TimelineSlider_PreviewMouseUp"
+                            ValueChanged="TimelineSlider_ValueChanged"/>
+                </ScrollViewer>
+            </Grid>
+        </Border>
 
         <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,6">
             <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedTextBrush}"/>
         </Border>
 
-        <Grid>
-            <!-- ===================== Screen 1: Editor ===================== -->
-            <DockPanel x:Name="EditorScreen">
-                <Border DockPanel.Dock="Right" Width="340"
-                        Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
-                    <DockPanel Margin="10">
-                        <TextBlock DockPanel.Dock="Top" Text="Tracks" FontWeight="Bold" Margin="0,0,0,8"/>
-                        <Button x:Name="AddLayerButton" DockPanel.Dock="Bottom" Content="+ Add layer" Click="AddLayerButton_Click" Margin="0,8,0,0"/>
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource TrackRowTemplate}"/>
-                        </ScrollViewer>
-                    </DockPanel>
-                </Border>
+        <!-- ===================== Bottom: preview | mixer | FX (single merged screen) ===================== -->
+        <Grid Background="{StaticResource WindowBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" MinWidth="360"/>
+                <ColumnDefinition Width="Auto" MinWidth="260"/>
+                <ColumnDefinition Width="1.2*" MinWidth="320"/>
+            </Grid.ColumnDefinitions>
 
-                <Border Background="{StaticResource WindowBrush}">
-                    <DockPanel Margin="16">
-                        <!-- Transport row (Clipchamp-style, v5 P1 task 3): undo/redo, -5s/play/+5s/
-                             replay, elapsed/total + timeline, master volume, all in one row
-                             directly under the preview so it is never scrolled off screen. The
-                             preview picture shrinks first (MaxHeight) if the window gets short. -->
-                        <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button x:Name="UndoButton" Content="↩" ToolTip="Undo (Ctrl+Z)" Click="UndoMenuItem_Click" Padding="8,5" Margin="0,0,4,0"/>
-                                <Button x:Name="RedoButton" Content="↪" ToolTip="Redo (Ctrl+Y)" Click="RedoMenuItem_Click" Padding="8,5" Margin="0,0,12,0"/>
-                                <Button x:Name="SeekBackButton" Content="−5s" ToolTip="Back 5s" Click="SeekBackButton_Click" Padding="8,5" Margin="0,0,4,0"/>
-                                <Button x:Name="PlayStopButton" Content="▶ Play" Click="PlayStopButton_Click" Padding="10,5" Margin="0,0,4,0"/>
-                                <Button x:Name="SeekForwardButton" Content="+5s" ToolTip="Forward 5s" Click="SeekForwardButton_Click" Padding="8,5" Margin="0,0,4,0"/>
-                                <Button x:Name="RestartButton" Content="⏮ Restart" Click="RestartButton_Click" Padding="10,5"/>
-                            </StackPanel>
-
-                            <Grid Grid.Column="1" Margin="12,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="TimeReadoutText" Grid.Column="0" Text="0:00 / 0:00" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
-                                <ScrollViewer x:Name="TimelineScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="46">
-                                    <Slider x:Name="TimelineSlider" Minimum="0" Maximum="1000" Value="0"
-                                            Width="640" Height="24"
-                                            PreviewMouseDown="TimelineSlider_PreviewMouseDown"
-                                            PreviewMouseUp="TimelineSlider_PreviewMouseUp"
-                                            ValueChanged="TimelineSlider_ValueChanged"
-                                            VerticalAlignment="Top"/>
-                                </ScrollViewer>
-                            </Grid>
-
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Master" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                <Slider x:Name="MasterVolumeSlider" Minimum="-24" Maximum="12" Value="0" Width="100" VerticalAlignment="Center"
-                                        ValueChanged="MasterVolumeSlider_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"/>
-                            </StackPanel>
-                        </Grid>
-
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" MaxHeight="480">
-                            <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="480" PaintSurface="CompositeCanvas_PaintSurface"/>
-                        </Border>
-                    </DockPanel>
+            <!-- Preview panel -->
+            <DockPanel Grid.Column="0" Margin="16">
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                    <Button x:Name="SeekBackButton" Content="−5s" ToolTip="Back 5s" Click="SeekBackButton_Click" Padding="8,5" Margin="0,0,4,0"/>
+                    <Button x:Name="RestartButton" Content="⏮ Restart" Click="RestartButton_Click" Padding="10,5" Margin="0,0,4,0"/>
+                    <Button x:Name="SeekForwardButton" Content="+5s" ToolTip="Forward 5s" Click="SeekForwardButton_Click" Padding="8,5"/>
+                </StackPanel>
+                <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="480" PaintSurface="CompositeCanvas_PaintSurface"/>
                 </Border>
             </DockPanel>
 
-            <!-- ===================== Screen 2: Mixing ===================== -->
-            <DockPanel x:Name="MixingScreen" Visibility="Collapsed">
+            <!-- Mixer panel: Master strip (fixed) + one strip per layer -->
+            <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,1,0">
+                <DockPanel Margin="10">
+                    <TextBlock DockPanel.Dock="Top" Text="Mixer" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <Button x:Name="AddLayerButton" DockPanel.Dock="Bottom" Content="+ Add layer" Click="AddLayerButton_Click" Margin="0,8,0,0"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel Orientation="Horizontal">
+                            <!-- Master strip: no FX (locked product decision), just the shared
+                                 master fader + peak/RMS meter; clicking it shows the FX panel's
+                                 "no per-channel FX" placeholder. -->
+                            <Border Width="76" Margin="0,0,10,0" Padding="6" CornerRadius="3"
+                                    Background="{StaticResource RowBrush}" MouseDown="MasterStrip_MouseDown">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                        <Setter Property="BorderThickness" Value="1"/>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel x:Name="MasterStripSelectionHost">
+                                    <TextBlock Text="Master" FontSize="10" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                                    <Grid Height="150" Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="14"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="MixerMasterFader" Grid.Column="0" Orientation="Vertical" Minimum="-24" Maximum="12" Value="0"
+                                                HorizontalAlignment="Center" ToolTip="Master volume"
+                                                ValueChanged="MixerMasterFader_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"/>
+                                        <ProgressBar x:Name="MasterMeterBar" Grid.Column="1" Orientation="Vertical" Minimum="0" Maximum="1" Value="0" Width="8" ToolTip="Master level"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource MixerStripTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- FX panel: switches to the selected mixer strip's chain; shows a placeholder while
+                 the Master strip (or nothing) is selected. -->
+            <DockPanel x:Name="FxPanel" Grid.Column="2" Margin="0">
                 <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="← Back to editor" Click="BackToEditor_Click" Margin="0,0,16,0"/>
-                        <TextBlock Grid.Column="1" x:Name="MixingHeaderText" Text="{Binding MixingHeaderLabel}" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
-                    </Grid>
+                    <TextBlock x:Name="FxHeaderText" Text="FX — Master" FontWeight="Bold" FontSize="14"/>
                 </Border>
 
-                <!-- Mute/solo/gain/pan (v1 top strip) moved to the sidebar (v5 P2 task 2):
-                     volume/pan/mute/solo now live per-layer in the Editor screen, not duplicated
-                     here. -->
+                <TextBlock x:Name="FxPlaceholderText" DockPanel.Dock="Top"
+                           Text="Master bus has no per-channel FX (locked product decision). Adjust its volume via the toolbar knob or the Master fader. Select a layer's mixer strip to edit its FX chain."
+                           Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="16"/>
 
-                <!-- Transport row (v7 Q1 task 1): the same PreviewPlaybackEngine as the Editor
-                     screen's transport, so entering/leaving this screen never stops or rebuilds
-                     playback; these buttons/slider share Click/ValueChanged handlers with the
-                     Editor screen's transport (MainWindow.xaml.cs), just a second set of named
-                     controls kept in sync by those same handlers. No video canvas here per the
-                     plan (audio + meters are the feedback on this screen). -->
-                <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button x:Name="MixingSeekBackButton" Content="−5s" ToolTip="Back 5s" Click="SeekBackButton_Click" Padding="8,5" Margin="0,0,4,0"/>
-                        <Button x:Name="MixingPlayStopButton" Content="▶ Play" Click="PlayStopButton_Click" Padding="10,5" Margin="0,0,4,0"/>
-                        <Button x:Name="MixingSeekForwardButton" Content="+5s" ToolTip="Forward 5s" Click="SeekForwardButton_Click" Padding="8,5" Margin="0,0,4,0"/>
-                        <Button x:Name="MixingRestartButton" Content="⏮ Restart" Click="RestartButton_Click" Padding="10,5" Margin="0,0,16,0"/>
-                        <TextBlock x:Name="MixingTimeReadoutText" Text="0:00 / 0:00" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
-                        <Slider x:Name="MixingTimelineSlider" Minimum="0" Maximum="1000" Value="0" Width="300" VerticalAlignment="Center"
-                                PreviewMouseDown="TimelineSlider_PreviewMouseDown"
-                                PreviewMouseUp="TimelineSlider_PreviewMouseUp"
-                                ValueChanged="TimelineSlider_ValueChanged"/>
-
-                        <!-- Level meters (v7 Q1 task 3): peak/RMS taps read from the live
-                             PreviewPlaybackEngine at ~30Hz (MainWindow's _meterPollTimer), not
-                             data-bound; these are plain post-slot-rack/master bus dBFS readouts,
-                             not project state. -->
-                        <TextBlock Text="Layer" VerticalAlignment="Center" Margin="16,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        <ProgressBar x:Name="LayerMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center" ToolTip="Selected layer's RMS level, -60 to 0 dBFS"/>
-                        <TextBlock Text="Master" VerticalAlignment="Center" Margin="10,0,4,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        <ProgressBar x:Name="MasterMeterBar" Minimum="0" Maximum="1" Value="0" Width="80" Height="12" VerticalAlignment="Center" ToolTip="Master bus RMS level, -60 to 0 dBFS"/>
-                    </StackPanel>
-                </Border>
-
-                <!-- Slot rack (v7 Q1 task 2): five fixed slots in the same order MixEngine's
-                     BuildLayerChain processes them (NoiseGate -> Compressor -> EQ -> Reverb ->
-                     Limiter; Pan/Gain sit between EQ and Reverb/Limiter but aren't slots, they
-                     live in the sidebar. Each slot always shows a power toggle + FX name; the
-                     "Open Pro-X..." launcher only appears once that plugin is detected, and the
-                     native-fallback sliders only appear while the slot is both enabled and no
-                     matching plugin is hosted (the only place native controls appear at all, per
-                     the plan's no-"backend"-wording rule); replaces the old per-FX subtab
-                     selector with everything visible/scrollable at once, like a DAW channel strip. -->
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="16">
+                <ScrollViewer x:Name="FxRackScrollViewer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                    <StackPanel x:Name="FxRackPanel" Margin="16">
                         <!-- Slot 1: Noise gate -->
                         <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10" Padding="14">
                             <StackPanel>
@@ -382,7 +452,8 @@
                                 </ComboBox>
                                 <Button Content="Edit in Melodyne..." Click="EditMelodyne_Click"
                                         Visibility="{Binding ShowMelodyneButton, Converter={StaticResource BoolToVis}}"
-                                        HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"/>
+                                        HorizontalAlignment="Left" Padding="14,6" Style="{StaticResource AccentButton}"
+                                        MouseEnter="Hint_MouseEnter" Tag="Opens Melodyne's own editor window for this layer's persistent ARA session."/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
