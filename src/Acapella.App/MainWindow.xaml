@@ -94,7 +94,10 @@
                             <CheckBox Content="M" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,6,0" MouseEnter="Hint_MouseEnter" Tag="Mute this layer."/>
                             <CheckBox Content="S" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click" MouseEnter="Hint_MouseEnter" Tag="Solo this layer."/>
                         </StackPanel>
-                        <ProgressBar Value="{Binding MeterLevel}" Minimum="0" Maximum="1" Height="8" Margin="0,0,0,4" MouseEnter="Hint_MouseEnter" Tag="Monitor: this layer's live level."/>
+                        <!-- Monitor: vertical, same height as the Volume fader below, so both
+                             read as a matched pair (per redesign feedback). -->
+                        <ProgressBar Orientation="Vertical" Value="{Binding MeterLevel}" Minimum="0" Maximum="1" Height="150" Width="14" HorizontalAlignment="Center" Margin="0,0,0,4"
+                                     MouseEnter="Hint_MouseEnter" Tag="Monitor: this layer's live level."/>
                         <Slider Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}" Margin="0,0,0,4" MouseEnter="Hint_MouseEnter" Tag="Pan."/>
                         <Slider Style="{StaticResource CommitSlider}" Orientation="Vertical" Minimum="-60" Maximum="12" Height="150"
                                 Value="{Binding GainDb, Mode=TwoWay}" HorizontalAlignment="Center" Margin="0,0,0,4"
@@ -118,123 +121,114 @@
 
     <DockPanel LastChildFill="True">
         <!-- ===================== Row 1: toolbar (caption band) ===================== -->
+        <!-- DockPanel, not a fixed-column Grid: a Grid's star-sized "spacer" column only absorbs
+             LEFTOVER space; if the other Auto columns' combined desired width ever exceeds the
+             window's actual width (e.g. after lengthening the knob/peak meter below), Grid doesn't
+             wrap or clip them, so the rightmost columns (the chrome buttons!) get pushed straight
+             off the visible window edge. Docking chrome + undo/redo to the right guarantees they
+             stay visible no matter how wide everything else gets; that "everything else" lives in
+             a horizontally-scrollable middle section instead, which absorbs overflow safely. -->
         <Border DockPanel.Dock="Top" Height="40" Background="{StaticResource RowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-            <Grid Margin="6,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <Menu Grid.Column="0" Background="Transparent" BorderThickness="0" FontSize="13" VerticalAlignment="Center"
-                      shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                    <MenuItem Header="_File">
-                        <MenuItem Header="_New" Click="NewProjectMenuItem_Click"/>
-                        <MenuItem Header="_Open..." Click="OpenProjectButton_Click"/>
-                        <MenuItem Header="_Save..." Click="SaveProjectButton_Click"/>
-                        <Separator/>
-                        <MenuItem x:Name="ExportMenuItem" Header="_Export MP4..." Click="ExportButton_Click"/>
-                    </MenuItem>
-                    <MenuItem Header="_Edit">
-                        <MenuItem Header="_Undo" Click="UndoMenuItem_Click" InputGestureText="Ctrl+Z"/>
-                        <MenuItem Header="_Redo" Click="RedoMenuItem_Click" InputGestureText="Ctrl+Y"/>
-                    </MenuItem>
-                    <MenuItem Header="_Add">
-                        <MenuItem Header="Add _layer" Click="AddLayerMenuItem_Click"/>
-                    </MenuItem>
-                    <MenuItem Header="_View">
-                        <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
-                    </MenuItem>
-                    <MenuItem Header="_Options">
-                        <MenuItem Header="_Monitor master output" IsCheckable="True" IsChecked="{Binding IsChecked, ElementName=MonitorToggle, Mode=TwoWay}"/>
-                    </MenuItem>
-                    <MenuItem Header="_Tools">
-                        <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
-                        <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
-                        <Separator/>
-                        <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
-                    </MenuItem>
-                    <MenuItem Header="_Help">
-                        <MenuItem Header="_About" Click="AboutMenuItem_Click"/>
-                    </MenuItem>
-                </Menu>
-
-                <!-- Master volume knob (compact slider stands in for a true rotary knob; same
-                     position/function, see redesign notes). Lengthened so the toolbar's content
-                     reaches further toward the window-chrome buttons, rather than leaving most of
-                     the row as dead drag space. Two-way synced with the mixer's Master strip fader
-                     further right (MasterVolumeSlider_ValueChanged mirrors both). -->
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-                    <Slider x:Name="MasterVolumeSlider" Minimum="-24" Maximum="12" Value="0" Width="140" VerticalAlignment="Center"
-                            ValueChanged="MasterVolumeSlider_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"
-                            MouseEnter="Hint_MouseEnter" Tag="Master volume."
-                            shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-                </StackPanel>
-
-                <!-- Play / Stop / Record: split into three distinct buttons (image shows them
-                     separate, unlike the old single toggling Play/Stop button). Record opens the
-                     same capture-setup dialog as Tools > Recording setup... for the next open slot. -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-                    <Button x:Name="PlayButton" Content="▶" Click="PlayButton_Click" Style="{StaticResource IconButton}"
-                            MouseEnter="Hint_MouseEnter" Tag="Play the timeline from the current position (Space)."/>
-                    <Button x:Name="StopButton" Content="■" Click="StopButton_Click" Style="{StaticResource IconButton}"
-                            MouseEnter="Hint_MouseEnter" Tag="Stop playback (Space)."/>
-                    <Button x:Name="RecordButton" Content="⏺" Click="RecordButton_Click" Foreground="#E05252" Style="{StaticResource IconButton}"
-                            MouseEnter="Hint_MouseEnter" Tag="Open the recording setup dialog for the next empty layer."/>
-                </StackPanel>
-
-                <TextBlock Grid.Column="3" Text="BPM" Style="{StaticResource ToolbarText}" Margin="10,0,4,0"/>
-                <TextBox x:Name="MetronomeBpmTextBox" Grid.Column="4" Text="130.000" Width="64" VerticalAlignment="Center"
-                         LostFocus="MetronomeBpmTextBox_LostFocus" MouseEnter="Hint_MouseEnter" Tag="Metronome tempo (BPM)."
-                         shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-
-                <TextBlock x:Name="CurrentTimeText" Grid.Column="5" Text="0:00:00" Style="{StaticResource ToolbarText}" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
-                           MouseEnter="Hint_MouseEnter" Tag="Current playback position."/>
-                <TextBlock x:Name="TotalDurationText" Grid.Column="6" Text="0:00:00" Style="{StaticResource ToolbarText}" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
-                           MouseEnter="Hint_MouseEnter" Tag="Total project duration."/>
-
-                <ToggleButton x:Name="MonitorToggle" Grid.Column="7" Content="🔊" IsChecked="True"
-                              Checked="MonitorToggle_Changed" Unchecked="MonitorToggle_Changed" Padding="6,4" Margin="6,0" VerticalAlignment="Center"
-                              MouseEnter="Hint_MouseEnter" Tag="Monitor master output (uncheck to mute what you hear without changing the volume)."
-                              shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
-
-                <!-- Peak meter (lengthened; was too short to read at a glance). -->
-                <StackPanel Grid.Column="8" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
-                    <TextBlock Text="Peak" Style="{StaticResource ToolbarText}" Margin="0,0,4,0"/>
-                    <ProgressBar x:Name="ToolbarPeakMeter" Minimum="0" Maximum="1" Value="0" Width="160" Height="10"
-                                 MouseEnter="Hint_MouseEnter" Tag="Master bus peak level."/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="9" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
-                    <TextBlock x:Name="CpuLoadText" Text="CPU 0%" Style="{StaticResource ToolbarText}" Margin="0,0,10,0"
-                               MouseEnter="Hint_MouseEnter" Tag="CPU load."/>
-                    <TextBlock x:Name="MemoryUsageText" Text="0 MB" Style="{StaticResource ToolbarText}"
-                               MouseEnter="Hint_MouseEnter" Tag="Memory usage."/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="10" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="UndoButton" Content="↩" Click="UndoMenuItem_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Undo (Ctrl+Z)."/>
-                    <Button x:Name="RedoButton" Content="↪" Click="RedoMenuItem_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Redo (Ctrl+Y)."/>
-                </StackPanel>
-
-                <!-- Column 11 (*) is the draggable spacer. -->
-
-                <StackPanel Grid.Column="12" Orientation="Horizontal" VerticalAlignment="Center">
+            <DockPanel Margin="6,0" LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="MinimizeButton" Content="🗕" Click="MinimizeButton_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Minimize."/>
                     <Button x:Name="RestoreButton" Content="🗗" Click="RestoreButton_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Restore/maximize."/>
                     <Button x:Name="CloseButton" Content="✕" Click="CloseButton_Click" Style="{StaticResource IconButton}" Margin="0" MouseEnter="Hint_MouseEnter" Tag="Close."/>
                 </StackPanel>
-            </Grid>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <Button x:Name="UndoButton" Content="↩" Click="UndoMenuItem_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Undo (Ctrl+Z)."/>
+                    <Button x:Name="RedoButton" Content="↪" Click="RedoMenuItem_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Redo (Ctrl+Y)."/>
+                </StackPanel>
+
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel Orientation="Horizontal">
+                        <Menu Background="Transparent" BorderThickness="0" FontSize="13" VerticalAlignment="Center"
+                              shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                            <MenuItem Header="_File">
+                                <MenuItem Header="_New" Click="NewProjectMenuItem_Click"/>
+                                <MenuItem Header="_Open..." Click="OpenProjectButton_Click"/>
+                                <MenuItem Header="_Save..." Click="SaveProjectButton_Click"/>
+                                <Separator/>
+                                <MenuItem x:Name="ExportMenuItem" Header="_Export MP4..." Click="ExportButton_Click"/>
+                            </MenuItem>
+                            <MenuItem Header="_Edit">
+                                <MenuItem Header="_Undo" Click="UndoMenuItem_Click" InputGestureText="Ctrl+Z"/>
+                                <MenuItem Header="_Redo" Click="RedoMenuItem_Click" InputGestureText="Ctrl+Y"/>
+                            </MenuItem>
+                            <MenuItem Header="_Add">
+                                <MenuItem Header="Add _layer" Click="AddLayerMenuItem_Click"/>
+                            </MenuItem>
+                            <MenuItem Header="_View">
+                                <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
+                            </MenuItem>
+                            <MenuItem Header="_Options">
+                                <MenuItem Header="_Monitor master output" IsCheckable="True" IsChecked="{Binding IsChecked, ElementName=MonitorToggle, Mode=TwoWay}"/>
+                            </MenuItem>
+                            <MenuItem Header="_Tools">
+                                <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
+                                <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
+                                <Separator/>
+                                <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
+                            </MenuItem>
+                            <MenuItem Header="_Help">
+                                <MenuItem Header="_About" Click="AboutMenuItem_Click"/>
+                            </MenuItem>
+                        </Menu>
+
+                        <!-- Master volume knob (compact slider stands in for a true rotary knob;
+                             same position/function, see redesign notes). Two-way synced with the
+                             mixer's Master strip fader further right (MasterVolumeSlider_ValueChanged
+                             mirrors both). -->
+                        <Slider x:Name="MasterVolumeSlider" Minimum="-24" Maximum="12" Value="0" Width="100" VerticalAlignment="Center" Margin="10,0,0,0"
+                                ValueChanged="MasterVolumeSlider_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"
+                                MouseEnter="Hint_MouseEnter" Tag="Master volume."
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+
+                        <!-- Play / Stop / Record: split into three distinct buttons (image shows them
+                             separate, unlike the old single toggling Play/Stop button). Record opens
+                             the same capture-setup dialog as Tools > Recording setup... for the next
+                             open slot. -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                            <Button x:Name="PlayButton" Content="▶" Click="PlayButton_Click" Style="{StaticResource IconButton}"
+                                    MouseEnter="Hint_MouseEnter" Tag="Play the timeline from the current position (Space)."/>
+                            <Button x:Name="StopButton" Content="■" Click="StopButton_Click" Style="{StaticResource IconButton}"
+                                    MouseEnter="Hint_MouseEnter" Tag="Stop playback and reset to the start (Space)."/>
+                            <Button x:Name="RecordButton" Content="⏺" Click="RecordButton_Click" Foreground="#E05252" Style="{StaticResource IconButton}"
+                                    MouseEnter="Hint_MouseEnter" Tag="Open the recording setup dialog for the next empty layer."/>
+                        </StackPanel>
+
+                        <TextBlock Text="BPM" Style="{StaticResource ToolbarText}" Margin="10,0,4,0"/>
+                        <TextBox x:Name="MetronomeBpmTextBox" Text="130.000" Width="64" VerticalAlignment="Center"
+                                 LostFocus="MetronomeBpmTextBox_LostFocus" MouseEnter="Hint_MouseEnter" Tag="Metronome tempo (BPM)."
+                                 shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+
+                        <TextBlock x:Name="CurrentTimeText" Text="0:00:00" Style="{StaticResource ToolbarText}" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
+                                   MouseEnter="Hint_MouseEnter" Tag="Current playback position."/>
+                        <TextBlock x:Name="TotalDurationText" Text="0:00:00" Style="{StaticResource ToolbarText}" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
+                                   MouseEnter="Hint_MouseEnter" Tag="Total project duration."/>
+
+                        <ToggleButton x:Name="MonitorToggle" Content="🔊" IsChecked="True"
+                                      Checked="MonitorToggle_Changed" Unchecked="MonitorToggle_Changed" Padding="6,4" Margin="6,0" VerticalAlignment="Center"
+                                      MouseEnter="Hint_MouseEnter" Tag="Monitor master output (uncheck to mute what you hear without changing the volume)."
+                                      shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+
+                        <!-- Peak meter (lengthened; was too short to read at a glance). -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
+                            <TextBlock Text="Peak" Style="{StaticResource ToolbarText}" Margin="0,0,4,0"/>
+                            <ProgressBar x:Name="ToolbarPeakMeter" Minimum="0" Maximum="1" Value="0" Width="120" Height="10"
+                                         MouseEnter="Hint_MouseEnter" Tag="Master bus peak level."/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
+                            <TextBlock x:Name="CpuLoadText" Text="CPU 0%" Style="{StaticResource ToolbarText}" Margin="0,0,10,0"
+                                       MouseEnter="Hint_MouseEnter" Tag="CPU load."/>
+                            <TextBlock x:Name="MemoryUsageText" Text="0 MB" Style="{StaticResource ToolbarText}"
+                                       MouseEnter="Hint_MouseEnter" Tag="Memory usage."/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
         </Border>
 
         <!-- ===================== Row 2: hint panel + song position ===================== -->
@@ -264,7 +258,10 @@
         <!-- ===================== Bottom: preview | mixer | FX (single merged screen) ===================== -->
         <Grid Background="{StaticResource WindowBrush}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" MinWidth="300"/>
+                <!-- FX halved relative to its original share (1.2* -> 0.6*), the freed proportion
+                     handed to the preview column (2* -> 2.6*, same total of 3.2 star-units) so the
+                     video gets bigger instead of leaving the FX rack's old width unused. -->
+                <ColumnDefinition Width="2.6*" MinWidth="300"/>
                 <!-- Fixed (not Auto/star): a content-driven Auto column here could grow (or a star
                      column shrink toward its MinWidth) independently of the preview's own fixed-size
                      content, and since neither Grid column clips its child, an oversized child would
@@ -272,7 +269,7 @@
                      defect. A fixed width sized to fit Master + 4 strips removes that failure mode
                      outright; the inner ScrollViewer is still a safety net, not the primary fit. -->
                 <ColumnDefinition Width="460"/>
-                <ColumnDefinition Width="1.2*" MinWidth="320"/>
+                <ColumnDefinition Width="0.6*" MinWidth="260"/>
             </Grid.ColumnDefinitions>
 
             <!-- Preview panel: Viewbox lets the composited frame shrink to fit whatever space this
@@ -314,7 +311,7 @@
                                 </Border.Style>
                                 <StackPanel>
                                     <TextBlock Text="Master" FontSize="10" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                                    <ProgressBar x:Name="MasterMeterBar" Minimum="0" Maximum="1" Value="0" Height="10" Margin="0,0,0,4"/>
+                                    <ProgressBar x:Name="MasterMeterBar" Orientation="Vertical" Minimum="0" Maximum="1" Value="0" Height="150" Width="14" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                                     <Slider x:Name="MixerMasterFader" Orientation="Vertical" Minimum="-24" Maximum="12" Value="0" Height="150"
                                             HorizontalAlignment="Center"
                                             ValueChanged="MixerMasterFader_ValueChanged" PreviewMouseUp="MasterVolumeSlider_PreviewMouseUp"/>
@@ -354,7 +351,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <CheckBox IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"
                                               MouseEnter="Hint_MouseEnter" Tag="Enable/disable the noise gate."/>
-                                    <TextBlock Text="Noise gate" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="OpenNoiseGateEditor_Click"
+                                    <TextBlock Text="Noise gate" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OpenNoiseGateEditor_Click"
                                                MouseEnter="Hint_MouseEnter" Tag="Click to open the noise gate's editor (when hosted)."/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsNoiseGateHosted, Converter={StaticResource InverseBoolToVis}}">
@@ -378,7 +375,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <CheckBox IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"
                                               MouseEnter="Hint_MouseEnter" Tag="Enable/disable the compressor."/>
-                                    <TextBlock Text="Compressor" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="OpenCompressorEditor_Click"
+                                    <TextBlock Text="Compressor" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OpenCompressorEditor_Click"
                                                MouseEnter="Hint_MouseEnter" Tag="Click to open the compressor's editor (when hosted)."/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsCompressorHosted, Converter={StaticResource InverseBoolToVis}}">
@@ -402,7 +399,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <CheckBox IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"
                                               MouseEnter="Hint_MouseEnter" Tag="Enable/disable the EQ."/>
-                                    <TextBlock Text="EQ" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="OpenEqEditor_Click"
+                                    <TextBlock Text="EQ" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OpenEqEditor_Click"
                                                MouseEnter="Hint_MouseEnter" Tag="Click to open the EQ's editor (when hosted)."/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsEqHosted, Converter={StaticResource InverseBoolToVis}}">
@@ -429,7 +426,7 @@
                                 <StackPanel Orientation="Horizontal">
                                     <CheckBox IsChecked="{Binding ReverbEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center" IsEnabled="{Binding IsReverbHosted}"
                                               MouseEnter="Hint_MouseEnter" Tag="Enable/disable reverb (requires FabFilter Pro-R 2)."/>
-                                    <TextBlock Text="Reverb" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="OpenReverbEditor_Click"
+                                    <TextBlock Text="Reverb" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OpenReverbEditor_Click"
                                                MouseEnter="Hint_MouseEnter" Tag="Click to open reverb's editor (when hosted)."/>
                                 </StackPanel>
                                 <TextBlock Visibility="{Binding IsReverbHosted, Converter={StaticResource InverseBoolToVis}}"
@@ -444,7 +441,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <CheckBox IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"
                                               MouseEnter="Hint_MouseEnter" Tag="Enable/disable the limiter."/>
-                                    <TextBlock Text="Limiter" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="OpenLimiterEditor_Click"
+                                    <TextBlock Text="Limiter" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="OpenLimiterEditor_Click"
                                                MouseEnter="Hint_MouseEnter" Tag="Click to open the limiter's editor (when hosted)."/>
                                 </StackPanel>
                                 <Grid Visibility="{Binding IsLimiterHosted, Converter={StaticResource InverseBoolToVis}}">
@@ -472,7 +469,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <CheckBox IsChecked="{Binding MelodyneEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0" VerticalAlignment="Center"
                                           MouseEnter="Hint_MouseEnter" Tag="Enable/disable Melodyne manual pitch correction."/>
-                                <TextBlock Text="Pitch correction" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseDown="EditMelodyne_Click"
+                                <TextBlock Text="Pitch correction" FontWeight="Bold" VerticalAlignment="Center" Cursor="Hand" MouseLeftButtonUp="EditMelodyne_Click"
                                            MouseEnter="Hint_MouseEnter" Tag="Click to open Melodyne's editor for this layer's persistent ARA session."/>
                             </StackPanel>
                         </Border>

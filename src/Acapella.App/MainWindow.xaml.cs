@@ -650,7 +650,12 @@ public partial class MainWindow : Window
     // message below explains rather than silently no-opping.
     private void EditMelodyne_Click(object sender, MouseButtonEventArgs e)
     {
-        if (_selectedLayer is null || !_selectedLayer.IsMelodyneHosted) return;
+        // Deliberately not gated on IsMelodyneHosted (unlike the FabFilter handlers below): the
+        // real gate for Melodyne is "has this layer's persistent ARA session been created yet"
+        // (requires a Play with Manual2A selected first), which OpenMelodyneEditor already checks
+        // and reports via the status message -- gating on IsMelodyneHosted too made this silently
+        // no-op whenever the ARA-capability scan's cache hadn't caught up yet, breaking the button.
+        if (_selectedLayer is null) return;
         if (!_selectedLayer.OpenMelodyneEditor())
             StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
     }
@@ -771,12 +776,22 @@ public partial class MainWindow : Window
         });
     }
 
+    /// <summary>Stop resets the playhead to the start, not just pausing in place (media-player
+    /// convention, per redesign feedback) -- always seeks to 0 even if playback was already
+    /// stopped, so pressing Stop is also a reliable "rewind" shortcut.</summary>
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_previewEngine.IsPlaying) return;
-        _previewEngine.Stop();
-        SetPlayStopContent(false);
-        StatusText.Text = "Preview stopped.";
+        if (_previewEngine.IsPlaying)
+        {
+            _previewEngine.Stop();
+            SetPlayStopContent(false);
+            StatusText.Text = "Preview stopped.";
+        }
+        RunPreviewTask(() =>
+        {
+            _previewEngine.Seek(0);
+            Dispatcher.Invoke(UpdateTimelineRangeUi);
+        });
     }
 
     /// <summary>Toolbar's Record button (image shows it distinct from Play/Stop): opens the same

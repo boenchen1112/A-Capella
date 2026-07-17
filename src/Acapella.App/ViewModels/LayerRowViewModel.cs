@@ -365,11 +365,6 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Gates the Melodyne slot's name-click-to-open behavior, mirroring IsEqHosted etc.
-    /// above -- clicking opens the persistent ARA session's editor only when Melodyne is actually
-    /// ARA-capable on this machine.</summary>
-    public bool IsMelodyneHosted => SharedHostedService?.IsAraAvailable(MixEngine.MelodynePluginLabel) ?? false;
-
     /// <summary>Bug audit A1: opens Melodyne's own editor GUI for this layer's persistent ARA
     /// session (the same live, already-analyzed session MixEngine's pitch stage renders through --
     /// not a disposable stand-in). Returns false if that session doesn't exist yet, which happens
@@ -429,7 +424,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsEqHosted)); OnPropertyChanged(nameof(IsNoiseGateHosted));
         OnPropertyChanged(nameof(IsCompressorHosted)); OnPropertyChanged(nameof(IsLimiterHosted));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
-        OnPropertyChanged(nameof(MelodyneEnabled)); OnPropertyChanged(nameof(IsMelodyneHosted));
+        OnPropertyChanged(nameof(MelodyneEnabled));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
