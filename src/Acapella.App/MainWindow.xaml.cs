@@ -75,7 +75,6 @@ public partial class MainWindow : Window
     private bool _syncingMasterVolume;
     private int _previewRefreshGeneration;
     private bool _isScrubbing;
-    private double _pixelsPerSecond = 60;
 
     // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
     // mixer strip (a layer, or the Master strip) is selected at a time, driving the FX panel's
@@ -275,8 +274,6 @@ public partial class MainWindow : Window
     private void CommitSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
 
     private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
-
-    private void CommitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => PushUndoSnapshot();
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
@@ -651,21 +648,22 @@ public partial class MainWindow : Window
     // OpenEqEditor_Click etc. below. Returns false only when the layer's chain has never been built
     // with Manual2A selected yet (no session exists to show an editor for), which the status bar
     // message below explains rather than silently no-opping.
-    private void EditMelodyne_Click(object sender, RoutedEventArgs e)
+    private void EditMelodyne_Click(object sender, MouseButtonEventArgs e)
     {
-        if (_selectedLayer is null) return;
+        if (_selectedLayer is null || !_selectedLayer.IsMelodyneHosted) return;
         if (!_selectedLayer.OpenMelodyneEditor())
             StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
     }
 
-    // ----- v6 P3: hosted FabFilter launcher buttons. Each stage panel already switches between
-    // native controls and this launcher via IsXHosted-bound Visibility in XAML; these handlers just
-    // open the live plugin instance's own editor window (never embedded -- P3a task 7). -----
-    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenEqEditor();
-    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenNoiseGateEditor();
-    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenCompressorEditor();
-    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenLimiterEditor();
-    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenReverbEditor();
+    // ----- v6 P3 (v8 redesign: name-click, not a separate button): each slot's own checkbox is
+    // its enable/disable, and clicking the FX name opens the live hosted plugin instance's own
+    // editor window (never embedded -- P3a task 7); no-ops when that stage isn't hosted, since
+    // there's no plugin editor to open (the native fallback sliders are what's shown instead). -----
+    private void OpenEqEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsEqHosted == true) _selectedLayer.OpenEqEditor(); }
+    private void OpenNoiseGateEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsNoiseGateHosted == true) _selectedLayer.OpenNoiseGateEditor(); }
+    private void OpenCompressorEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsCompressorHosted == true) _selectedLayer.OpenCompressorEditor(); }
+    private void OpenLimiterEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsLimiterHosted == true) _selectedLayer.OpenLimiterEditor(); }
+    private void OpenReverbEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsReverbHosted == true) _selectedLayer.OpenReverbEditor(); }
 
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom (UI_Design_Spec v2) -----
     //
@@ -821,25 +819,14 @@ public partial class MainWindow : Window
         RunPreviewTask(() => _previewEngine.Seek(_previewEngine.PositionMs));
     }
 
-    private void ZoomInButton_Click(object sender, RoutedEventArgs e)
-    {
-        _pixelsPerSecond = Math.Min(400, _pixelsPerSecond * 1.5);
-        UpdateTimelineRangeUi();
-    }
-
-    private void ZoomOutButton_Click(object sender, RoutedEventArgs e)
-    {
-        _pixelsPerSecond = Math.Max(10, _pixelsPerSecond / 1.5);
-        UpdateTimelineRangeUi();
-    }
-
-    /// <summary>Zoom (see UI_Design_Spec v2) scales the timeline's horizontal pixel span, not the
-    /// preview picture -- this only ever touches TimelineSlider.Width/Maximum, never CompositeCanvas.</summary>
+    /// <summary>v8 redesign: the song-position bar now always spans the full row width (dropped
+    /// the old scrollable/zoomable timeline, which structurally conflicted with "span from the
+    /// hint panel to under the close button") -- this only ever touches TimelineSlider.Maximum/
+    /// Value, never its Width, and never CompositeCanvas.</summary>
     private void UpdateTimelineRangeUi()
     {
         double durationMs = _previewEngine.DurationMs;
         TimelineSlider.Maximum = Math.Max(1, durationMs);
-        TimelineSlider.Width = Math.Max(200, _pixelsPerSecond * durationMs / 1000.0);
         if (!_isScrubbing)
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
         SetTimeReadout(_previewEngine.PositionMs, durationMs);

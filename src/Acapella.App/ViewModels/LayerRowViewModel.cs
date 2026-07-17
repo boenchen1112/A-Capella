@@ -348,22 +348,27 @@ public class LayerRowViewModel : INotifyPropertyChanged
         return changed;
     }
 
-    // ----- Melodyne subtab -----
+    // ----- Melodyne slot (v8 redesign: styled the same as the FX slots above -- a plain enable
+    // checkbox + name, no separate mode picker). PitchBackendSelection.NativeAutomatic stays a
+    // valid enum value and MixEngine still handles it -- it's just never reachable from this UI,
+    // per explicit user direction to keep the native fallback in code but not show it. -----
 
-    public int PitchBackendIndex
+    public bool MelodyneEnabled
     {
-        get => (int)(Params?.PitchBackend ?? PitchBackendSelection.None);
+        get => Params?.PitchBackend == PitchBackendSelection.Manual2A;
         set
         {
             if (Params is null) return;
-            Params.PitchBackend = (PitchBackendSelection)value;
-            OnPropertyChanged(nameof(PitchBackendIndex));
-            OnPropertyChanged(nameof(ShowMelodyneButton));
+            Params.PitchBackend = value ? PitchBackendSelection.Manual2A : PitchBackendSelection.None;
+            OnPropertyChanged(nameof(MelodyneEnabled));
             LiveParamChanged?.Invoke();
         }
     }
 
-    public bool ShowMelodyneButton => Params?.PitchBackend == PitchBackendSelection.Manual2A;
+    /// <summary>Gates the Melodyne slot's name-click-to-open behavior, mirroring IsEqHosted etc.
+    /// above -- clicking opens the persistent ARA session's editor only when Melodyne is actually
+    /// ARA-capable on this machine.</summary>
+    public bool IsMelodyneHosted => SharedHostedService?.IsAraAvailable(MixEngine.MelodynePluginLabel) ?? false;
 
     /// <summary>Bug audit A1: opens Melodyne's own editor GUI for this layer's persistent ARA
     /// session (the same live, already-analyzed session MixEngine's pitch stage renders through --
@@ -424,7 +429,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsEqHosted)); OnPropertyChanged(nameof(IsNoiseGateHosted));
         OnPropertyChanged(nameof(IsCompressorHosted)); OnPropertyChanged(nameof(IsLimiterHosted));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
-        OnPropertyChanged(nameof(PitchBackendIndex)); OnPropertyChanged(nameof(ShowMelodyneButton));
+        OnPropertyChanged(nameof(MelodyneEnabled)); OnPropertyChanged(nameof(IsMelodyneHosted));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
