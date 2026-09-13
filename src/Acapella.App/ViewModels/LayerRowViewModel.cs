@@ -315,13 +315,24 @@ public class LayerRowViewModel : INotifyPropertyChanged
         _lastPolledHostedState[slot] = slot.GetHostedState(Params);
     }
 
-    /// <summary>Pulls live state for every stage this row has ever opened an editor for, and
-    /// updates Params' matching *HostedState field if it changed since the last poll (v7 Q0 task 8,
+    /// <summary>Polls every plugin editor this layer uses -- the FX slots' hosted plugins and the
+    /// Melodyne ARA session -- for edits made in their own windows since the last poll (there's no
+    /// native "edited" event to hook). Returns true if anything changed, so the caller can refresh
+    /// the preview and record an undo step. Both kinds are always polled; a change found in one must
+    /// never skip the other (audit A5).</summary>
+    public bool PollEditorChanges()
+    {
+        bool fxChanged = PollHostedStateChanges();
+        bool melodyneChanged = PollMelodyneStateChanged();
+        return fxChanged || melodyneChanged;
+    }
+
+    /// <summary>Pulls live state for every slot this row has ever opened an editor for, and
+    /// updates Params' matching hosted-state field if it changed since the last poll (v7 Q0 task 8,
     /// audit A2/B11 -- also what lets a Pro-R tail-length change picked up here feed into the next
-    /// chain rebuild). Returns true if anything changed, so the caller can refresh the live preview.
-    /// Cheap when nothing is open (loops zero times) or nothing changed (one native call per open
-    /// stage, no allocation beyond the pulled bytes).</summary>
-    public bool PollHostedStateChanges()
+    /// chain rebuild). Cheap when nothing is open (loops zero times) or nothing changed (one native
+    /// call per open slot, no allocation beyond the pulled bytes).</summary>
+    private bool PollHostedStateChanges()
     {
         if (_layer is null || SharedHostedService is null || Params is null || _openedHostedSlots.Count == 0)
             return false;
@@ -372,12 +383,10 @@ public class LayerRowViewModel : INotifyPropertyChanged
         return SharedHostedService.ShowAraEditor(_layer.LayerId, $"Melodyne — {DisplayName}");
     }
 
-    /// <summary>Bug audit A5 ("stale correction cache"): polls this layer's ARA archive for a real
-    /// change since the last poll (there's no native "editor closed" event to hook), bumping the
-    /// edit generation MixEngine folds into its Manual2A cache key so the next rebuild re-renders
-    /// through Melodyne instead of replaying stale output. Mirrors PollHostedStateChanges's
-    /// poll-and-diff shape for the FabFilter stages -- call from the same timer.</summary>
-    public bool PollMelodyneStateChanged()
+    /// <summary>Bug audit A5 ("stale correction cache"): a real change in this layer's ARA archive
+    /// bumps the edit generation MixEngine folds into its Manual2A cache key, so the next rebuild
+    /// re-renders through Melodyne instead of replaying stale output.</summary>
+    private bool PollMelodyneStateChanged()
     {
         if (_layer is null || SharedHostedService is null) return false;
         return SharedHostedService.PollAraStateChanged(_layer.LayerId);

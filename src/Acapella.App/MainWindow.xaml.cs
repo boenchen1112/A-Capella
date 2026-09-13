@@ -114,11 +114,7 @@ public partial class MainWindow : Window
         _hostedStatePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _hostedStatePollTimer.Tick += (s, e) =>
         {
-            // Bug audit A5: bitwise OR (not ||) so PollMelodyneStateChanged always runs even when
-            // the FabFilter check already found a change -- both need to execute every tick, not
-            // just one short-circuited by the other.
-            bool changed = (_selectedLayer?.PollHostedStateChanges() == true) | (_selectedLayer?.PollMelodyneStateChanged() == true);
-            if (changed)
+            if (_selectedLayer?.PollEditorChanges() == true)
             {
                 DebounceRefreshPreview();
                 PushUndoSnapshot();
