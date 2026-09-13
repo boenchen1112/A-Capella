@@ -72,12 +72,11 @@ public class WasapiPreviewAudioSink : IPreviewAudioSink
 /// playback) since that mirrors the existing preview-mix rebuild pattern and stays well within
 /// the measured throughput headroom for a discrete transport action.
 ///
-/// All public operations (SetLayers/Play/Stop/Seek) are serialized through a single dedicated
-/// command thread (audit B1): MainWindow calls into this engine from several places --
-/// a debounced live-refresh, transport button clicks, both via Task.Run -- and without
-/// serialization, overlapping calls could interleave a Stop and a Play, dispose frame sources out
-/// from under an in-flight render, or start two audio sinks at once. Routing every call through
-/// one queue makes each operation atomic relative to the others.
+/// All commands (SetLayers/Refresh/Play/Stop/Seek) are serialized through a single dedicated
+/// command thread (audit B1) and return a task instead of blocking: callers (a debounced live
+/// refresh, transport clicks, keyboard shortcuts) may issue them from any thread, including the UI
+/// thread, and in any interleaving -- each command is atomic relative to the others, and commands
+/// run in the order they were issued.
 /// </summary>
 public class PreviewPlaybackEngine : IDisposable
 {
@@ -162,34 +161,48 @@ public class PreviewPlaybackEngine : IDisposable
             command();
     }
 
-    // v7 Q0 (audit A3): the command thread this queues onto now calls into HostedPluginService
-    // during chain builds, which blocks-marshals hosted-plugin lifecycle calls onto the WPF UI
-    // thread (WpfHostedPluginDispatcher). That is only deadlock-free because every call site into a
-    // queued method (Play/Seek/SetLayers/Stop/Restart) already runs off the UI thread (Task.Run) --
-    // see MainWindow's transport handlers. If a future call site invoked one of these methods
-    // directly on the UI thread instead, that call would block in done.Wait() below while the
-    // command thread's dispatcher.Invoke blocks waiting for the very same (now-busy) UI thread:
-    // permanent deadlock on the first hosted-plugin chain build. Keep every UI-thread call site
-    // wrapped in Task.Run (or otherwise off the UI thread).
-    private void Enqueue(Action action)
+    // Commands never block the caller: the returned task completes (or faults) on the command
+    // thread. Chain builds on that thread block-marshal hosted-plugin calls onto the WPF UI thread
+    // (audit A3), so a caller that waited synchronously from the UI thread would deadlock; awaiting
+    // is safe from any thread. Continuations run asynchronously so an awaiter never executes on
+    // the command thread itself.
+    private Task Enqueue(Action action)
     {
-        using var done = new ManualResetEventSlim(false);
-        Exception? error = null;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _commandQueue.Add(() =>
         {
-            try { action(); }
-            catch (Exception ex) { error = ex; }
-            finally { done.Set(); }
+            try
+            {
+                action();
+                done.SetResult();
+            }
+            catch (Exception ex)
+            {
+                done.SetException(ex);
+            }
         });
-        done.Wait();
-        if (error is not null)
-            throw new AggregateException(error);
+        return done.Task;
     }
 
-    /// <summary>Rebinds the layer set this engine plays. Callers should call this whenever
-    /// sources/trim/FX change, then Seek(PositionMs) to refresh the visible frame at the same
-    /// spot (the caller decides whether that also means "keep playing").</summary>
-    public void SetLayers(IReadOnlyList<LayerModel> layers) => Enqueue(() => SetLayersCore(layers));
+    /// <summary>Rebinds the layer set this engine plays and recomputes DurationMs. Takes a
+    /// snapshot of the list, so later edits to the caller's collection don't race playback.</summary>
+    public Task SetLayersAsync(IEnumerable<LayerModel> layers)
+    {
+        var snapshot = layers.ToList();
+        return Enqueue(() => SetLayersCore(snapshot));
+    }
+
+    /// <summary>Live refresh after sources/trim/FX change: rebinds the layers and re-renders at
+    /// the current position as one atomic command, continuing playback if it was playing.</summary>
+    public Task RefreshAsync(IEnumerable<LayerModel> layers)
+    {
+        var snapshot = layers.ToList();
+        return Enqueue(() =>
+        {
+            SetLayersCore(snapshot);
+            SeekCore(PositionMs);
+        });
+    }
 
     private void SetLayersCore(IReadOnlyList<LayerModel> layers)
     {
@@ -198,7 +211,7 @@ public class PreviewPlaybackEngine : IDisposable
         PositionMs = Math.Min(PositionMs, DurationMs);
     }
 
-    public void Play() => Enqueue(PlayCore);
+    public Task PlayAsync() => Enqueue(PlayCore);
 
     private void PlayCore()
     {
@@ -316,7 +329,7 @@ public class PreviewPlaybackEngine : IDisposable
         return tracked;
     }
 
-    public void Stop() => Enqueue(StopCore);
+    public Task StopAsync() => Enqueue(StopCore);
 
     private void StopCore()
     {
@@ -340,13 +353,16 @@ public class PreviewPlaybackEngine : IDisposable
         if (raiseStoppedEvent) PlaybackStopped?.Invoke();
     }
 
-    public void Restart() => Seek(0);
+    public Task RestartAsync() => SeekAsync(0);
 
-    /// <summary>Seeks to positionMs. If currently playing, restarts playback from the new
-    /// position; if paused, renders a single static composited frame at that position so
-    /// scrubbing while stopped still updates the preview. Atomic relative to concurrent
+    /// <summary>Seeks to positionMs, clamped to [0, DurationMs]. If currently playing, restarts
+    /// playback from the new position; if paused, renders a single static composited frame at that
+    /// position so scrubbing while stopped still updates the preview. Atomic relative to concurrent
     /// Play/Stop/SetLayers calls (audit B1) since it runs entirely on the command thread.</summary>
-    public void Seek(double positionMs) => Enqueue(() => SeekCore(positionMs));
+    public Task SeekAsync(double positionMs) => Enqueue(() => SeekCore(positionMs));
+
+    /// <summary>Relative seek, resolved against the position at the moment the command runs.</summary>
+    public Task SeekByAsync(double deltaMs) => Enqueue(() => SeekCore(PositionMs + deltaMs));
 
     private void SeekCore(double positionMs)
     {
@@ -379,7 +395,8 @@ public class PreviewPlaybackEngine : IDisposable
 
     public void Dispose()
     {
-        Stop();
+        // StopCore never marshals to the UI thread, so waiting here is deadlock-free.
+        StopAsync().GetAwaiter().GetResult();
         _commandQueue.CompleteAdding();
         _commandThread.Join();
         _audioSink.Dispose();

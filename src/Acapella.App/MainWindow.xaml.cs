@@ -73,7 +73,6 @@ public partial class MainWindow : Window
     private float _masterVolumeDb;
     private bool _monitorMuted;
     private bool _syncingMasterVolume;
-    private int _previewRefreshGeneration;
     private bool _isScrubbing;
 
     // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
@@ -311,15 +310,7 @@ public partial class MainWindow : Window
     private void SeekBackButton_Click(object sender, RoutedEventArgs e) => SeekRelative(-5000);
     private void SeekForwardButton_Click(object sender, RoutedEventArgs e) => SeekRelative(5000);
 
-    private void SeekRelative(double deltaMs)
-    {
-        double target = Math.Max(0, Math.Min(_previewEngine.DurationMs, _previewEngine.PositionMs + deltaMs));
-        RunPreviewTask(() =>
-        {
-            _previewEngine.Seek(target);
-            Dispatcher.Invoke(UpdateTimelineRangeUi);
-        });
-    }
+    private void SeekRelative(double deltaMs) => RunPreviewCommand(_previewEngine.SeekByAsync(deltaMs));
 
     /// <summary>Toolbar master-volume knob and the mixer's Master-strip fader both control the
     /// same value (image shows both) -- kept as two independent Sliders synced here rather than a
@@ -674,7 +665,8 @@ public partial class MainWindow : Window
     //
     // Video and audio are re-decoded on every Play/Seek by PreviewPlaybackEngine (measured fast
     // enough for the app's up-to-4-layer/small-clip scale -- see the throughput spike referenced
-    // in the engine's doc comment), always off the UI thread here so a decode never blocks input.
+    // in the engine's doc comment). Engine commands are awaited, never waited on, so a decode never
+    // blocks input.
 
     private void DebounceRefreshPreview()
     {
@@ -682,60 +674,46 @@ public partial class MainWindow : Window
         _previewDebounceTimer.Start();
     }
 
-    /// <summary>Q3 task 33: every one of the preview engine's off-thread calls (Play/Seek/Restart/
-    /// SetLayers) previously ran via a bare Task.Run with no try/catch -- a bridge exception (e.g.
-    /// a native hosted-plugin error) would vanish as an unobserved task exception instead of
-    /// reaching the status bar, unlike Save/Open/Export which already surface their errors. This
-    /// wraps the same fire-and-forget pattern with a status-bar report on failure.</summary>
-    private void RunPreviewTask(Action work)
+    /// <summary>Awaits a preview command without blocking the UI thread, then refreshes the
+    /// timeline. Returns false (and reports to the status bar, Q3 task 33) if the command failed.</summary>
+    private async Task<bool> AwaitPreviewCommand(Task command)
     {
-        Task.Run(() =>
+        try
         {
-            try
-            {
-                work();
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() => StatusText.Text = $"Preview error: {ex.Message}");
-            }
-        });
+            await command;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Preview error: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            UpdateTimelineRangeUi();
+        }
     }
+
+    private async void RunPreviewCommand(Task command) => await AwaitPreviewCommand(command);
 
     /// <summary>Rebinds the engine to the current layer set and refreshes whatever's currently
     /// visible (a live-playing frame, or a static frame if paused) at the same timeline position
     /// -- this is the "no manual refresh step" mechanism the spec calls for.</summary>
-    private void RefreshPreviewLive()
+    private async void RefreshPreviewLive()
     {
-        var layersSnapshot = _layers.Layers.ToList();
-
-        if (layersSnapshot.Count == 0)
+        if (_layers.Layers.Count == 0)
         {
-            _previewEngine.SetLayers(layersSnapshot);
+            await AwaitPreviewCommand(_previewEngine.SetLayersAsync(_layers.Layers));
             _compositedFrame?.Dispose();
             _compositedFrame = null;
             CompositeCanvas.InvalidateVisual();
-            UpdateTimelineRangeUi();
             return;
         }
 
-        int generation = ++_previewRefreshGeneration;
-        double positionMs = _previewEngine.PositionMs;
-
-        RunPreviewTask(() =>
-        {
-            _previewEngine.SetLayers(layersSnapshot);
-            _previewEngine.Seek(positionMs);
-
-            Dispatcher.Invoke(() =>
-            {
-                if (generation != _previewRefreshGeneration) return;
-                UpdateTimelineRangeUi();
-            });
-        });
+        await AwaitPreviewCommand(_previewEngine.RefreshAsync(_layers.Layers));
     }
 
-    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
         if (_previewEngine.IsPlaying) return;
 
@@ -747,77 +725,47 @@ public partial class MainWindow : Window
 
         PlayButton.IsEnabled = false;
         StatusText.Text = "Starting preview...";
-        var layersSnapshot = _layers.Layers.ToList();
 
-        Task.Run(() =>
+        bool started = await AwaitPreviewCommand(SetLayersThenPlay());
+
+        PlayButton.IsEnabled = true;
+        SetPlayStopContent(started);
+        if (started) StatusText.Text = "Playing preview.";
+
+        async Task SetLayersThenPlay()
         {
-            try
-            {
-                _previewEngine.SetLayers(layersSnapshot);
-                _previewEngine.Play();
-
-                Dispatcher.Invoke(() =>
-                {
-                    PlayButton.IsEnabled = true;
-                    SetPlayStopContent(true);
-                    StatusText.Text = "Playing preview.";
-                    UpdateTimelineRangeUi();
-                });
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    PlayButton.IsEnabled = true;
-                    SetPlayStopContent(false);
-                    StatusText.Text = $"Preview error: {ex.Message}";
-                });
-            }
-        });
+            await _previewEngine.SetLayersAsync(_layers.Layers);
+            await _previewEngine.PlayAsync();
+        }
     }
 
     /// <summary>Stop resets the playhead to the start, not just pausing in place (media-player
     /// convention, per redesign feedback) -- always seeks to 0 even if playback was already
     /// stopped, so pressing Stop is also a reliable "rewind" shortcut.</summary>
-    private void StopButton_Click(object sender, RoutedEventArgs e)
+    private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_previewEngine.IsPlaying)
+        bool wasPlaying = _previewEngine.IsPlaying;
+        var stop = _previewEngine.StopAsync();
+        var rewind = _previewEngine.SeekAsync(0);
+        if (await AwaitPreviewCommand(Task.WhenAll(stop, rewind)) && wasPlaying)
         {
-            _previewEngine.Stop();
             SetPlayStopContent(false);
             StatusText.Text = "Preview stopped.";
         }
-        RunPreviewTask(() =>
-        {
-            _previewEngine.Seek(0);
-            Dispatcher.Invoke(UpdateTimelineRangeUi);
-        });
     }
 
     /// <summary>Toolbar's Record button (image shows it distinct from Play/Stop): opens the same
     /// capture-setup dialog as Tools > Recording setup... for the next empty layer slot.</summary>
     private void RecordButton_Click(object sender, RoutedEventArgs e) => RecordingSetupMenuItem_Click(sender, e);
 
-    private void RestartButton_Click(object sender, RoutedEventArgs e)
-    {
-        RunPreviewTask(() =>
-        {
-            _previewEngine.Restart();
-            Dispatcher.Invoke(UpdateTimelineRangeUi);
-        });
-    }
+    private void RestartButton_Click(object sender, RoutedEventArgs e) => RunPreviewCommand(_previewEngine.RestartAsync());
 
     private void TimelineSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _isScrubbing = true;
 
     private void TimelineSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e)
     {
         _isScrubbing = false;
-        double target = ((Slider)sender).Value;
-        RunPreviewTask(() =>
-        {
-            _previewEngine.Seek(target);
-            Dispatcher.Invoke(UpdateTimelineRangeUi);
-        });
+        RunPreviewCommand(_previewEngine.SeekAsync(((Slider)sender).Value));
     }
 
     private void TimelineSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -831,7 +779,7 @@ public partial class MainWindow : Window
         _previewEngine.ShowLayerLabels = ShowLayerLabelsMenuItem.IsChecked;
         // Re-render whatever's currently visible so toggling the overlay is reflected immediately,
         // not just on the next Play/Seek.
-        RunPreviewTask(() => _previewEngine.Seek(_previewEngine.PositionMs));
+        RunPreviewCommand(_previewEngine.SeekByAsync(0));
     }
 
     /// <summary>v8 redesign: the song-position bar now always spans the full row width (dropped

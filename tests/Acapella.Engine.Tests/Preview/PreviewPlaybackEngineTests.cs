@@ -94,6 +94,22 @@ public class CapturingAudioSink : IPreviewAudioSink
     public void Dispose() { }
 }
 
+/// <summary>Blocks inside Play() until released, so a test can observe a command still running.</summary>
+public class GatedAudioSink : IPreviewAudioSink
+{
+    public readonly ManualResetEventSlim PlayEntered = new(false);
+    public readonly ManualResetEventSlim Release = new(false);
+
+    public void Play(ISampleProvider mix)
+    {
+        PlayEntered.Set();
+        Release.Wait(TimeSpan.FromSeconds(10));
+    }
+
+    public void Stop() { }
+    public void Dispose() => Release.Set();
+}
+
 public class PreviewPlaybackEngineTests
 {
     // VideoFrameStreamSource.Dispose() kills the ffmpeg process, but the OS can take a moment to
@@ -245,7 +261,7 @@ public class PreviewPlaybackEngineTests
     /// rendered video frame must stay within ~2 frames of the audio-derived playback position at
     /// both t~1s and t~4s, and again immediately after a mid-playback seek.</summary>
     [Fact]
-    public void Play_VideoStaysWithinTwoFramesOfAudioPosition_AtOneAndFourSecondsAndAfterSeek()
+    public async Task Play_VideoStaysWithinTwoFramesOfAudioPosition_AtOneAndFourSecondsAndAfterSeek()
     {
         int fps = 10;
         var (path, tempDir) = CreateTimestampEncodedFixtureClip(durationSeconds: 5);
@@ -257,7 +273,7 @@ public class PreviewPlaybackEngineTests
 
             using var sink = new SimulatedRealtimeAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: fps, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             object frameLock = new();
             SKBitmap? latest = null;
@@ -270,15 +286,15 @@ public class PreviewPlaybackEngineTests
                 }
             };
 
-            engine.Play();
+            await engine.PlayAsync();
 
             AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 1000);
             AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 4000);
 
-            engine.Seek(2000);
+            await engine.SeekAsync(2000);
             AssertFrameNearPosition(engine, () => latest, frameLock, targetMs: 3000);
 
-            engine.Stop();
+            await engine.StopAsync();
             lock (frameLock) { latest?.Dispose(); }
         }
         finally
@@ -293,7 +309,7 @@ public class PreviewPlaybackEngineTests
     /// throw (no disposed-source race, no null-ref) and must end with the sink never having had
     /// more than one concurrent Play active.</summary>
     [Fact]
-    public void ConcurrentSeekSetLayersPlayStop_DoesNotThrowAndNeverDoublePlaysSink()
+    public async Task ConcurrentSeekSetLayersPlayStop_DoesNotThrowAndNeverDoublePlaysSink()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
         try
@@ -305,24 +321,24 @@ public class PreviewPlaybackEngineTests
             var sink = new CountingAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             var rng = new Random(42);
-            var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(() =>
+            var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(async () =>
             {
                 switch (i % 4)
                 {
-                    case 0: engine.SetLayers(layers.Layers); break;
-                    case 1: engine.Seek(rng.NextDouble() * 1000); break;
-                    case 2: engine.Play(); break;
-                    case 3: engine.Stop(); break;
+                    case 0: await engine.SetLayersAsync(layers.Layers); break;
+                    case 1: await engine.SeekAsync(rng.NextDouble() * 1000); break;
+                    case 2: await engine.PlayAsync(); break;
+                    case 3: await engine.StopAsync(); break;
                 }
             })).ToArray();
 
             Exception? thrown = Record.Exception(() => Task.WaitAll(tasks, TimeSpan.FromSeconds(30)));
             Assert.Null(thrown);
 
-            engine.Stop();
+            await engine.StopAsync();
 
             Assert.True(sink.MaxObservedConcurrentPlays <= 1,
                 $"Expected at most one concurrent sink Play, observed {sink.MaxObservedConcurrentPlays}.");
@@ -342,7 +358,7 @@ public class PreviewPlaybackEngineTests
     /// PositionMs stays a single well-formed, in-range value throughout and after the storm,
     /// rather than only checking for absence of exceptions/double-plays.</summary>
     [Fact]
-    public void TransportCommandsFromTwoScreensInterleaved_SingleSinkAndConsistentPosition()
+    public async Task TransportCommandsFromTwoScreensInterleaved_SingleSinkAndConsistentPosition()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
         try
@@ -354,27 +370,27 @@ public class PreviewPlaybackEngineTests
             var sink = new CountingAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             var observedPositions = new System.Collections.Concurrent.ConcurrentBag<double>();
             void RecordPosition() => observedPositions.Add(engine.PositionMs);
 
             // "Editor screen" transport calls.
-            var editorScreenCalls = Task.Run(() =>
+            var editorScreenCalls = Task.Run(async () =>
             {
-                for (int i = 0; i < 15; i++) { engine.Play(); RecordPosition(); engine.Seek(200); RecordPosition(); engine.Stop(); RecordPosition(); }
+                for (int i = 0; i < 15; i++) { await engine.PlayAsync(); RecordPosition(); await engine.SeekAsync(200); RecordPosition(); await engine.StopAsync(); RecordPosition(); }
             });
             // "Mixing screen" transport calls -- same verbs, different caller thread, exactly the
             // interleave the acceptance criterion describes.
-            var mixingScreenCalls = Task.Run(() =>
+            var mixingScreenCalls = Task.Run(async () =>
             {
-                for (int i = 0; i < 15; i++) { engine.Seek(400); RecordPosition(); engine.Play(); RecordPosition(); engine.Stop(); RecordPosition(); }
+                for (int i = 0; i < 15; i++) { await engine.SeekAsync(400); RecordPosition(); await engine.PlayAsync(); RecordPosition(); await engine.StopAsync(); RecordPosition(); }
             });
 
             Exception? thrown = Record.Exception(() => Task.WaitAll(new[] { editorScreenCalls, mixingScreenCalls }, TimeSpan.FromSeconds(30)));
             Assert.Null(thrown);
 
-            engine.Stop();
+            await engine.StopAsync();
 
             Assert.True(sink.MaxObservedConcurrentPlays <= 1,
                 $"Expected at most one concurrent sink Play across both screens' transport calls, observed {sink.MaxObservedConcurrentPlays}.");
@@ -392,7 +408,7 @@ public class PreviewPlaybackEngineTests
     /// no audible effect at all. Pulls samples from the actual live graph handed to the sink,
     /// before and after changing MasterVolumeDb without any Stop/Play/Seek in between.</summary>
     [Fact]
-    public void MasterVolumeDb_ChangedWhilePlaying_AttenuatesLiveAudioImmediately()
+    public async Task MasterVolumeDb_ChangedWhilePlaying_AttenuatesLiveAudioImmediately()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
         try
@@ -404,9 +420,9 @@ public class PreviewPlaybackEngineTests
             var sink = new CapturingAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
             engine.MasterVolumeDb = 0f;
-            engine.Play();
+            await engine.PlayAsync();
 
             Assert.NotNull(sink.LastMix);
             var buffer = new float[8192];
@@ -417,7 +433,7 @@ public class PreviewPlaybackEngineTests
             sink.LastMix!.Read(buffer, 0, buffer.Length);
             float rmsAtMinus20Db = ComputeRms(buffer);
 
-            engine.Stop();
+            await engine.StopAsync();
 
             Assert.True(rmsAtMinus20Db < rmsAt0Db * 0.2f,
                 $"Expected -20dB master volume to noticeably attenuate live audio; got {rmsAt0Db} -> {rmsAtMinus20Db}.");
@@ -434,14 +450,46 @@ public class PreviewPlaybackEngineTests
         return (float)Math.Sqrt(sumSquares / samples.Length);
     }
 
+    /// <summary>Commands must return to the caller before they finish on the command thread: a
+    /// caller blocking on a command from the UI thread is what deadlocked against hosted-plugin
+    /// calls marshaled onto that same thread (audit A3).</summary>
+    [Fact]
+    public async Task Commands_ReturnBeforeCompleting_AndRunInIssueOrder()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.UploadedAudioOnly, SourcePath = path };
+            var sink = new GatedAudioSink();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            engine.FrameReady += bmp => bmp.Dispose();
+            await engine.SetLayersAsync(new[] { layer });
+
+            var play = engine.PlayAsync();
+            Assert.True(sink.PlayEntered.Wait(TimeSpan.FromSeconds(10)), "Play never reached the sink.");
+            var stop = engine.StopAsync();
+
+            Assert.False(play.IsCompleted, "PlayAsync blocked its caller until the command finished.");
+            Assert.False(stop.IsCompleted, "StopAsync ran before the Play issued ahead of it.");
+
+            sink.Release.Set();
+            await Task.WhenAll(play, stop).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(engine.IsPlaying);
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
     /// <summary>Q1 task 2 [auto]: a slot enable/disable flag change (e.g. a rack power button)
-    /// applied via MainWindow's real refresh path -- SetLayers then Seek(currentPosition), the
+    /// applied via MainWindow's real refresh path -- RefreshAsync, the
     /// "debounced rebuild" mentioned in the acceptance criterion -- must reach the live audio on
     /// the next block without ever leaving IsPlaying false, and the position after that rebuild
     /// must land back at the same point (SeekCore restarts playback at the exact positionMs it was
     /// given when wasPlaying is true).</summary>
     [Fact]
-    public void SlotEnableToggledMidPlayback_RebuildAppliesItWithoutStoppingTransport_PositionPreserved()
+    public async Task SlotEnableToggledMidPlayback_RebuildAppliesItWithoutStoppingTransport_PositionPreserved()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
         try
@@ -453,8 +501,8 @@ public class PreviewPlaybackEngineTests
             var sink = new CapturingAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
-            engine.SetLayers(layers.Layers);
-            engine.Play();
+            await engine.SetLayersAsync(layers.Layers);
+            await engine.PlayAsync();
             Assert.True(engine.IsPlaying);
 
             Assert.NotNull(sink.LastMix);
@@ -468,8 +516,7 @@ public class PreviewPlaybackEngineTests
             layer.MixParameters.MidBellGainDb = -24f;
 
             double positionBeforeRebuild = engine.PositionMs;
-            engine.SetLayers(layers.Layers);
-            engine.Seek(positionBeforeRebuild);
+            await engine.RefreshAsync(layers.Layers);
 
             Assert.True(engine.IsPlaying, "Toggling a slot mid-playback must not leave the transport stopped.");
             // SeekCore sets PositionMs = positionBeforeRebuild synchronously before restarting
@@ -483,7 +530,7 @@ public class PreviewPlaybackEngineTests
             sink.LastMix!.Read(buffer, 0, buffer.Length);
             float rmsAfterToggle = ComputeRms(buffer);
 
-            engine.Stop();
+            await engine.StopAsync();
 
             Assert.True(rmsAfterToggle < rmsBeforeToggle * 0.7f,
                 $"Expected enabling the EQ slot with a deep mid-band cut to reduce live RMS; got {rmsBeforeToggle} -> {rmsAfterToggle}.");
@@ -498,7 +545,7 @@ public class PreviewPlaybackEngineTests
     /// stay stuck at their pre-Play NegativeInfinity default -- these are what a Mixing-screen
     /// meter poll timer reads.</summary>
     [Fact]
-    public void GetLayerAndMasterLevels_WhilePlaying_ReportNonSilentLevels()
+    public async Task GetLayerAndMasterLevels_WhilePlaying_ReportNonSilentLevels()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
         try
@@ -510,14 +557,14 @@ public class PreviewPlaybackEngineTests
             var sink = new CapturingAudioSink();
             using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
             engine.FrameReady += bmp => bmp.Dispose();
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             var (layerPeakBefore, _) = engine.GetLayerLevels(7);
             var (masterPeakBefore, _) = engine.GetMasterLevels();
             Assert.True(float.IsNegativeInfinity(layerPeakBefore));
             Assert.True(float.IsNegativeInfinity(masterPeakBefore));
 
-            engine.Play();
+            await engine.PlayAsync();
             Assert.NotNull(sink.LastMix);
             var buffer = new float[8192];
             sink.LastMix!.Read(buffer, 0, buffer.Length);
@@ -525,7 +572,7 @@ public class PreviewPlaybackEngineTests
             var (layerPeakAfter, layerRmsAfter) = engine.GetLayerLevels(7);
             var (masterPeakAfter, masterRmsAfter) = engine.GetMasterLevels();
 
-            engine.Stop();
+            await engine.StopAsync();
 
             Assert.False(float.IsNegativeInfinity(layerPeakAfter), "Expected a real level for the playing layer's tap.");
             Assert.False(float.IsNegativeInfinity(masterPeakAfter), "Expected a real level for the master bus tap.");
@@ -539,7 +586,7 @@ public class PreviewPlaybackEngineTests
     }
 
     [Fact]
-    public void SetLayers_ComputesDurationFromLongestLayer()
+    public async Task SetLayers_ComputesDurationFromLongestLayer()
     {
         var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
         try
@@ -549,7 +596,7 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             Assert.InRange(engine.DurationMs, 1800, 2200);
         }
@@ -560,7 +607,7 @@ public class PreviewPlaybackEngineTests
     }
 
     [Fact]
-    public void Seek_WhilePaused_RaisesOneFrameAtRequestedPosition()
+    public async Task Seek_WhilePaused_RaisesOneFrameAtRequestedPosition()
     {
         var (path, tempDir) = CreateFixtureClip("blue", durationSeconds: 2);
         try
@@ -570,12 +617,12 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             SKBitmap? received = null;
             engine.FrameReady += bmp => received = bmp;
 
-            engine.Seek(1000);
+            await engine.SeekAsync(1000);
 
             Assert.False(engine.IsPlaying);
             Assert.Equal(1000, engine.PositionMs);
@@ -589,7 +636,7 @@ public class PreviewPlaybackEngineTests
     }
 
     [Fact]
-    public void PlayThenStop_ReachesEndAndStopsOnItsOwn()
+    public async Task PlayThenStop_ReachesEndAndStopsOnItsOwn()
     {
         var (path, tempDir) = CreateFixtureClip("green", durationSeconds: 1);
         try
@@ -599,14 +646,14 @@ public class PreviewPlaybackEngineTests
             layers.Restore(new[] { layer });
 
             using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: new FakeAudioSink(), hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
-            engine.SetLayers(layers.Layers);
+            await engine.SetLayersAsync(layers.Layers);
 
             int frameCount = 0;
             var stopped = new ManualResetEventSlim(false);
             engine.FrameReady += bmp => { frameCount++; bmp.Dispose(); };
             engine.PlaybackStopped += () => stopped.Set();
 
-            engine.Play();
+            await engine.PlayAsync();
             bool finished = stopped.Wait(TimeSpan.FromSeconds(10));
 
             Assert.True(finished, "Playback did not stop on its own within the timeout.");
