@@ -81,10 +81,8 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Standalone CMake 4.3.4 (`cmake` on PATH)
 - Melodyne (via FL Studio's plugin install): `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3`, v5.4.1.4. Tier/ARA-factory support unconfirmed at runtime (deferred to Phase 2A's spike).
 - **All five FabFilter v6 targets, confirmed present** under `C:\Program Files\Common Files\VST3\FabFilter\`: Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of v6 scope). Reinstalled 2026-07-14 under this vendor subfolder — a prior install had them flat under `VST3\` directly; `HostedPluginCatalog.cs` was updated to match.
-- JUCE: not yet cloned as of this note; clone when P3a's hosting code starts (JUCE bundles its own VST3 SDK — do not also clone Steinberg's VST3 SDK separately).
 
-**Known environment defect — native (C++) toolchain:**
-`C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\v145\Microsoft.VCToolsVersion.VC.14.51.props` (and its sibling `.txt`) are corrupted (zero-byte) inside the VS install. This breaks `vcvarsall.bat`'s toolset-version resolution and the CMake Visual-Studio-generator's `VCTargetsPath` probe — i.e. `cmake -G "Visual Studio 18 2026"` and anything that shells out to `vcvarsall.bat` fails. Repairing it needs admin rights (Program Files) or a VS "Repair", neither done here. **Workaround in place:** `src/Acapella.Host.Native/build.ps1` sets `INCLUDE`/`LIB`/`PATH` by hand from the known MSVC/SDK install paths and uses CMake's `NMake Makefiles` generator, which calls `cl.exe`/`link.exe` directly and never touches the broken file. Confirmed working (see `AcapellaHostNativeDll` probe). If VS is repaired later, the plain `cmake -G "Visual Studio 18 2026" -A x64` path should also work again, but keep build.ps1 as the documented default until someone confirms that.
+**Native module:** always build via `build.ps1`, never `cmake -G "Visual Studio 18 2026"` (broken VS toolset file — details in `src/Acapella.Host.Native/CLAUDE.md`).
 
 **Locked technology choices** (do not reconsider without triggering Pause Rule 2):
 - UI: WPF
@@ -96,10 +94,7 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Hosted plugin vendors (v6, hard limit): only FabFilter (Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2) and Melodyne. No other vendor without a new explicit decision.
 
 **Canonical commands:**
-- Build (.NET solution): `dotnet build` (from repo root, builds `Acapella.sln`)
 - Build native module (only needed when `src/Acapella.Host.Native` changes): `powershell -File src/Acapella.Host.Native/build.ps1` — must run *before* `dotnet build` picks up a changed `AcapellaHostNative.dll` (both `Acapella.App.csproj` and `Acapella.Engine.Tests.csproj` copy it into their own output post-build).
-- Run app: `dotnet run --project src/Acapella.App/Acapella.App.csproj`
-- Solution layout: `src/Acapella.App` (WPF UI) references `src/Acapella.Engine` (capture/sync/mix/composite/export/hosting logic); `src/Acapella.Host.Native` (C++/CMake, built separately) is the VST3 hosting bridge DLL.
 
 ## Reference
 
