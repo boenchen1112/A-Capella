@@ -655,11 +655,11 @@ public partial class MainWindow : Window
     // its enable/disable, and clicking the FX name opens the live hosted plugin instance's own
     // editor window (never embedded -- P3a task 7); no-ops when that stage isn't hosted, since
     // there's no plugin editor to open (the native fallback sliders are what's shown instead). -----
-    private void OpenEqEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsEqHosted == true) _selectedLayer.OpenEqEditor(); }
-    private void OpenNoiseGateEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsNoiseGateHosted == true) _selectedLayer.OpenNoiseGateEditor(); }
-    private void OpenCompressorEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsCompressorHosted == true) _selectedLayer.OpenCompressorEditor(); }
-    private void OpenLimiterEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsLimiterHosted == true) _selectedLayer.OpenLimiterEditor(); }
-    private void OpenReverbEditor_Click(object sender, MouseButtonEventArgs e) { if (_selectedLayer?.IsReverbHosted == true) _selectedLayer.OpenReverbEditor(); }
+    private void OpenEqEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Eq);
+    private void OpenNoiseGateEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.NoiseGate);
+    private void OpenCompressorEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Compressor);
+    private void OpenLimiterEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Limiter);
+    private void OpenReverbEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Reverb);
 
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom (UI_Design_Spec v2) -----
     //

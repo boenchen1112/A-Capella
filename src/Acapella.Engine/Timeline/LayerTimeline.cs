@@ -52,7 +52,7 @@ public sealed class LayerTimeline
         double shiftMs = layer.GetShiftMs();
         double totalMs = shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
 
-        double tailMs = _mixEngine.GetReverbTailSeconds(layer.LayerId, layer.MixParameters, sampleRate) * 1000.0;
+        double tailMs = _mixEngine.GetTailSeconds(layer.LayerId, layer.MixParameters, sampleRate) * 1000.0;
         return totalMs + tailMs;
     }
 

@@ -90,7 +90,7 @@ public class HostedFxChainTests
         using var engine2 = new MixEngine(new OnlyAvailable("FabFilter Pro-Q 4"));
         var restoredChain = engine2.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
         ReadAll(restoredChain, 512); // force lazy instance creation
-        var restoredInstance = engine2.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+        var restoredInstance = engine2.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate);
         Assert.Equal(0.8f, restoredInstance.GetParameterValue(gainParam), precision: 2);
     }
 
@@ -275,7 +275,7 @@ public class HostedFxChainTests
     }
 
     /// <summary>Q2 task 3: PreviewPlaybackEngine.LayerDurationMs/ExportEngine.LayerDurationSeconds
-    /// both extend a layer's computed duration by GetReverbTailSeconds so a Pro-R 2 decay isn't
+    /// both extend a layer's computed duration by GetTailSeconds so a Pro-R 2 decay isn't
     /// silently truncated (BuildLayerChain happily keeps producing tail audio past the source's own
     /// length, but nothing previously told either engine's duration/sample-count calculation there
     /// was more to read). Tested here directly against MixEngine -- calling it synchronously on the
@@ -286,7 +286,7 @@ public class HostedFxChainTests
     /// doc comment). "Extends duration exactly once" (the plan's wording): a second call for the
     /// same unchanged layer reports the same tail, not a growing one.</summary>
     [Fact]
-    public void GetReverbTailSeconds_ReturnsClampedTailAndIsStableAcrossRepeatedCalls()
+    public void GetTailSeconds_ReturnsClampedTailAndIsStableAcrossRepeatedCalls()
     {
         if (!HostedPluginInstance.TryScan(HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-R 2"], out _))
             {
@@ -300,21 +300,21 @@ public class HostedFxChainTests
         var parameters = new LayerMixParameters { ReverbEnabled = true };
         using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-R 2"));
 
-        double tail1 = engine.GetReverbTailSeconds(0, parameters, SampleRate);
+        double tail1 = engine.GetTailSeconds(0, parameters, SampleRate);
         Assert.True(tail1 > 0.0, "expected Pro-R 2 to report a non-zero tail once reverb is enabled");
         Assert.True(tail1 <= 12.0, "expected the tail to respect MixEngine's 12s clamp");
 
-        double tail2 = engine.GetReverbTailSeconds(0, parameters, SampleRate);
+        double tail2 = engine.GetTailSeconds(0, parameters, SampleRate);
         Assert.Equal(tail1, tail2, precision: 6);
     }
 
     /// <summary>Q2 task 3 (disabled-slot guard): a layer with reverb off must contribute zero tail,
     /// so a project with reverb-capable slots never silently gains extra duration it didn't ask for.</summary>
     [Fact]
-    public void GetReverbTailSeconds_ReturnsZero_WhenReverbDisabled()
+    public void GetTailSeconds_ReturnsZero_WhenReverbDisabled()
     {
         using var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
-        double tail = engine.GetReverbTailSeconds(0, new LayerMixParameters { ReverbEnabled = false }, SampleRate);
+        double tail = engine.GetTailSeconds(0, new LayerMixParameters { ReverbEnabled = false }, SampleRate);
         Assert.Equal(0.0, tail);
     }
 
@@ -392,8 +392,8 @@ public class HostedFxChainTests
             var chain = chainEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters { EqEnabled = true }), anySolo: false, SampleRate);
             ReadAll(chain, 512); // force lazy instance creation inside the chain
 
-            var uiInstance = uiEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
-            var chainInstance = chainEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+            var uiInstance = uiEngine.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate);
+            var chainInstance = chainEngine.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate);
 
             Assert.Same(chainInstance, uiInstance);
         }
@@ -428,7 +428,7 @@ public class HostedFxChainTests
             var chain = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
             ReadAll(chain, 512);
 
-            var instance = engine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate);
+            var instance = engine.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate);
             int gainParam = -1;
             for (int i = 0; i < instance.ParameterCount; i++)
             {
@@ -487,7 +487,7 @@ public class HostedFxChainTests
             var previewChain = previewEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
             var previewOutput = ReadAll(previewChain, totalSamples * 2);
 
-            var liveInstance = previewEngine.GetOrCreateHostedInstance(0, MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, null, SampleRate);
+            var liveInstance = previewEngine.GetOrCreateHostedInstance(0, FxSlots.Limiter.Stage, FxSlots.Limiter.PluginLabel, null, SampleRate);
             int gainParam = -1;
             for (int i = 0; i < liveInstance.ParameterCount; i++)
             {
@@ -598,7 +598,7 @@ public class HostedFxChainTests
             var chainBeforeClose = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
             var outputBeforeClose = ReadAll(chainBeforeClose, totalSamples * 2);
 
-            var liveInstance = engine.GetOrCreateHostedInstance(0, MixEngine.LimiterStage, MixEngine.LimiterPluginLabel, null, SampleRate);
+            var liveInstance = engine.GetOrCreateHostedInstance(0, FxSlots.Limiter.Stage, FxSlots.Limiter.PluginLabel, null, SampleRate);
             int gainParam = -1;
             for (int i = 0; i < liveInstance.ParameterCount; i++)
             {
@@ -624,7 +624,7 @@ public class HostedFxChainTests
             Assert.NotNull(parameters.LimiterHostedState);
 
             // "Close": drop the live instance entirely, same as the app shutting down/releasing.
-            service.Release(0, MixEngine.LimiterStage);
+            service.Release(0, FxSlots.Limiter.Stage);
 
             // "Reopen": a fresh chain build from the saved parameters recreates the instance with
             // GetOrCreateInstance's initialState argument -- the real project-load path.

@@ -39,8 +39,8 @@ public class HostedChainTests
     public void HostedStageLatencies_AreSummedAndTrimmed_SoTheImpulseStaysAtItsSourceIndex()
     {
         var fakes = new FakeHostedPluginFactory()
-            .With(MixEngine.EqPluginLabel, latencySamples: 128)
-            .With(MixEngine.LimiterPluginLabel, latencySamples: 256);
+            .With(FxSlots.Eq.PluginLabel, latencySamples: 128)
+            .With(FxSlots.Limiter.PluginLabel, latencySamples: 256);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
@@ -53,7 +53,7 @@ public class HostedChainTests
     [Fact]
     public void LatencyOnOneLayerOnly_DoesNotOffsetItAgainstANativeLayer_InTheSummedMix()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.LimiterPluginLabel, latencySamples: 512);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Limiter.PluginLabel, latencySamples: 512);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
@@ -71,7 +71,7 @@ public class HostedChainTests
     [Fact]
     public void ReverbTail_ExtendsChainOutputAndReportedTail_ByThePluginsTail()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.ReverbPluginLabel, tailSeconds: 0.25);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Reverb.PluginLabel, tailSeconds: 0.25);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
@@ -79,25 +79,25 @@ public class HostedChainTests
         int sourceFrames = SampleRate / 2;
         var chain = engine.BuildLayerChain(new MixLayerInput(0, new float[sourceFrames], SampleRate, parameters), anySolo: false, SampleRate);
 
-        Assert.Equal(0.25, engine.GetReverbTailSeconds(0, parameters, SampleRate), 6);
+        Assert.Equal(0.25, engine.GetTailSeconds(0, parameters, SampleRate), 6);
         Assert.Equal(sourceFrames + SampleRate / 4, ReadAll(chain, SampleRate * 4).Length / 2);
     }
 
     [Fact]
     public void ReverbDisabled_ReportsNoTail_EvenWhenTheReverbPluginIsAvailable()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.ReverbPluginLabel, tailSeconds: 3);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Reverb.PluginLabel, tailSeconds: 3);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
-        Assert.Equal(0, engine.GetReverbTailSeconds(0, new LayerMixParameters(), SampleRate));
+        Assert.Equal(0, engine.GetTailSeconds(0, new LayerMixParameters(), SampleRate));
         Assert.Empty(fakes.Created);
     }
 
     [Fact]
     public void EachChainBuild_ReusesTheCachedInstance_AndResetsItFirst()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.LimiterPluginLabel, latencySamples: 64);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Limiter.PluginLabel, latencySamples: 64);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
@@ -114,7 +114,7 @@ public class HostedChainTests
     [Fact]
     public void MixEnginesSharingOneService_GetTheSameLiveInstance()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.EqPluginLabel);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Eq.PluginLabel);
         using var service = fakes.CreateService();
         using var chainEngine = new MixEngine(service);
         using var uiEngine = new MixEngine(service);
@@ -122,14 +122,14 @@ public class HostedChainTests
         ReadAll(chainEngine.BuildLayerChain(new MixLayerInput(0, new float[1000], SampleRate, new LayerMixParameters { EqEnabled = true }), anySolo: false, SampleRate), 512);
 
         Assert.Same(
-            chainEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate),
-            uiEngine.GetOrCreateHostedInstance(0, MixEngine.EqStage, MixEngine.EqPluginLabel, null, SampleRate));
+            chainEngine.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate),
+            uiEngine.GetOrCreateHostedInstance(0, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, null, SampleRate));
     }
 
     [Fact]
     public void LiveEditorTweak_IsPulledIntoParameters_AndSavedStateIsPushedBackIntoLiveInstance()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.EqPluginLabel);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Eq.PluginLabel);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
         var parameters = new LayerMixParameters { EqEnabled = true };
@@ -148,14 +148,14 @@ public class HostedChainTests
     [Fact]
     public void ReleasedInstance_IsRecreatedFromSavedState_OnTheNextChainBuild()
     {
-        var fakes = new FakeHostedPluginFactory().With(MixEngine.LimiterPluginLabel);
+        var fakes = new FakeHostedPluginFactory().With(FxSlots.Limiter.PluginLabel);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
         var parameters = new LayerMixParameters { LimiterEnabled = true, LimiterHostedState = new byte[] { 7 } };
         var input = new MixLayerInput(0, new float[1000], SampleRate, parameters);
 
         engine.BuildLayerChain(input, anySolo: false, SampleRate);
-        service.Release(0, MixEngine.LimiterStage);
+        service.Release(0, FxSlots.Limiter.Stage);
         engine.BuildLayerChain(input, anySolo: false, SampleRate);
 
         Assert.Equal(2, fakes.Created.Count);

@@ -12,35 +12,15 @@ public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerM
 
 /// <summary>
 /// Builds the live mixed preview: for each layer, applies the fixed chain (pitch correction ->
-/// noise gate -> compressor -> EQ -> pan -> reverb -> gain/mute/solo -> limiter) then sums via
-/// NAudio's MixingSampleProvider. Parameters are read at build time, so changing a parameter and
-/// rebuilding is how "live" updates apply (non-destructive: raw samples untouched).
-///
-/// v6 P3: gate/compressor/EQ/limiter each auto-select the matching hosted FabFilter plugin when
-/// IHostedPluginAvailability reports it installed, falling back to the native math above
-/// otherwise (native is the automatic fallback, not a user-facing choice -- see the build plan's
-/// P3 task 1). Reverb is hosted-only (Pro-R 2), off by default, added if a stage isn't detected.
-/// Instances are cached per (layerId, stage) so they survive debounced preview rebuilds -- Dispose
-/// this MixEngine to release them (e.g. on project close).
+/// FX rack pre-pan slots -> pan -> post-pan slots -> gain/mute/solo -> post-gain slots) then sums
+/// via NAudio's MixingSampleProvider. Parameters are read at build time, so changing a parameter
+/// and rebuilding is how "live" updates apply (non-destructive: raw samples untouched). Each FX
+/// slot (see FxSlots) picks its hosted FabFilter plugin or native fallback itself; hosted
+/// instances are cached per (layerId, stage) in the shared HostedPluginService so they survive
+/// debounced preview rebuilds.
 /// </summary>
 public class MixEngine : IDisposable
 {
-    // Stage names double as HostedPluginInstanceCache keys (alongside layerId) -- the UI's "Open
-    // Pro-Q 4..." launcher buttons must fetch the exact same cache entry BuildLayerChain uses, so
-    // it edits the live instance actually processing audio rather than an orphaned second one.
-    // Keep these public constants as the single source of truth for both sides.
-    public const string EqStage = "Eq";
-    public const string NoiseGateStage = "NoiseGate";
-    public const string CompressorStage = "Compressor";
-    public const string LimiterStage = "Limiter";
-    public const string ReverbStage = "Reverb";
-
-    public const string EqPluginLabel = "FabFilter Pro-Q 4";
-    public const string NoiseGatePluginLabel = "FabFilter Pro-G";
-    public const string CompressorPluginLabel = "FabFilter Pro-C 3";
-    public const string LimiterPluginLabel = "FabFilter Pro-L 2";
-    public const string ReverbPluginLabel = "FabFilter Pro-R 2";
-
     public const string MelodynePluginLabel = "Melodyne";
 
     private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
@@ -97,24 +77,12 @@ public class MixEngine : IDisposable
     public (float PeakDb, float RmsDb) GetMasterLevels() =>
         _masterTap is { } tap ? (tap.PeakDb, tap.RmsDb) : (float.NegativeInfinity, float.NegativeInfinity);
 
-    /// <summary>Q2 task 3: how much a layer's own reverb tail extends past its source material,
-    /// in seconds (the plugin adapter clamps bogus/inf reports). 0 if
-    /// reverb isn't enabled or Pro-R 2 isn't hosted. Callers use this to extend a layer's computed
-    /// duration by exactly the tail this layer's own chain will actually produce -- BuildLayerChain
-    /// itself only ever *plays* the tail (HostedPluginSampleProvider keeps returning frames for
-    /// tailFrames after the source runs out); nothing previously told PreviewPlaybackEngine's or
-    /// ExportEngine's own duration/sample-count calculations that extra audio existed, so a reverb
-    /// tail was silently truncated by both (never heard in preview past the nominal end, never
-    /// written to an export). Exposed as its own method (not folded into BuildLayerChain) since
-    /// duration needs to be known before the mix graph is built.</summary>
-    public double GetReverbTailSeconds(int layerId, LayerMixParameters parameters, int sampleRate = 44100)
-    {
-        if (!parameters.ReverbEnabled || !_hostedService.IsAvailable(ReverbPluginLabel))
-            return 0.0;
-
-        var instance = GetOrCreateHostedInstance(layerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, sampleRate);
-        return instance.TailSeconds;
-    }
+    /// <summary>Q2 task 3: how far this layer's chain rings on past its source material, in seconds
+    /// (the enabled tail-extending slots, i.e. a hosted reverb). BuildLayerChain plays that tail,
+    /// but durations are computed before the graph is built, so callers ask here -- otherwise the
+    /// tail is truncated in both preview and export.</summary>
+    public double GetTailSeconds(int layerId, LayerMixParameters parameters, int sampleRate = 44100) =>
+        FxSlots.All.Sum(slot => slot.TailSeconds(layerId, parameters, _hostedService, sampleRate));
 
     /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
     /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on
@@ -130,11 +98,11 @@ public class MixEngine : IDisposable
     /// tweaks, not just the state as of whenever the editor was first opened.</summary>
     public void SyncLiveStateIntoParameters(int layerId, LayerMixParameters parameters)
     {
-        foreach (var stage in HostedStageStateBindings.PluginLabelByStage.Keys)
+        foreach (var slot in FxSlots.All)
         {
-            var instance = _hostedService.TryGetLiveInstance(layerId, stage);
+            var instance = _hostedService.TryGetLiveInstance(layerId, slot.Stage);
             if (instance is not null)
-                HostedStageStateBindings.Set(parameters, stage, _hostedService.PullLiveState(instance));
+                slot.SetHostedState(parameters, _hostedService.PullLiveState(instance));
         }
     }
 
@@ -144,10 +112,10 @@ public class MixEngine : IDisposable
     /// instance surviving across the restore would otherwise keep its old (pre-restore) state.</summary>
     public void PushSavedStateIntoLiveInstances(int layerId, LayerMixParameters parameters)
     {
-        foreach (var stage in HostedStageStateBindings.PluginLabelByStage.Keys)
+        foreach (var slot in FxSlots.All)
         {
-            var instance = _hostedService.TryGetLiveInstance(layerId, stage);
-            var state = HostedStageStateBindings.Get(parameters, stage);
+            var instance = _hostedService.TryGetLiveInstance(layerId, slot.Stage);
+            var state = slot.GetHostedState(parameters);
             if (instance is not null && state is { Length: > 0 })
                 _hostedService.PushState(instance, state);
         }
@@ -231,56 +199,15 @@ public class MixEngine : IDisposable
 
         int totalHostedLatency = 0;
 
-        // v7 Q0 task 4 (audit A4): all five stages are FL-style insert slots, off by default --
-        // gate and EQ now gate on their own Enabled flag just like compressor/limiter already did,
-        // instead of always running (at the hosted plugin's untouched factory-default state,
-        // audibly gating/EQing every layer even when the user never opened the panel).
-        if (parameters.NoiseGateEnabled)
-        {
-            chain = ApplyStage(chain, layer.LayerId, NoiseGateStage, NoiseGatePluginLabel, parameters.NoiseGateHostedState,
-                outputSampleRate, ref totalHostedLatency,
-                s => new NoiseGateSampleProvider(s, parameters.NoiseGateThresholdDb, parameters.NoiseGateReleaseMs));
-        }
-
-        if (parameters.CompressorEnabled)
-        {
-            chain = ApplyStage(chain, layer.LayerId, CompressorStage, CompressorPluginLabel, parameters.CompressorHostedState,
-                outputSampleRate, ref totalHostedLatency,
-                s => new CompressorSampleProvider(s, parameters.CompressorThresholdDb, parameters.CompressorRatio));
-        }
-
-        if (parameters.EqEnabled)
-        {
-            chain = ApplyStage(chain, layer.LayerId, EqStage, EqPluginLabel, parameters.EqHostedState,
-                outputSampleRate, ref totalHostedLatency,
-                s => new ThreeBandEqSampleProvider(s, parameters.LowShelfGainDb, parameters.MidBellGainDb, parameters.HighShelfGainDb));
-        }
+        chain = InsertSlots(FxSlotPosition.PrePan, chain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
 
         ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
-
-        if (parameters.ReverbEnabled && _hostedService.IsAvailable(ReverbPluginLabel))
-        {
-            var reverbInstance = GetOrCreateHostedInstance(layer.LayerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, outputSampleRate);
-            _hostedService.Reset(reverbInstance); // v7 Q0 task 5 (audit A5): clear last play's tail before reuse
-
-            double tailSeconds = reverbInstance.TailSeconds;
-            int tailFrames = (int)(tailSeconds * outputSampleRate);
-
-            var hostedReverb = new HostedPluginSampleProvider(afterPan, reverbInstance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames);
-            totalHostedLatency += hostedReverb.LatencySamples;
-            afterPan = hostedReverb;
-        }
+        afterPan = InsertSlots(FxSlotPosition.PostPan, afterPan, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
 
         bool effectiveMute = parameters.Mute || (anySolo && !parameters.Solo);
         float linearGain = effectiveMute ? 0f : DbToLinear(parameters.GainDb);
         ISampleProvider withGain = new VolumeSampleProvider(afterPan) { Volume = linearGain };
-
-        if (parameters.LimiterEnabled)
-        {
-            withGain = ApplyStage(withGain, layer.LayerId, LimiterStage, LimiterPluginLabel, parameters.LimiterHostedState,
-                outputSampleRate, ref totalHostedLatency,
-                s => new LimiterSampleProvider(s, parameters.LimiterCeilingDb, parameters.LimiterGainDb));
-        }
+        withGain = InsertSlots(FxSlotPosition.PostGain, withGain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
 
         ISampleProvider finished = totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
 
@@ -289,22 +216,14 @@ public class MixEngine : IDisposable
         return layerTap;
     }
 
-    /// <summary>Auto-selects hosted vs. native for one stage (v6 P3 task 1): if hostedPluginLabel
-    /// is detected, wraps source in a HostedPluginSampleProvider against a cached instance (state
-    /// restored from hostedState on first creation) and accumulates its latency; otherwise builds
-    /// the native provider via buildNative.</summary>
-    private ISampleProvider ApplyStage(
-        ISampleProvider source, int layerId, string stageName, string hostedPluginLabel, byte[]? hostedState,
-        int sampleRate, ref int totalHostedLatency, Func<ISampleProvider, ISampleProvider> buildNative)
+    private ISampleProvider InsertSlots(FxSlotPosition position, ISampleProvider source, int layerId, LayerMixParameters parameters, int sampleRate, ref int totalHostedLatency)
     {
-        if (!_hostedService.IsAvailable(hostedPluginLabel))
-            return buildNative(source);
-
-        var instance = GetOrCreateHostedInstance(layerId, stageName, hostedPluginLabel, hostedState, sampleRate);
-        _hostedService.Reset(instance); // v7 Q0 task 5 (audit A5): clear last play's lookahead/buffer before reuse
-        var hosted = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize);
-        totalHostedLatency += hosted.LatencySamples;
-        return hosted;
+        foreach (var slot in FxSlots.All)
+        {
+            if (slot.Position == position)
+                source = slot.Insert(source, layerId, parameters, _hostedService, sampleRate, ref totalHostedLatency);
+        }
+        return source;
     }
 
     private IPitchCorrectionBackend GetOrCreateMelodyneBackend(int layerId)
