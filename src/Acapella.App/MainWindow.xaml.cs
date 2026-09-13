@@ -13,7 +13,6 @@ using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
 using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
-using Acapella.Engine.Persistence;
 using Acapella.Engine.Preview;
 using Acapella.Engine.Project;
 using Acapella.Engine.Settings;
@@ -30,7 +29,8 @@ public partial class MainWindow : Window
 
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
-    private readonly LayerCollection _layers = new();
+    private readonly ProjectSession _session;
+    private LayerCollection _layers => _session.Layers;
     // L1: a directory next to the executable works regardless of how/where the app is launched.
     private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
 
@@ -42,7 +42,6 @@ public partial class MainWindow : Window
     // Dispatcher (A3/B8).
     private readonly HostedPluginService _hostedService = new(new HostedPluginAvailability(), new WpfHostedPluginDispatcher(Dispatcher.CurrentDispatcher));
     private readonly MixEngine _mixEngine;
-    private readonly ProjectPersistenceService _projectPersistence = new();
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
     private readonly PreviewPlaybackEngine _previewEngine;
     private readonly DispatcherTimer _previewDebounceTimer;
@@ -65,12 +64,6 @@ public partial class MainWindow : Window
     private readonly object _frameMailboxLock = new();
     private SKBitmap? _pendingFrame;
     private bool _framePumpQueued;
-    private double? _lastCalibratedOffsetMs;
-    // Metronome now lives only inside RecordSetupWindow (see UI_Design_Spec.md); this just carries
-    // the last-used BPM forward across dialogs and into project save/load, and (v8 redesign) the
-    // toolbar's own BPM textbox.
-    private double _metronomeBpm = 120;
-    private float _masterVolumeDb;
     private bool _monitorMuted;
     private bool _syncingMasterVolume;
     private bool _isScrubbing;
@@ -81,10 +74,9 @@ public partial class MainWindow : Window
     private LayerRowViewModel? _selectedLayer;
     private bool _masterSelected = true;
 
-    // Undo/redo (v5 P1 task 2): snapshots the whole project DTO on each discrete edit (slider
-    // release/focus-loss, not per-tick). _applyingHistory guards against re-pushing a snapshot
-    // while an Undo/Redo restore itself is mutating bound view models.
-    private readonly ProjectUndoStack _undoStack = new();
+    // Undo/redo (v5 P1 task 2): one undo step per discrete edit (slider release/focus-loss, not
+    // per-tick). _applyingHistory guards against re-pushing a snapshot while an Undo/Redo restore
+    // itself is mutating bound view models.
     private bool _applyingHistory;
 
     public MainWindow()
@@ -95,6 +87,7 @@ public partial class MainWindow : Window
         // WpfHostedPluginDispatcher was already built against this same thread's Dispatcher above.
         HostedPluginInstance.Initialize();
         _mixEngine = new MixEngine(_hostedService);
+        _session = new ProjectSession(_mixEngine);
         _previewEngine = new PreviewPlaybackEngine(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedService: _hostedService);
         LayerRowViewModel.SharedHostedService = _hostedService;
 
@@ -105,7 +98,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
         UpdateAddLayerButtonState();
-        MetronomeBpmTextBox.Text = _metronomeBpm.ToString("F3");
+        MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
         SelectMasterStrip();
 
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
@@ -182,22 +175,10 @@ public partial class MainWindow : Window
             _pendingFrame?.Dispose();
         };
 
-        _undoStack.Reset(CurrentProjectDto());
         PreviewKeyDown += MainWindow_PreviewKeyDown;
     }
 
     // ----- Undo/redo (v5 P1 task 2) -----
-
-    /// <summary>Single funnel point for every snapshot (undo push, save, export) -- v7 Q0 task 3
-    /// (audit A2): pulls each layer's live hosted-plugin state into its LayerMixParameters first,
-    /// so the snapshot reflects the user's actual editor tweaks rather than stale state captured
-    /// whenever a stage's editor happened to be opened.</summary>
-    private ProjectFileDto CurrentProjectDto()
-    {
-        foreach (var layer in _layers.Layers)
-            _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
-        return _projectPersistence.ToDto(_layers, _metronomeBpm, _lastCalibratedOffsetMs, _masterVolumeDb);
-    }
 
     /// <summary>Call after any discrete project edit completes (a slider release, a checkbox
     /// toggle, adding/recording/uploading a layer) -- never mid-drag, so undo steps correspond to
@@ -205,27 +186,20 @@ public partial class MainWindow : Window
     private void PushUndoSnapshot()
     {
         if (_applyingHistory) return;
-        _undoStack.Push(CurrentProjectDto());
+        _session.CommitEdit();
     }
 
-    private void RestoreProjectDto(ProjectFileDto dto)
+    /// <summary>Applies a session-side restore (undo/redo/open/new) to the UI, suppressing the
+    /// undo snapshots the bound view models would otherwise push while being repopulated.</summary>
+    private bool ApplyRestore(Func<bool> restore)
     {
         _applyingHistory = true;
         try
         {
-            var (loadedLayers, bpm, latencyOffset, masterVolumeDb) = _projectPersistence.FromDto(dto);
-            _layers.Restore(loadedLayers.Layers);
-            _lastCalibratedOffsetMs = latencyOffset;
-            _metronomeBpm = bpm;
-            _masterVolumeDb = masterVolumeDb;
-            MasterVolumeSlider.Value = masterVolumeDb;
+            if (!restore()) return false;
 
-            // v7 Q0 task 3 (audit B7): a live hosted instance surviving this restore (e.g. its
-            // editor was left open across an Undo) keeps its pre-restore state unless explicitly
-            // pushed -- GetOrCreateInstance's initialState only ever applies at first creation.
-            foreach (var layer in _layers.Layers)
-                _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
-
+            MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
+            MasterVolumeSlider.Value = _session.MasterVolumeDb;
             RestoreTracksFromLayers();
             if (!_masterSelected && _selectedLayer is not null)
             {
@@ -236,6 +210,7 @@ public partial class MainWindow : Window
                     SelectMasterStrip();
             }
             RefreshPreviewLive();
+            return true;
         }
         finally
         {
@@ -250,22 +225,14 @@ public partial class MainWindow : Window
 
     private void PerformUndo()
     {
-        var restored = _undoStack.Undo();
-        if (restored is not null)
-        {
-            RestoreProjectDto(restored);
+        if (ApplyRestore(_session.Undo))
             StatusText.Text = "Undo.";
-        }
     }
 
     private void PerformRedo()
     {
-        var restored = _undoStack.Redo();
-        if (restored is not null)
-        {
-            RestoreProjectDto(restored);
+        if (ApplyRestore(_session.Redo))
             StatusText.Text = "Redo.";
-        }
     }
 
     /// <summary>Commit-style handler shared by every FX/mix-parameter slider (Style="{StaticResource
@@ -319,7 +286,7 @@ public partial class MainWindow : Window
     private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_syncingMasterVolume) return;
-        _masterVolumeDb = (float)e.NewValue;
+        _session.MasterVolumeDb = (float)e.NewValue;
         ApplyMasterVolume();
         _syncingMasterVolume = true;
         MixerMasterFader.Value = e.NewValue;
@@ -329,7 +296,7 @@ public partial class MainWindow : Window
     private void MixerMasterFader_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_syncingMasterVolume) return;
-        _masterVolumeDb = (float)e.NewValue;
+        _session.MasterVolumeDb = (float)e.NewValue;
         ApplyMasterVolume();
         _syncingMasterVolume = true;
         MasterVolumeSlider.Value = e.NewValue;
@@ -337,9 +304,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Applies the stored master volume unless the Monitor toggle has muted the output --
-    /// muting never touches _masterVolumeDb itself so un-muting restores exactly what the sliders
+    /// muting never touches the session's MasterVolumeDb itself so un-muting restores exactly what the sliders
     /// still show.</summary>
-    private void ApplyMasterVolume() => _previewEngine.MasterVolumeDb = _monitorMuted ? -96f : _masterVolumeDb;
+    private void ApplyMasterVolume() => _previewEngine.MasterVolumeDb = _monitorMuted ? -96f : _session.MasterVolumeDb;
 
     private void MonitorToggle_Changed(object sender, RoutedEventArgs e)
     {
@@ -352,9 +319,9 @@ public partial class MainWindow : Window
     private void MetronomeBpmTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
         if (double.TryParse(MetronomeBpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm) && bpm > 0)
-            _metronomeBpm = bpm;
+            _session.MetronomeBpm = bpm;
         else
-            MetronomeBpmTextBox.Text = _metronomeBpm.ToString("F3");
+            MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
     }
 
     /// <summary>v8 redesign: 1Hz CPU/memory readout. CPU% derived from the process's own
@@ -517,9 +484,9 @@ public partial class MainWindow : Window
     /// (its Calibrate button is usable standalone, without completing a recording).</summary>
     private void OpenRecordSetupForRow(LayerRowViewModel row)
     {
-        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _metronomeBpm) { Owner = this };
+        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm) { Owner = this };
         bool? result = dialog.ShowDialog();
-        _metronomeBpm = dialog.Bpm;
+        _session.MetronomeBpm = dialog.Bpm;
 
         if (result == true && dialog.CreatedLayer is not null)
         {
@@ -820,13 +787,12 @@ public partial class MainWindow : Window
 
         try
         {
-            var dto = CurrentProjectDto();
             // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
             // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
             string filePath = dialog.FileName.EndsWith(".acapella.json", StringComparison.OrdinalIgnoreCase)
                 ? dialog.FileName
                 : dialog.FileName + ".acapella.json";
-            _projectPersistence.SaveToFile(dto, filePath);
+            _session.Save(filePath);
             StatusText.Text = $"Project saved: {Path.GetFileName(filePath)}";
         }
         catch (Exception ex)
@@ -842,23 +808,12 @@ public partial class MainWindow : Window
 
         try
         {
-            var dto = _projectPersistence.LoadFromFile(dialog.FileName);
-            var (loadedLayers, bpm, latencyOffset, masterVolumeDb) = _projectPersistence.FromDto(dto);
-
-            _layers.Restore(loadedLayers.Layers);
-            _lastCalibratedOffsetMs = latencyOffset;
-            _metronomeBpm = bpm;
-            _masterVolumeDb = masterVolumeDb;
-            MasterVolumeSlider.Value = masterVolumeDb;
-
-            // v7 Q0 task 3 (audit B7): see RestoreProjectDto's matching comment.
-            foreach (var layer in _layers.Layers)
-                _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
-
-            RestoreTracksFromLayers();
-            RefreshPreviewLive();
-            StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({loadedLayers.Layers.Count} layer(s)).";
-            _undoStack.Reset(CurrentProjectDto());
+            ApplyRestore(() =>
+            {
+                _session.Open(dialog.FileName);
+                return true;
+            });
+            StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({_layers.Layers.Count} layer(s)).";
         }
         catch (Exception ex)
         {
@@ -880,10 +835,7 @@ public partial class MainWindow : Window
         StatusText.Text = "Exporting...";
         ExportMenuItem.IsEnabled = false;
 
-        // M7: snapshot via a DTO round-trip so a mid-export layer/parameter edit can't race the
-        // background export task's read of live state.
-        var snapshotDto = CurrentProjectDto();
-        var (snapshotLayers, _, _, snapshotMasterVolumeDb) = _projectPersistence.FromDto(snapshotDto);
+        var (snapshotLayers, snapshotMasterVolumeDb) = _session.SnapshotForExport();
 
         Task.Run(() =>
         {
@@ -908,14 +860,11 @@ public partial class MainWindow : Window
 
     private void NewProjectMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        _layers.Restore(Enumerable.Empty<LayerModel>());
-        _tracks.Clear();
-        _lastCalibratedOffsetMs = null;
-        _masterVolumeDb = 0f;
-        MasterVolumeSlider.Value = 0;
-        UpdateAddLayerButtonState();
-        RefreshPreviewLive();
-        _undoStack.Reset(CurrentProjectDto());
+        ApplyRestore(() =>
+        {
+            _session.New();
+            return true;
+        });
         StatusText.Text = "New project.";
     }
 
