@@ -19,7 +19,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$msvcRoot = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC"
+$msvcRoot = @(
+    "D:\Tools\VisualStudio\BuildTools\VC\Tools\MSVC",
+    "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $msvcRoot) { throw "MSVC not found: install VS Build Tools (C++ workload) to D:\Tools\VisualStudio\BuildTools." }
 $msvcVersion = (Get-ChildItem $msvcRoot | Sort-Object Name -Descending | Select-Object -First 1).Name
 $msvc = Join-Path $msvcRoot $msvcVersion
 
