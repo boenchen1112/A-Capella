@@ -12,18 +12,21 @@ public sealed class HostedPluginInstanceCache : IDisposable
 {
     private readonly record struct Key(int LayerId, string Stage);
 
-    private readonly ConcurrentDictionary<Key, HostedPluginInstance> _instances = new();
+    private readonly ConcurrentDictionary<Key, IHostedPlugin> _instances = new();
+    private readonly IHostedPluginFactory _factory;
+
+    public HostedPluginInstanceCache(IHostedPluginFactory factory) => _factory = factory;
 
     /// <summary>Creates the instance on first call for this (layerId, stage) pair, applying
     /// initialState if given; subsequent calls for the same pair return the same live instance
     /// regardless of initialState (state is only ever applied once, at creation -- a caller that
     /// wants to push a state update to an already-live instance should call SetState on the
     /// returned instance directly).</summary>
-    public HostedPluginInstance GetOrCreate(int layerId, string stage, string pluginPath, double sampleRate, int maxBlockSize, byte[]? initialState)
+    public IHostedPlugin GetOrCreate(int layerId, string stage, string pluginLabel, double sampleRate, int maxBlockSize, byte[]? initialState)
     {
         return _instances.GetOrAdd(new Key(layerId, stage), _ =>
         {
-            var instance = HostedPluginInstance.Create(pluginPath, sampleRate, maxBlockSize);
+            var instance = _factory.Create(pluginLabel, sampleRate, maxBlockSize);
             if (initialState is { Length: > 0 })
                 instance.SetState(initialState);
             return instance;
@@ -33,7 +36,7 @@ public sealed class HostedPluginInstanceCache : IDisposable
     /// <summary>Non-creating lookup (v7 Q0 task 3, audit B7): true if a live instance already
     /// exists for (layerId, stage) -- used to push a loaded/restored state into an already-live
     /// instance without accidentally instantiating a plugin the user never opened.</summary>
-    public bool TryGet(int layerId, string stage, out HostedPluginInstance? instance) =>
+    public bool TryGet(int layerId, string stage, out IHostedPlugin? instance) =>
         _instances.TryGetValue(new Key(layerId, stage), out instance);
 
     /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>

@@ -4,7 +4,7 @@ using NAudio.Wave;
 namespace Acapella.Engine.Mix;
 
 /// <summary>
-/// Wraps a HostedPluginInstance's ProcessBlock as an ISampleProvider so a hosted FabFilter stage
+/// Wraps a hosted plugin's ProcessBlock as an ISampleProvider so a hosted FabFilter stage
 /// slots into the pull-based mix chain like any native stage (v6 P3 task 4). Does not own the
 /// wrapped instance -- HostedPluginInstanceCache does -- and never disposes it.
 ///
@@ -27,7 +27,7 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
     public const int DefaultBlockSize = 4096;
 
     private readonly ISampleProvider _source;
-    private readonly HostedPluginInstance _instance;
+    private readonly IHostedPlugin _instance;
     private readonly int _channels;
     private readonly int _blockSize;
 
@@ -40,7 +40,7 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
     private bool _sourceExhausted;
     private int _silenceFramesRemaining;
 
-    public HostedPluginSampleProvider(ISampleProvider source, HostedPluginInstance instance, int blockSize = DefaultBlockSize, int extraTailFrames = 0)
+    public HostedPluginSampleProvider(ISampleProvider source, IHostedPlugin instance, int blockSize = DefaultBlockSize, int extraTailFrames = 0)
     {
         _channels = source.WaveFormat.Channels;
         if (_channels != 1 && _channels != 2)
@@ -57,7 +57,7 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
         _outR = new float[blockSize];
         _pending = new float[blockSize * _channels];
 
-        LatencySamples = Math.Max(0, instance.LatencySamples);
+        LatencySamples = instance.LatencySamples;
         _silenceFramesRemaining = LatencySamples + Math.Max(0, extraTailFrames);
     }
 

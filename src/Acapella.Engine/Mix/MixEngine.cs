@@ -54,12 +54,6 @@ public class MixEngine : IDisposable
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
     private const float MasterCeilingDb = -0.3f;
 
-    /// <summary>getTailLengthSeconds() can report `inf` for some FabFilter plugins (confirmed for
-    /// Pro-R 2 and Pro-Q 4 in P3a probe 2) -- clamp before using it in any duration/loop-bound math.
-    /// FabFilter Pro-R 2's own decay-time control tops out well under this, so the clamp only ever
-    /// bites on a bogus/inf report, not a real long reverb setting.</summary>
-    private const double MaxReverbTailSeconds = 12.0;
-
     private readonly HostedPluginService _hostedService;
 
     // Q1 task 3: latest per-layer / master meter taps from the most recent BuildMix* call. Rebuilt
@@ -104,7 +98,7 @@ public class MixEngine : IDisposable
         _masterTap is { } tap ? (tap.PeakDb, tap.RmsDb) : (float.NegativeInfinity, float.NegativeInfinity);
 
     /// <summary>Q2 task 3: how much a layer's own reverb tail extends past its source material,
-    /// in seconds, clamped the same way BuildLayerChain clamps it (audit's inf-tail guard). 0 if
+    /// in seconds (the plugin adapter clamps bogus/inf reports). 0 if
     /// reverb isn't enabled or Pro-R 2 isn't hosted. Callers use this to extend a layer's computed
     /// duration by exactly the tail this layer's own chain will actually produce -- BuildLayerChain
     /// itself only ever *plays* the tail (HostedPluginSampleProvider keeps returning frames for
@@ -119,7 +113,7 @@ public class MixEngine : IDisposable
             return 0.0;
 
         var instance = GetOrCreateHostedInstance(layerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, sampleRate);
-        return Math.Clamp(instance.TailSeconds, 0.0, MaxReverbTailSeconds);
+        return instance.TailSeconds;
     }
 
     /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
@@ -127,7 +121,7 @@ public class MixEngine : IDisposable
     /// -- both go through the one shared HostedPluginService, so this is never an orphaned second
     /// instance (audit A1). Safe to call from any thread: the service marshals the actual creation
     /// onto the dispatcher thread.</summary>
-    public HostedPluginInstance GetOrCreateHostedInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
+    public IHostedPlugin GetOrCreateHostedInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
         _hostedService.GetOrCreateInstance(layerId, stage, pluginLabel, initialState, sampleRate);
 
     /// <summary>Pulls each stage's live VST3 state into parameters' matching *HostedState field, for
@@ -269,7 +263,7 @@ public class MixEngine : IDisposable
             var reverbInstance = GetOrCreateHostedInstance(layer.LayerId, ReverbStage, ReverbPluginLabel, parameters.ReverbHostedState, outputSampleRate);
             _hostedService.Reset(reverbInstance); // v7 Q0 task 5 (audit A5): clear last play's tail before reuse
 
-            double tailSeconds = Math.Clamp(reverbInstance.TailSeconds, 0.0, MaxReverbTailSeconds);
+            double tailSeconds = reverbInstance.TailSeconds;
             int tailFrames = (int)(tailSeconds * outputSampleRate);
 
             var hostedReverb = new HostedPluginSampleProvider(afterPan, reverbInstance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames);

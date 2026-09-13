@@ -14,8 +14,13 @@ public sealed record AraCapabilityDescription(string Name, string Version, bool 
 /// always normalizes to plain stereo in/out, so ProcessBlock here always deals in stereo float
 /// arrays regardless of the wrapped plugin's real bus layout.
 /// </summary>
-public sealed class HostedPluginInstance : IDisposable
+public sealed class HostedPluginInstance : IHostedPlugin
 {
+    /// <summary>getTailLengthSeconds() reports `inf` for some FabFilter plugins (confirmed for
+    /// Pro-R 2 and Pro-Q 4 in P3a probe 2), so TailSeconds clamps to this. Pro-R 2's own decay-time
+    /// control tops out well under it, so the clamp only bites on a bogus report.</summary>
+    public const double MaxTailSeconds = 12.0;
+
     // Defensive cap per the v6 plan (P3a task 8): a state chunk this large indicates something has
     // gone wrong (corrupt plugin state, bridge bug) rather than a legitimate FabFilter/Melodyne
     // preset, which are all a few KB.
@@ -68,9 +73,9 @@ public sealed class HostedPluginInstance : IDisposable
         return new HostedPluginInstance(handle);
     }
 
-    public int LatencySamples => NativeHostBridge.aca_get_latency_samples(_handle);
+    public int LatencySamples => Math.Max(0, NativeHostBridge.aca_get_latency_samples(_handle));
 
-    public double TailSeconds => NativeHostBridge.aca_get_tail_seconds(_handle);
+    public double TailSeconds => Math.Clamp(NativeHostBridge.aca_get_tail_seconds(_handle), 0.0, MaxTailSeconds);
 
     public int ParameterCount => NativeHostBridge.aca_get_parameter_count(_handle);
 
