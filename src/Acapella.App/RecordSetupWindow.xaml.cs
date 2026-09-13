@@ -9,6 +9,7 @@ using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 using Acapella.Engine.Settings;
 using Acapella.Engine.Sync;
+using Acapella.Engine.Timeline;
 using NAudio.Wave;
 
 namespace Acapella.App;
@@ -150,11 +151,8 @@ public partial class RecordSetupWindow : Window
                 : 0;
 
             const int sampleRate = 44100;
-            var mixInputs = _layers.Layers
-                .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(
-                    TrimHelper.ApplyTrim(AudioDecoder.DecodeToMonoFloat(l.SourcePath, sampleRate), l.TrimStartMs, l.TrimEndMs, sampleRate),
-                    l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters))
-                .ToList();
+            var timeline = new LayerTimeline(_mixEngine);
+            var mixInputs = _layers.Layers.Select(l => timeline.AudioInput(l, sampleRate)).ToList();
             var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
 
             // A second, independent provider graph built from the same mixInputs (BuildMix's

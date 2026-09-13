@@ -167,12 +167,11 @@ public class PreviewPlaybackEngineTests
     }
 
     /// <summary>Regression test for audit A3: a layer with a negative sync shift (the normal case
-    /// for a recorded layer, GetShiftMs() = ManualOffsetMs - CalibratedOffsetMs) must show the
-    /// same skipped-ahead video content in the preview's frame-0 render as export's frame-0
-    /// render. Before the fix, preview's CreateFrameSource dropped the head-skip term, so preview
-    /// showed the source's un-skipped ("early") content while export correctly skipped ahead.</summary>
+    /// for a recorded layer, GetShiftMs() = ManualOffsetMs - CalibratedOffsetMs) must show
+    /// skipped-ahead video content at position 0. Preview and export both get their frame source
+    /// from LayerTimeline, so one assertion covers both.</summary>
     [Fact]
-    public void PreviewFrameAtPositionZero_MatchesExportFrameZero_ForNegativeShiftLayer()
+    public void LayerTimelineFrameAtPositionZero_SkipsAhead_ForNegativeShiftLayer()
     {
         var (path, tempDir) = CreateColorChangeFixtureClip(switchAtSeconds: 0.2, durationSeconds: 2);
         try
@@ -185,26 +184,12 @@ public class PreviewPlaybackEngineTests
                 CalibratedOffsetMs = 200, // GetShiftMs() = 0 - 200 = -200: skip ahead 200ms.
             };
 
-            // Preview path: mirror PreviewPlaybackEngine.CreateFrameSource's math at positionMs=0.
-            double shiftMs = layer.GetShiftMs();
-            double headSkipMs = Math.Max(0, -shiftMs);
-            double effectiveTrimStart = layer.TrimStartMs + headSkipMs + Math.Max(0, 0 - Math.Max(0, shiftMs));
-            double residualHoldMs = Math.Max(0, shiftMs - 0);
-            using var previewFrameSource = new VideoFrameStreamSource(path, 64, 64, fps: 10, residualHoldMs, trimStartMs: effectiveTrimStart, trimEndMs: layer.TrimEndMs);
-            var previewFrame = previewFrameSource.GetNextFrame();
+            using var mixEngine = new Acapella.Engine.Mix.MixEngine(NoHostedPluginsAvailable.Instance);
+            var timeline = new Acapella.Engine.Timeline.LayerTimeline(mixEngine);
+            using var frameSource = timeline.FrameSource(layer, 64, 64, fps: 10, positionMs: 0);
+            var pixel = frameSource.GetNextFrame().GetPixel(32, 32);
 
-            // Export path: ExportEngine.CreateFrameSource passes GetShiftMs() straight through.
-            using var exportFrameSource = new VideoFrameStreamSource(path, 64, 64, fps: 10, shiftMs, trimStartMs: layer.TrimStartMs, trimEndMs: layer.TrimEndMs);
-            var exportFrame = exportFrameSource.GetNextFrame();
-
-            var previewPixel = previewFrame.GetPixel(32, 32);
-            var exportPixel = exportFrame.GetPixel(32, 32);
-
-            // Both should show "late" (blue) content -- the skipped-ahead 200ms+ portion.
-            Assert.True(exportPixel.Blue > 150, $"Expected export frame 0 to show late (blue) content, got {exportPixel}.");
-            Assert.True(previewPixel.Blue > 150, $"Expected preview frame at position 0 to show late (blue) content, got {previewPixel}.");
-            Assert.Equal(exportPixel.Red, previewPixel.Red);
-            Assert.Equal(exportPixel.Blue, previewPixel.Blue);
+            Assert.True(pixel.Blue > 150, $"Expected frame at position 0 to show late (blue) content, got {pixel}.");
         }
         finally
         {

@@ -3,6 +3,7 @@ using Acapella.Engine.Export;
 using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
+using Acapella.Engine.Timeline;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -81,8 +82,7 @@ public class WasapiPreviewAudioSink : IPreviewAudioSink
 public class PreviewPlaybackEngine : IDisposable
 {
     private readonly MixEngine _mixEngine;
-    private readonly string _ffmpegPath;
-    private readonly string _ffprobePath;
+    private readonly LayerTimeline _timeline;
     private readonly int _sampleRate;
     private readonly int _fps;
     private readonly int _canvasWidth;
@@ -148,10 +148,9 @@ public class PreviewPlaybackEngine : IDisposable
         _canvasHeight = canvasHeight;
         _fps = fps;
         _sampleRate = sampleRate;
-        _ffmpegPath = ffmpegPath;
-        _ffprobePath = ffprobePath;
         _audioSink = audioSink ?? new WasapiPreviewAudioSink();
         _mixEngine = hostedService is not null ? new MixEngine(hostedService) : new MixEngine(hostedPluginAvailability);
+        _timeline = new LayerTimeline(_mixEngine, ffmpegPath, ffprobePath);
 
         _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
         _commandThread.Start();
@@ -194,41 +193,9 @@ public class PreviewPlaybackEngine : IDisposable
 
     private void SetLayersCore(IReadOnlyList<LayerModel> layers)
     {
-        // Sorted by CellIndex (audit B8), not insertion/list order: a layer attached to sidebar
-        // row 3 before row 2 must still land in grid cell 3, not wherever it happened to land in
-        // LayerCollection's internal list. Frame sources / cellRects are zipped by this same order.
-        _layers = layers.OrderBy(l => l.CellIndex).ToList();
-        DurationMs = ComputeDurationMs();
+        _layers = LayerTimeline.InCellOrder(layers);
+        DurationMs = _timeline.DurationMs(_layers, _sampleRate);
         PositionMs = Math.Min(PositionMs, DurationMs);
-    }
-
-    private double ComputeDurationMs()
-    {
-        if (_layers.Count == 0) return 0;
-
-        double maxMs = 0;
-        foreach (var layer in _layers)
-            maxMs = Math.Max(maxMs, LayerDurationMs(layer));
-        return maxMs;
-    }
-
-    /// <summary>Layer duration from ffprobe's container duration (audit A5) -- correct for
-    /// video-only and audio-only layers alike, and avoids a full ffmpeg audio decode just to
-    /// measure length (audit B2). Trim/shift are applied to the probed duration the same way
-    /// TrimHelper/AudioShiftHelper apply them to decoded sample arrays. Extended by the layer's own
-    /// reverb tail (Q2 task 3), if any, so a Pro-R 2 decay isn't cut off mid-tail -- BuildLayerChain
-    /// happily keeps producing tail audio past this point, but nothing reads that far without this.</summary>
-    internal double LayerDurationMs(LayerModel layer)
-    {
-        double rawMs = Ffmpeg.MediaProbe.GetDurationSeconds(layer.SourcePath, _ffprobePath) * 1000.0;
-        double trimEndMs = Math.Min(layer.TrimEndMs ?? rawMs, rawMs);
-        double trimmedMs = Math.Max(0, trimEndMs - layer.TrimStartMs);
-
-        double shiftMs = layer.GetShiftMs();
-        double totalMs = shiftMs >= 0 ? trimmedMs + shiftMs : Math.Max(0, trimmedMs + shiftMs);
-
-        double tailMs = _mixEngine.GetReverbTailSeconds(layer.LayerId, layer.MixParameters, _sampleRate) * 1000.0;
-        return totalMs + tailMs;
     }
 
     public void Play() => Enqueue(PlayCore);
@@ -325,44 +292,16 @@ public class PreviewPlaybackEngine : IDisposable
 
     private void StartFrameSources(double positionMs)
     {
-        _frameSources = _layers.Select(layer => CreateFrameSource(layer, positionMs)).ToList();
+        _frameSources = CreateFrameSources(positionMs);
     }
 
-    private ILayerFrameSource CreateFrameSource(LayerModel layer, double positionMs)
-    {
-        int cellWidth = _canvasWidth / 2;
-        int cellHeight = _canvasHeight / 2;
-
-        if (layer.Kind == LayerKind.UploadedAudioOnly)
-            return new StaticFrameSource(PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight));
-
-        // Generalizes VideoFrameStreamSource's shift/trim formulas (see its own doc comment) to
-        // an arbitrary playback start position P. For a negative shift, ExportEngine passes
-        // shiftMs straight through so VideoFrameStreamSource's own -ss math applies the
-        // |shiftMs| head-skip; the preview path instead folds the skip directly into media time
-        // here (since it also needs the position-dependent hold term), so that same |shiftMs|
-        // head-skip must be included explicitly -- omitting it left every recorded layer's
-        // preview video lagging its own audio by the calibration offset (audit A3). For a
-        // positive shift, the layer still owes max(0, shiftMs - P) of hold before real content
-        // begins; passing that residual as the "shiftMs" argument (always >= 0 here) reuses
-        // VideoFrameStreamSource's own hold-only branch without re-applying the skip a second
-        // time.
-        double shiftMs = layer.GetShiftMs();
-        double headSkipMs = Math.Max(0, -shiftMs);
-        double effectiveTrimStart = layer.TrimStartMs + headSkipMs + Math.Max(0, positionMs - Math.Max(0, shiftMs));
-        double residualHoldMs = Math.Max(0, shiftMs - positionMs);
-
-        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, _fps, residualHoldMs, _ffmpegPath, effectiveTrimStart, layer.TrimEndMs);
-    }
+    private List<ILayerFrameSource> CreateFrameSources(double positionMs) =>
+        _layers.Select(layer => _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
 
     private PositionTrackingSampleProvider StartAudio(double positionMs)
     {
         const int sampleRate = 44100;
-        var mixInputs = _layers
-            .Select(l => new MixLayerInput(l.LayerId, AudioShiftHelper.ApplyShift(
-                TrimHelper.ApplyTrim(AudioDecodeCache.GetOrDecode(l.SourcePath, sampleRate, _ffmpegPath), l.TrimStartMs, l.TrimEndMs, sampleRate),
-                l.GetShiftMs(), sampleRate), sampleRate, l.MixParameters, l.SourceCacheKey()))
-            .ToList();
+        var mixInputs = _layers.Select(l => _timeline.AudioInput(l, sampleRate)).ToList();
 
         var (mix, masterVolumeStage) = _mixEngine.BuildMixWithMasterVolumeHandle(mixInputs, sampleRate, MasterVolumeDb);
         _liveMasterVolumeStage = masterVolumeStage;
@@ -423,7 +362,7 @@ public class PreviewPlaybackEngine : IDisposable
         }
         else if (_layers.Count > 0)
         {
-            var sources = _layers.Select(layer => CreateFrameSource(layer, positionMs)).ToList();
+            var sources = CreateFrameSources(positionMs);
             RenderCurrentFrame(sources);
             foreach (var s in sources) s.Dispose();
         }
