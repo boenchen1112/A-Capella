@@ -225,4 +225,183 @@ public class ProjectSessionTests : IDisposable
         Assert.Equal(-1f, layers.Layers.Single().MixParameters.GainDb);
         Assert.Equal(-5f, masterVolumeDb);
     }
+
+    // ----- Save affordances (Ctrl+S / Save vs Save As / dirty marker / discard prompts) -----
+
+    [Fact]
+    public void NewSession_IsCleanAndUntitled()
+    {
+        var session = new ProjectSession(_mixEngine);
+
+        Assert.False(session.IsDirty);
+        Assert.Null(session.CurrentFilePath);
+        Assert.Equal("Untitled", session.DisplayName);
+    }
+
+    [Fact]
+    public void CommitEdit_MarksDirty_SaveClearsItAndRemembersThePath()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        session.CommitEdit();
+
+        Assert.True(session.IsDirty);
+
+        string path = Path.Combine(Path.GetTempPath(), $"My Song {Guid.NewGuid()}.acapella.json");
+        _tempFiles.Add(path);
+        session.Save(path);
+
+        Assert.False(session.IsDirty);
+        Assert.Equal(path, session.CurrentFilePath);
+        Assert.Equal(Path.GetFileName(path)[..^ProjectSession.ProjectFileSuffix.Length], session.DisplayName);
+
+        session.CommitEdit();
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(path, session.CurrentFilePath);
+    }
+
+    [Fact]
+    public void Open_RemembersThePath_AndEndsClean()
+    {
+        var saved = new ProjectSession(_mixEngine);
+        saved.Layers.Add(LayerKind.UploadedVideo, "clip.mp4");
+        saved.MetronomeBpm = 96;
+        saved.MasterVolumeDb = -2f;
+        string path = TempProjectPath();
+        saved.Save(path);
+
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "other.wav");
+        session.CommitEdit();
+
+        Assert.True(session.IsDirty);
+
+        session.Open(path);
+
+        Assert.False(session.IsDirty);
+        Assert.Equal(path, session.CurrentFilePath);
+    }
+
+    [Fact]
+    public void New_ForgetsThePath_AndEndsClean()
+    {
+        var session = new ProjectSession(_mixEngine);
+        string path = TempProjectPath();
+        session.Save(path);
+        session.MasterVolumeDb = -4f;
+
+        Assert.True(session.IsDirty);
+
+        session.New();
+
+        Assert.Null(session.CurrentFilePath);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void UndoAndRedo_MarkDirty_ButANoOpUndoDoesNot()
+    {
+        var session = new ProjectSession(_mixEngine);
+
+        Assert.False(session.Undo());
+        Assert.False(session.IsDirty);
+
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        session.CommitEdit();
+        string path = TempProjectPath();
+        session.Save(path);
+
+        Assert.False(session.IsDirty);
+
+        Assert.True(session.Undo());
+        Assert.True(session.IsDirty);
+
+        session.Save(path);
+        Assert.False(session.IsDirty);
+
+        Assert.True(session.Redo());
+        Assert.True(session.IsDirty);
+    }
+
+    [Fact]
+    public void BpmAndMasterVolume_MarkDirtyOnlyOnARealChange()
+    {
+        var session = new ProjectSession(_mixEngine);
+
+        session.MetronomeBpm = session.MetronomeBpm;
+        session.MasterVolumeDb = session.MasterVolumeDb;
+        Assert.False(session.IsDirty);
+
+        session.MetronomeBpm = 100;
+        Assert.True(session.IsDirty);
+
+        string path = TempProjectPath();
+        session.Save(path);
+        Assert.False(session.IsDirty);
+
+        session.MasterVolumeDb = -1f;
+        Assert.True(session.IsDirty);
+    }
+
+    [Fact]
+    public void FailedSave_LeavesPathAndDirtyUntouched()
+    {
+        string blocker = Path.Combine(Path.GetTempPath(), $"acapella-blocker-{Guid.NewGuid()}");
+        File.WriteAllText(blocker, "not a directory");
+        _tempFiles.Add(blocker);
+        string badPath = Path.Combine(blocker, "x.acapella.json");
+
+        var session = new ProjectSession(_mixEngine);
+        string goodPath = TempProjectPath();
+        session.Save(goodPath);
+        session.MasterVolumeDb = -1f;
+
+        Assert.True(session.IsDirty);
+
+        Assert.ThrowsAny<IOException>(() => session.Save(badPath));
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(goodPath, session.CurrentFilePath);
+    }
+
+    [Fact]
+    public void FailedOpen_LeavesPathAndDirtyUntouched()
+    {
+        var session = new ProjectSession(_mixEngine);
+        string goodPath = TempProjectPath();
+        session.Save(goodPath);
+        session.MasterVolumeDb = -1f;
+
+        Assert.True(session.IsDirty);
+
+        string missingPath = Path.Combine(Path.GetTempPath(), $"acapella-missing-{Guid.NewGuid()}.acapella.json");
+        Assert.Throws<FileNotFoundException>(() => session.Open(missingPath));
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(goodPath, session.CurrentFilePath);
+    }
+
+    [Fact]
+    public void SaveStateChanged_FiresOnlyOnTransitions()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+
+        int fireCount = 0;
+        session.SaveStateChanged += () => fireCount++;
+
+        session.CommitEdit();
+        Assert.Equal(1, fireCount);
+
+        session.CommitEdit();
+        Assert.Equal(1, fireCount);
+
+        string path = TempProjectPath();
+        session.Save(path);
+        Assert.Equal(2, fireCount);
+
+        session.Save(path);
+        Assert.Equal(2, fireCount);
+    }
 }
