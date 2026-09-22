@@ -103,6 +103,72 @@ public class ProjectSessionTests : IDisposable
     }
 
     [Fact]
+    public void Undo_StillReusesTheSameLiveInstance()
+    {
+        // Guards against over-fixing bug audit #5 by releasing hosted instances on undo: within one
+        // project the instance identity is correct (PushSavedStateIntoLiveInstances handles it), so
+        // undo must keep reusing the same live instance, not release it -- that would close the
+        // user's open plugin editor windows on every undo.
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        var plugin = OpenEqEditorLiveInstance(layer);
+
+        plugin.TweakInEditor(new byte[] { 1 });
+        session.CommitEdit();
+        plugin.TweakInEditor(new byte[] { 2 });
+        session.CommitEdit();
+
+        session.Undo();
+
+        Assert.False(plugin.Disposed);
+        Assert.Same(plugin, OpenEqEditorLiveInstance(layer));
+    }
+
+    [Fact]
+    public void Open_DoesNotLeakThePreviousProjectsPluginStateIntoTheOpenedProject()
+    {
+        // project B: saved with NO hosted EQ state
+        var saved = new ProjectSession(_mixEngine);
+        saved.Layers.Add(LayerKind.UploadedVideo, "clip.mp4");
+        string path = TempProjectPath();
+        saved.Save(path);
+
+        // project A: live in the session, layer 0, EQ tweaked in its editor
+        var session = new ProjectSession(_mixEngine);
+        var layerA = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        OpenEqEditorLiveInstance(layerA).TweakInEditor(new byte[] { 9, 9, 9 });
+        session.CommitEdit();
+
+        session.Open(path);
+
+        Assert.Null(session.Layers.Layers.Single().MixParameters.EqHostedState);
+
+        // The saved file itself must be clean too, not just the in-memory session.
+        string path2 = TempProjectPath();
+        session.Save(path2);
+        var reloaded = new ProjectSession(_mixEngine);
+        reloaded.Open(path2);
+        Assert.Null(reloaded.Layers.Layers.Single().MixParameters.EqHostedState);
+    }
+
+    [Fact]
+    public void New_ThenAddLayer_GetsAFreshPluginInstance()
+    {
+        var session = new ProjectSession(_mixEngine);
+        var layerA = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        var pluginA = OpenEqEditorLiveInstance(layerA);
+        pluginA.TweakInEditor(new byte[] { 7 });
+
+        session.New();
+        var layerB = session.Layers.Add(LayerKind.UploadedAudioOnly, "b.wav");
+        var pluginB = OpenEqEditorLiveInstance(layerB);
+
+        Assert.NotSame(pluginA, pluginB);
+        Assert.True(pluginA.Disposed);
+        Assert.Empty(pluginB.State);
+    }
+
+    [Fact]
     public void SaveThenOpen_RestoresTheProject_AndStartsFreshUndoHistory()
     {
         var saved = new ProjectSession(_mixEngine);
