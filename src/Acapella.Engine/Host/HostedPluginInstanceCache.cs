@@ -46,10 +46,16 @@ public sealed class HostedPluginInstanceCache : IDisposable
             instance.Dispose();
     }
 
-    public void Dispose()
+    /// <summary>Disposes and forgets every cached instance, leaving the cache itself usable for the
+    /// next project (bug audit #5: layer ids are positional and restart at 0 per project, so this
+    /// must run whenever the whole layer set is replaced -- File > New, File > Open -- or the new
+    /// project's layer 0 inherits the previous project's live plugin instances).</summary>
+    public void ReleaseAll()
     {
         foreach (var instance in _instances.Values)
             instance.Dispose();
         _instances.Clear();
     }
+
+    public void Dispose() => ReleaseAll();
 }

@@ -214,6 +214,19 @@ public sealed class HostedPluginService : IDisposable
     public int GetAraEditGeneration(int layerId) =>
         _araLayerSessions.TryGetValue(layerId, out var entry) ? entry.EditGeneration : 0;
 
+    /// <summary>Releases every cached hosted instance and every per-layer ARA session, leaving the
+    /// service usable for the next project. Called when the whole layer set is replaced (File > New,
+    /// File > Open): layer ids are positional and restart at 0 per project, so without this the next
+    /// project's layer 0 would inherit the previous project's live plugin instances and their state
+    /// (bug audit #5).</summary>
+    public void ReleaseAll() => _dispatcher.Invoke(() =>
+    {
+        _cache.ReleaseAll();
+        foreach (var entry in _araLayerSessions.Values)
+            entry.Session.Dispose();
+        _araLayerSessions.Clear();
+    });
+
     public void Dispose() => _dispatcher.Invoke(() =>
     {
         _cache.Dispose();
