@@ -121,6 +121,19 @@ public class MixEngine : IDisposable
         }
     }
 
+    /// <summary>Releases every live hosted instance and ARA session -- for a whole-project
+    /// replacement (see ProjectSession.New/Open). Layer ids are positional and restart at 0 per
+    /// project, so without this the next project's layer 0 would silently inherit the previous
+    /// project's live plugin instances and their state (bug audit #5). Also clears the per-layer
+    /// Melodyne backend cache and meter taps, which are keyed the same way and would otherwise
+    /// point at a destroyed session / a torn-down chain.</summary>
+    public void ReleaseAllHostedInstances()
+    {
+        _melodyneBackends.Clear();
+        _layerTaps.Clear();
+        _hostedService.ReleaseAll();
+    }
+
     public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
         BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
 
