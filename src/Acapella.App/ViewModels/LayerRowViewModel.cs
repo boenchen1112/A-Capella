@@ -76,6 +76,12 @@ public class LayerRowViewModel : INotifyPropertyChanged
         set
         {
             _layer = value;
+            // Bug audit #5: a row's poll tracking is per-row but rows outlive a project swap --
+            // only Layer is reassigned. Without this, a fresh instance for the new project's
+            // (LayerId, Stage) still gets diffed against the previous project's polled bytes on
+            // the first poll, firing a spurious PushUndoSnapshot() for an edit nobody made.
+            _openedHostedSlots.Clear();
+            _lastPolledHostedState.Clear();
             OnPropertyChanged(nameof(Layer));
             OnPropertyChanged(nameof(HasSource));
             OnPropertyChanged(nameof(IconGlyph));
