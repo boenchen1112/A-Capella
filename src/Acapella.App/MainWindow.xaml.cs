@@ -166,6 +166,14 @@ public partial class MainWindow : Window
 
         Closing += (s, e) =>
         {
+            // Save-affordances spec: prompt FIRST, before anything is stopped or disposed -- a cancelled
+            // close (Cancel, or Yes followed by a cancelled/failed save) must leave the app fully running.
+            if (!ConfirmDiscardUnsavedChanges())
+            {
+                e.Cancel = true;
+                return;
+            }
+
             _hostedStatePollTimer.Stop();
             _meterPollTimer.Stop();
             _perfPollTimer.Stop();
@@ -862,6 +870,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!ConfirmDiscardUnsavedChanges()) return;
+
         var dialog = new OpenFileDialog { Filter = "Acapella project|*.acapella.json;*.json" };
         if (dialog.ShowDialog() != true) return;
 
@@ -931,6 +941,8 @@ public partial class MainWindow : Window
             StatusText.Text = "Finish the export first.";
             return;
         }
+
+        if (!ConfirmDiscardUnsavedChanges()) return;
 
         // Bug audit #5: same use-after-free hazard as OpenProjectButton_Click -- ProjectSession.New()
         // now releases every live hosted-plugin instance, so preview playback must be stopped first.
