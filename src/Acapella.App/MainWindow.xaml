@@ -23,10 +23,14 @@
     <Window.InputBindings>
         <KeyBinding Key="Z" Modifiers="Control" Command="{x:Static local:MainWindow.UndoCommand}"/>
         <KeyBinding Key="Y" Modifiers="Control" Command="{x:Static local:MainWindow.RedoCommand}"/>
+        <KeyBinding Key="S" Modifiers="Control" Command="{x:Static local:MainWindow.SaveCommand}"/>
+        <KeyBinding Key="S" Modifiers="Control+Shift" Command="{x:Static local:MainWindow.SaveAsCommand}"/>
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static local:MainWindow.UndoCommand}" Executed="UndoCommandBinding_Executed"/>
         <CommandBinding Command="{x:Static local:MainWindow.RedoCommand}" Executed="RedoCommandBinding_Executed"/>
+        <CommandBinding Command="{x:Static local:MainWindow.SaveCommand}" Executed="SaveCommandBinding_Executed"/>
+        <CommandBinding Command="{x:Static local:MainWindow.SaveAsCommand}" Executed="SaveAsCommandBinding_Executed"/>
     </Window.CommandBindings>
     <Window.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
@@ -141,6 +145,9 @@
                     <Button x:Name="RedoButton" Content="↪" Click="RedoMenuItem_Click" Style="{StaticResource IconButton}" MouseEnter="Hint_MouseEnter" Tag="Redo (Ctrl+Y)."/>
                 </StackPanel>
 
+                <TextBlock x:Name="ProjectTitleText" DockPanel.Dock="Right" Style="{StaticResource ToolbarText}"
+                           Foreground="{StaticResource TextBrush}" MaxWidth="220" TextTrimming="CharacterEllipsis"/>
+
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                     <StackPanel Orientation="Horizontal">
                         <Menu Background="Transparent" BorderThickness="0" FontSize="13" VerticalAlignment="Center"
@@ -148,7 +155,8 @@
                             <MenuItem Header="_File">
                                 <MenuItem Header="_New" Click="NewProjectMenuItem_Click"/>
                                 <MenuItem Header="_Open..." Click="OpenProjectButton_Click"/>
-                                <MenuItem Header="_Save..." Click="SaveProjectButton_Click"/>
+                                <MenuItem Header="_Save" Click="SaveMenuItem_Click" InputGestureText="Ctrl+S"/>
+                                <MenuItem Header="Save _As..." Click="SaveProjectButton_Click" InputGestureText="Ctrl+Shift+S"/>
                                 <Separator/>
                                 <MenuItem x:Name="ExportMenuItem" Header="_Export MP4..." Click="ExportButton_Click"/>
                             </MenuItem>
