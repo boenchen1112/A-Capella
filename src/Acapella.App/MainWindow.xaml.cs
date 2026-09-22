@@ -797,13 +797,26 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OpenProjectButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenProjectButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!ExportMenuItem.IsEnabled)
+        {
+            StatusText.Text = "Finish the export first.";
+            return;
+        }
+
         var dialog = new OpenFileDialog { Filter = "Acapella project|*.acapella.json;*.json" };
         if (dialog.ShowDialog() != true) return;
 
         try
         {
+            // Bug audit #5: ProjectSession.Open() now releases every live hosted-plugin instance
+            // before restoring. If preview playback is still running, HostedPluginSampleProvider
+            // objects wired into its chain hold raw IHostedPlugin references that the WASAPI
+            // render thread calls ProcessBlock on -- releasing out from under that is a
+            // use-after-free on native memory. Stop playback first, same shape as StopButton_Click.
+            await AwaitPreviewCommand(_previewEngine.StopAsync());
+
             ApplyRestore(() =>
             {
                 _session.Open(dialog.FileName);
@@ -854,8 +867,18 @@ public partial class MainWindow : Window
 
     // ----- Menu bar: File > New, Help > About (v5 P1 task 1) -----
 
-    private void NewProjectMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void NewProjectMenuItem_Click(object sender, RoutedEventArgs e)
     {
+        if (!ExportMenuItem.IsEnabled)
+        {
+            StatusText.Text = "Finish the export first.";
+            return;
+        }
+
+        // Bug audit #5: same use-after-free hazard as OpenProjectButton_Click -- ProjectSession.New()
+        // now releases every live hosted-plugin instance, so preview playback must be stopped first.
+        await AwaitPreviewCommand(_previewEngine.StopAsync());
+
         ApplyRestore(() =>
         {
             _session.New();
