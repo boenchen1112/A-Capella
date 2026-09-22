@@ -26,6 +26,8 @@ public partial class MainWindow : Window
 {
     public static readonly RoutedCommand UndoCommand = new();
     public static readonly RoutedCommand RedoCommand = new();
+    public static readonly RoutedCommand SaveCommand = new();
+    public static readonly RoutedCommand SaveAsCommand = new();
 
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
@@ -100,6 +102,9 @@ public partial class MainWindow : Window
         UpdateAddLayerButtonState();
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
         SelectMasterStrip();
+
+        _session.SaveStateChanged += UpdateWindowTitle;
+        UpdateWindowTitle();
 
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _previewDebounceTimer.Tick += (s, e) => { _previewDebounceTimer.Stop(); RefreshPreviewLive(); };
@@ -776,25 +781,77 @@ public partial class MainWindow : Window
 
     // ----- Project save/load/export -----
 
-    private void SaveProjectButton_Click(object sender, RoutedEventArgs e)
+    private void SaveMenuItem_Click(object sender, RoutedEventArgs e) => SaveProject(forceDialog: false);
+    /// <summary>File > Save As...</summary>
+    private void SaveProjectButton_Click(object sender, RoutedEventArgs e) => SaveProject(forceDialog: true);
+    private void SaveCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => SaveProject(forceDialog: false);
+    private void SaveAsCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => SaveProject(forceDialog: true);
+
+    /// <summary>Save (forceDialog=false: straight to CurrentFilePath, dialog only if untitled) or
+    /// Save As (forceDialog=true: always the dialog). Returns true only if the file was actually
+    /// written -- the discard prompt relies on that to abort on a cancelled dialog or failed write.</summary>
+    // TODO(polish): flush focused TextBox before save/close (a trim or BPM edit still mid-focus
+    // isn't committed by Ctrl+S/Alt+F4 -- see spec's Known limitations).
+    private bool SaveProject(bool forceDialog)
     {
-        var dialog = new SaveFileDialog { Filter = "Acapella project|*.acapella.json", DefaultExt = ".acapella.json" };
-        if (dialog.ShowDialog() != true) return;
+        string? filePath = forceDialog ? null : _session.CurrentFilePath;
+        if (filePath is null)
+        {
+            var dialog = new SaveFileDialog { Filter = "Acapella project|*.acapella.json", DefaultExt = ProjectSession.ProjectFileSuffix };
+            if (_session.CurrentFilePath is not null)
+            {
+                dialog.InitialDirectory = Path.GetDirectoryName(_session.CurrentFilePath);
+                dialog.FileName = Path.GetFileName(_session.CurrentFilePath);
+            }
+            if (dialog.ShowDialog() != true) return false;
+
+            // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
+            // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
+            // Dialog results only -- a project opened as plain *.json is saved back under its own name (D5).
+            filePath = dialog.FileName.EndsWith(ProjectSession.ProjectFileSuffix, StringComparison.OrdinalIgnoreCase)
+                ? dialog.FileName
+                : dialog.FileName + ProjectSession.ProjectFileSuffix;
+        }
 
         try
         {
-            // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
-            // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
-            string filePath = dialog.FileName.EndsWith(".acapella.json", StringComparison.OrdinalIgnoreCase)
-                ? dialog.FileName
-                : dialog.FileName + ".acapella.json";
             _session.Save(filePath);
             StatusText.Text = $"Project saved: {Path.GetFileName(filePath)}";
+            return true;
         }
         catch (Exception ex)
         {
             StatusText.Text = $"Save failed: {ex.Message}";
+            return false;
         }
+    }
+
+    /// <summary>Before a dirty project is discarded (File > New, File > Open, window close): Yes =
+    /// save first (may show the Save As dialog), No = discard, Cancel = abort. Returns true if the
+    /// caller may go ahead and replace/close the project. Must run BEFORE any preview stop or
+    /// teardown so that Cancel leaves everything running.</summary>
+    private bool ConfirmDiscardUnsavedChanges()
+    {
+        if (!_session.IsDirty) return true;
+
+        var answer = MessageBox.Show(this, $"Save changes to {_session.DisplayName}?", "Acapella",
+            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        return answer switch
+        {
+            MessageBoxResult.Yes => SaveProject(forceDialog: false),
+            MessageBoxResult.No => true,
+            _ => false,   // Cancel, or the message box's own close button
+        };
+    }
+
+    /// <summary>Driven by ProjectSession.SaveStateChanged. Direct writes, matching the rest of this
+    /// window (no INotifyPropertyChanged on MainWindow). Title shows in taskbar/Alt+Tab only
+    /// (WindowStyle=None), hence the toolbar copy.</summary>
+    private void UpdateWindowTitle()
+    {
+        string label = _session.IsDirty ? $"{_session.DisplayName} •" : _session.DisplayName;
+        Title = $"Acapella — {label}";
+        ProjectTitleText.Text = label;
     }
 
     private async void OpenProjectButton_Click(object sender, RoutedEventArgs e)
