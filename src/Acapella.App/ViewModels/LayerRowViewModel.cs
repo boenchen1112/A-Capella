@@ -94,6 +94,18 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Retake spec D5: the wrapped LayerModel's source was replaced IN PLACE (same object,
+    /// same LayerId, same MixParameters). Raises only the source- and trim-derived properties.
+    /// Deliberately NOT `Layer = Layer`: the setter clears _openedHostedSlots/_lastPolledHostedState
+    /// (bug audit #5), which would silently stop polling a FabFilter editor still open on this layer.</summary>
+    public void NotifySourceReplaced()
+    {
+        OnPropertyChanged(nameof(TrimStartMs));        // visible: the strip's In box
+        OnPropertyChanged(nameof(TrimEndText));        // visible: the strip's Out box
+        OnPropertyChanged(nameof(IconGlyph));          // not bound today; raised so a future binding is right
+        OnPropertyChanged(nameof(SourceStateLabel));   // not bound today; same
+    }
+
     public bool HasSource => _layer is not null;
 
     public string IconGlyph => _layer?.Kind switch

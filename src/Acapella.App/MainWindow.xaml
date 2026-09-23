@@ -78,10 +78,16 @@
                     </Style>
                 </Border.Style>
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <Border Width="8" Height="8" CornerRadius="2" Background="{Binding CellColor}" Margin="0,0,4,0"/>
+                    <!-- Name row. DockPanel (not a horizontal StackPanel) so the ↻ button docks right
+                         without adding height, and DisplayName's TextTrimming actually trims. -->
+                    <DockPanel Margin="0,0,0,4" LastChildFill="True">
+                        <Button DockPanel.Dock="Right" Content="↻" FontSize="10" Padding="2,0" MinWidth="0" Margin="2,0,0,0"
+                                Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}"
+                                Click="RetakeButton_Click"
+                                MouseEnter="Hint_MouseEnter" Tag="Retake: re-record this layer or replace it with a file (keeps its FX; Ctrl+Z undoes)."/>
+                        <Border DockPanel.Dock="Left" Width="8" Height="8" CornerRadius="2" Background="{Binding CellColor}" Margin="0,0,4,0" VerticalAlignment="Center"/>
                         <TextBlock Text="{Binding DisplayName}" FontSize="10" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                    </StackPanel>
+                    </DockPanel>
 
                     <!-- Empty strip: record/upload choice (moved from the old Editor-screen sidebar). -->
                     <StackPanel Visibility="{Binding HasSource, Converter={StaticResource InverseBoolToVis}}">

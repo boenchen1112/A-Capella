@@ -494,22 +494,36 @@ public partial class MainWindow : Window
         MessageBox.Show(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    /// <summary>Opens the capture-setup dialog. If a take is recorded, attaches it to the row that
-    /// resolveRow returns. resolveRow runs ONLY on success, AFTER the dialog closes, so a cancelled or
-    /// calibrate-only session never creates or claims a row (bug audit #7).</summary>
-    private void OpenRecordSetup(Func<LayerRowViewModel?> resolveRow)
+    /// <summary>The ONLY place RecordSetupWindow is constructed (retake spec D4), so bug audit #8's
+    /// export gate covers every way into Recording setup. Returns null when the gate refuses
+    /// (StatusText already set); otherwise the closed dialog and whether a take was accepted.
+    /// Invariant (bug audit #8): no await / dispatcher pumping between the gate and ShowDialog.</summary>
+    private (RecordSetupWindow Dialog, bool Recorded)? ShowRecordSetupDialog(LayerRowViewModel? retakeRow)
     {
         if (!ExportMenuItem.IsEnabled)
         {
             StatusText.Text = "Finish the export first.";   // bug audit #8
-            return;
+            return null;
         }
 
-        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm) { Owner = this };
-        bool? result = dialog.ShowDialog();
+        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm,
+                                           retakeLayerId: retakeRow?.Layer?.LayerId) { Owner = this };
+        if (retakeRow is not null) dialog.Title = $"Re-record {retakeRow.DisplayName}";
+        bool recorded = dialog.ShowDialog() == true;
         _session.MetronomeBpm = dialog.Bpm;
+        return (dialog, recorded);
+    }
 
-        if (result == true && dialog.CreatedLayer is not null)
+    /// <summary>Opens the capture-setup dialog for a NEW layer. If a take is recorded, attaches it to
+    /// the row that resolveRow returns. resolveRow runs ONLY on success, AFTER the dialog closes, so a
+    /// cancelled or calibrate-only session never creates or claims a row (bug audit #7).</summary>
+    private void OpenRecordSetup(Func<LayerRowViewModel?> resolveRow)
+    {
+        var shown = ShowRecordSetupDialog(retakeRow: null);
+        if (shown is null) return;
+        var (dialog, recorded) = shown.Value;
+
+        if (recorded && dialog.CreatedLayer is not null)
         {
             var row = resolveRow();
             if (row is null) return;   // unreachable in practice: the dialog refuses to record at the cap (RecordSetupWindow.xaml.cs:130)
@@ -551,6 +565,76 @@ public partial class MainWindow : Window
         OpenRecordSetup(() => targetCell is int cell ? RowForCell(cell) : null);
     }
 
+    // ----- Retake a layer in place (retake spec) -----
+
+    /// <summary>Retake spec D8: the row is still on screen and still wraps a layer that is in the live
+    /// collection (Undo/Open/New rebuild rows AND LayerModels, so a captured row can go stale).</summary>
+    private bool IsLiveRow(LayerRowViewModel row) =>
+        _tracks.Contains(row) && row.Layer is not null && _layers.Layers.Contains(row.Layer);
+
+    /// <summary>A populated strip's ↻ button: a two-item menu built in code (spec D6 -- a XAML
+    /// ContextMenu inside a DataTemplate has its own DataContext/visual-tree pitfalls).</summary>
+    private void RetakeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.DataContext is not LayerRowViewModel row || !IsLiveRow(row)) return;
+
+        var reRecord = new MenuItem { Header = "Re-record..." };
+        reRecord.Click += (_, _) => RetakeRecord(row);
+        var replace = new MenuItem { Header = "Replace with file..." };
+        replace.Click += (_, _) => RetakeReplaceWithFile(row);
+
+        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        menu.Items.Add(reRecord);
+        menu.Items.Add(replace);
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Re-record this layer in place: guide = the OTHER layers, not blocked by the cap, same
+    /// LayerId/cell/name/FX; one undo step. Goes through the single #8-gated helper (spec D4).
+    /// Never calls LowestFreeCell/RowForCell/Add (spec (d)); no await anywhere (spec (c)).</summary>
+    private void RetakeRecord(LayerRowViewModel row)
+    {
+        if (!IsLiveRow(row)) return;
+        var target = row.Layer!;                                          // fixed BEFORE ShowDialog (spec (d))
+
+        var shown = ShowRecordSetupDialog(row);
+        if (shown is null) return;                                        // #8 gate refused; status already set
+        var (dialog, recorded) = shown.Value;
+        if (!recorded || dialog.RetakeResult is not { } take) return;     // cancelled / closed: nothing changes
+
+        // Defensive (spec D8): unreachable in practice -- the dialog is modal and disables this window.
+        if (!IsLiveRow(row) || !ReferenceEquals(row.Layer, target))
+        {
+            StatusText.Text = $"The layer changed while recording; the take was kept as {Path.GetFileName(take.SourcePath)} but not attached.";
+            return;
+        }
+
+        // Invariant (spec (e)): no await / MessageBox / dialog from here to PushUndoSnapshot().
+        target.ReplaceSource(LayerKind.RecordedAV, take.SourcePath, take.CalibratedOffsetMs);
+        row.NotifySourceReplaced();                                       // NOT row.Layer = ... (spec D5)
+        RefreshPreviewLive();
+        StatusText.Text = $"Re-recorded {row.DisplayName}.";
+        PushUndoSnapshot();                                               // ONE step: source + trims + offset (+ any BPM change)
+    }
+
+    /// <summary>Replace this layer's source with a file, in place: same kind rule as Upload, trims and
+    /// offsets reset, LayerId/cell/name/FX kept; one undo step. No export gate, like Upload (spec D7).</summary>
+    private void RetakeReplaceWithFile(LayerRowViewModel row)
+    {
+        if (!IsLiveRow(row)) return;
+
+        var dialog = new OpenFileDialog { Filter = MediaFileFilter, Title = $"Replace {row.DisplayName} with file" };
+        if (dialog.ShowDialog() != true) return;
+        if (!IsLiveRow(row)) return;                                      // defensive (spec D8)
+
+        // Invariant (spec (e)): no await / MessageBox / dialog from here to PushUndoSnapshot().
+        row.Layer!.ReplaceSource(UploadedKindFor(dialog.FileName), dialog.FileName, calibratedOffsetMs: 0);
+        row.NotifySourceReplaced();                                       // NOT row.Layer = ... (spec D5)
+        RefreshPreviewLive();
+        StatusText.Text = $"Replaced {row.DisplayName} with {Path.GetFileName(dialog.FileName)}.";
+        PushUndoSnapshot();
+    }
+
     private int? LowestFreeCell()
     {
         var free = LayerImportPlanner.FreeCells(_layers.Layers.Select(l => l.CellIndex));
@@ -573,15 +657,17 @@ public partial class MainWindow : Window
         return row;
     }
 
+    /// <summary>The single "what LayerKind is an uploaded file" rule -- Upload, Import and Replace with
+    /// file all use it (retake spec D7).</summary>
+    private static LayerKind UploadedKindFor(string filePath) =>
+        IsAudioOnlyExtension(Path.GetExtension(filePath)) ? LayerKind.UploadedAudioOnly : LayerKind.UploadedVideo;
+
     /// <summary>Attaches one uploaded media file to an empty row -- the single definition of "what an
     /// upload does to the model", shared by per-strip Upload and multi-file Import (spec D5). Does NOT
     /// refresh the preview, set status, or push undo: callers do those once per user action.</summary>
     private void AttachUploadedFile(LayerRowViewModel row, string filePath)
     {
-        var kind = IsAudioOnlyExtension(Path.GetExtension(filePath))
-            ? LayerKind.UploadedAudioOnly
-            : LayerKind.UploadedVideo;
-        var layer = _layers.Add(kind, filePath);
+        var layer = _layers.Add(UploadedKindFor(filePath), filePath);
         // CellIndex binds to the row's own position (audit B8), not LayerCollection's insertion
         // order -- e.g. row 2 uploading before row 1 must still land in grid cell 2.
         layer.CellIndex = row.SlotNumber - 1;
