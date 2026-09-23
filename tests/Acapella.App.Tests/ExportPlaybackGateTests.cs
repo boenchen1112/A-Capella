@@ -43,4 +43,26 @@ public class ExportPlaybackGateTests
             window.Close();
         }
     }
+
+    /// <summary>Retake spec: the #8 gate moved into ShowRecordSetupDialog, the single place
+    /// RecordSetupWindow is constructed. This pins that Recording setup (toolbar ⏺, which Re-record
+    /// shares the same gated helper with) still refuses during an export, without ever constructing
+    /// the modal dialog (which would hang this STA test thread).</summary>
+    [StaFact]
+    public void RecordSetup_WhileExportInFlight_RefusesWithStatus()
+    {
+        TestAppHost.EnsureApplicationResourcesLoaded();
+        var window = new MainWindow();
+        try
+        {
+            window.Show();
+            window.ExportMenuItem.IsEnabled = false;   // what ExportButton_Click does while Task.Run is running
+            window.RecordButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal("Finish the export first.", window.StatusText.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }
