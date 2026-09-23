@@ -233,14 +233,14 @@ public class PreviewPlaybackEngine : IDisposable
         RenderComposite(lastFrames);
 
         double startPositionMs = PositionMs;
-        var positionTracker = StartAudio(startPositionMs);
+        var (positionTracker, padded) = StartAudio(startPositionMs);
         bool useAudioClock = _audioSink.DrivesRealtime;
 
         IsPlaying = true;
         _stopRequested = false;
         var clock = System.Diagnostics.Stopwatch.StartNew();
 
-        _frameLoopThread = new Thread(() => FrameLoop(clock, positionTracker, useAudioClock, startPositionMs, sources, lastFrames, consumedFrames)) { IsBackground = true };
+        _frameLoopThread = new Thread(() => FrameLoop(clock, positionTracker, useAudioClock, startPositionMs, sources, lastFrames, consumedFrames, padded)) { IsBackground = true };
         _frameLoopThread.Start();
     }
 
@@ -252,14 +252,17 @@ public class PreviewPlaybackEngine : IDisposable
     /// last frame pulled -- so a slow iteration drops frames instead of falling behind forever.
     /// When a source is already caught up (or ahead, e.g. a shorter/frozen layer), no frame is
     /// pulled that pass and its last-known frame is reused.</summary>
-    private void FrameLoop(System.Diagnostics.Stopwatch clock, PositionTrackingSampleProvider? positionTracker, bool useAudioClock, double startPositionMs, IReadOnlyList<ILayerFrameSource> sources, SKBitmap[] lastFrames, int[] consumedFrames)
+    private void FrameLoop(System.Diagnostics.Stopwatch clock, PositionTrackingSampleProvider? positionTracker, bool useAudioClock, double startPositionMs, IReadOnlyList<ILayerFrameSource> sources, SKBitmap[] lastFrames, int[] consumedFrames, PadToLengthSampleProvider? padded)
     {
         while (!_stopRequested)
         {
+            // Read the end flag before the position (subtlety 2): if the stream ended, the tracker
+            // has counted every padded sample, so the project end has been reached.
+            bool audioEnded = useAudioClock && padded is not null && padded.Ended;
             double elapsedMs = useAudioClock && positionTracker is not null
                 ? positionTracker.PositionMs
                 : clock.Elapsed.TotalMilliseconds;
-            PositionMs = Math.Min(startPositionMs + elapsedMs, DurationMs);
+            PositionMs = audioEnded ? DurationMs : Math.Min(startPositionMs + elapsedMs, DurationMs);
             int targetFrameIndex = (int)(elapsedMs / 1000.0 * _fps);
 
             for (int i = 0; i < sources.Count; i++)
@@ -311,7 +314,7 @@ public class PreviewPlaybackEngine : IDisposable
     private List<ILayerFrameSource> CreateFrameSources(double positionMs) =>
         _layers.Select(layer => _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
 
-    private PositionTrackingSampleProvider StartAudio(double positionMs)
+    private (PositionTrackingSampleProvider Tracker, PadToLengthSampleProvider Padded) StartAudio(double positionMs)
     {
         const int sampleRate = 44100;
         var mixInputs = _layers.Select(l => _timeline.AudioInput(l, sampleRate)).ToList();
@@ -322,11 +325,17 @@ public class PreviewPlaybackEngine : IDisposable
             ? new OffsetSampleProvider(mix) { SkipOver = TimeSpan.FromMilliseconds(positionMs) }
             : mix;
 
+        // Bug audit #10: pad the post-seek stream with silence to the rest of the project's length
+        // BEFORE the tracker counts it, so the audio clock reaches DurationMs even when every
+        // layer's audio ends before its container does (video-only layer, video outlasting audio,
+        // untrimmed MKV take). Must sit inside the tracker -- see ordering subtlety 1.
+        var padded = new PadToLengthSampleProvider(seeked, DurationMs - positionMs);
+
         // Wraps the post-seek stream so samples actually pulled by the sink count from zero at
         // this playback's start position -- FrameLoop adds startPositionMs back on top (audit A2).
-        var tracked = new PositionTrackingSampleProvider(seeked);
+        var tracked = new PositionTrackingSampleProvider(padded);
         _audioSink.Play(tracked);
-        return tracked;
+        return (tracked, padded);
     }
 
     public Task StopAsync() => Enqueue(StopCore);
