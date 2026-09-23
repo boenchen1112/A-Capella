@@ -499,6 +499,12 @@ public partial class MainWindow : Window
     /// calibrate-only session never creates or claims a row (bug audit #7).</summary>
     private void OpenRecordSetup(Func<LayerRowViewModel?> resolveRow)
     {
+        if (!ExportMenuItem.IsEnabled)
+        {
+            StatusText.Text = "Finish the export first.";   // bug audit #8
+            return;
+        }
+
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm) { Owner = this };
         bool? result = dialog.ShowDialog();
         _session.MetronomeBpm = dialog.Bpm;
@@ -785,6 +791,12 @@ public partial class MainWindow : Window
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!ExportMenuItem.IsEnabled)
+        {
+            StatusText.Text = "Finish the export first.";   // bug audit #8
+            return;
+        }
+
         if (_previewEngine.IsPlaying) return;
 
         if (_layers.Layers.Count == 0)
@@ -992,8 +1004,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ExportButton_Click(object sender, RoutedEventArgs e)
+    private async void ExportButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!ExportMenuItem.IsEnabled)                   // defensive; the menu item is disabled anyway
+        {
+            StatusText.Text = "Finish the export first.";
+            return;
+        }
+
         if (_layers.Layers.Count == 0)
         {
             StatusText.Text = "Add at least one layer before exporting.";
@@ -1003,8 +1021,17 @@ public partial class MainWindow : Window
         var dialog = new SaveFileDialog { Filter = "MP4 video|*.mp4", DefaultExt = ".mp4" };
         if (dialog.ShowDialog() != true) return;
 
-        StatusText.Text = "Exporting...";
-        ExportMenuItem.IsEnabled = false;
+        // Bug audit #8, subtlety 2: checked AFTER the Save dialog returns, not before it.
+        // PlayButton is disabled only while PlayButton_Click is between SetLayersAsync and PlayAsync.
+        if (!PlayButton.IsEnabled)
+        {
+            StatusText.Text = "Preview is starting; try Export again in a moment.";
+            return;
+        }
+
+        ExportMenuItem.IsEnabled = false;                           // subtlety 1: BEFORE the await
+        await AwaitPreviewCommand(_previewEngine.StopAsync());      // bug audit #8: one audio graph at a time
+        StatusText.Text = "Exporting...";                           // after the stop: AwaitPreviewCommand may write "Preview error: ..."
 
         var (snapshotLayers, snapshotMasterVolumeDb) = _session.SnapshotForExport();
 
