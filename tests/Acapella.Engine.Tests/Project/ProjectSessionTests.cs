@@ -382,6 +382,47 @@ public class ProjectSessionTests : IDisposable
         Assert.Equal(goodPath, session.CurrentFilePath);
     }
 
+    // ----- Retake in place (Feature_Spec_2026-09-24_RetakeInPlace.md) -----
+
+    [Fact]
+    public void Retake_ThenUndo_RestoresTheOldTake_AndKeepsTheSameLivePluginInstance()
+    {
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedVideo, "take1.mp4");
+        layer.TrimStartMs = 300;
+        session.CommitEdit();
+
+        var plugin = OpenEqEditorLiveInstance(layer);
+        plugin.TweakInEditor(new byte[] { 4, 2 });
+        session.CommitEdit();
+
+        int layerId = layer.LayerId;
+        layer.ReplaceSource(LayerKind.RecordedAV, "take2.mkv", 40);
+        session.CommitEdit();
+
+        Assert.Equal(layerId, layer.LayerId);
+        Assert.Same(plugin, OpenEqEditorLiveInstance(layer));
+        Assert.Equal(Convert.ToBase64String(new byte[] { 4, 2 }), session.Snapshot().Layers.Single().MixParameters.EqHostedStateBase64);
+
+        session.Undo();
+        var restored = session.Layers.Layers.Single();
+
+        Assert.Equal("take1.mp4", restored.SourcePath);
+        Assert.Equal(LayerKind.UploadedVideo, restored.Kind);
+        Assert.Equal(300, restored.TrimStartMs);
+        Assert.Equal(0, restored.CalibratedOffsetMs);
+        Assert.False(plugin.Disposed);
+        Assert.Same(plugin, OpenEqEditorLiveInstance(restored));
+        Assert.Equal(new byte[] { 4, 2 }, plugin.State);
+
+        session.Redo();
+        var redone = session.Layers.Layers.Single();
+
+        Assert.Equal("take2.mkv", redone.SourcePath);
+        Assert.Equal(40, redone.CalibratedOffsetMs);
+        Assert.Equal(0, redone.TrimStartMs);
+    }
+
     [Fact]
     public void SaveStateChanged_FiresOnlyOnTransitions()
     {

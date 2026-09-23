@@ -54,6 +54,22 @@ public class LayerModel
         long mtimeTicks = File.Exists(SourcePath) ? File.GetLastWriteTimeUtc(SourcePath).Ticks : 0;
         return $"{SourcePath}|{mtimeTicks}|{TrimStartMs}|{TrimEndMs}|{GetShiftMs()}";
     }
+
+    /// <summary>Retake in place (retake spec D1): points this layer at a new take while keeping its
+    /// slot identity (LayerId, CellIndex), Name and MixParameters -- so its hosted FX instances,
+    /// keyed by (LayerId, Stage), and their saved state carry over untouched. Resets everything that
+    /// described the OLD take: trims (ms into the old file), the manual nudge and calibrated latency
+    /// (both per-take), and the ARA archive key (keyed by source-audio hash).</summary>
+    public void ReplaceSource(LayerKind kind, string sourcePath, double calibratedOffsetMs)
+    {
+        Kind = kind;
+        SourcePath = sourcePath;
+        CalibratedOffsetMs = calibratedOffsetMs;
+        ManualOffsetMs = 0;
+        TrimStartMs = 0;
+        TrimEndMs = null;
+        AraArchiveKey = null;
+    }
 }
 
 public class LayerCollection
@@ -91,8 +107,8 @@ public class LayerCollection
         _layers.AddRange(list);
     }
 
-    /// <summary>Removes the most recently added layer -- used to discard a zombie layer left
-    /// behind by a failed recording (see MainWindow.StopRecordButton_Click).</summary>
+    /// <summary>Removes the most recently added layer. Currently unused: M6 probes before Add
+    /// (RecordSetupWindow.StopRecording), so no zombie layer is ever added.</summary>
     public void RemoveLast()
     {
         if (_layers.Count > 0)
