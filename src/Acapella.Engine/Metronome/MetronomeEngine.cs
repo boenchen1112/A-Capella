@@ -49,6 +49,14 @@ public class MetronomeEngine : ISampleProvider
         set => _enabled = value;
     }
 
+    /// <summary>Zeros the beat phase back to the start of a fresh beat (bug audit #11) -- call at
+    /// the start of every new take, not just the first. Unlike the Bpm setter's phase-preserving
+    /// rescale (L5, Bug_Audit_2026-07-12.md), this deliberately discards the phase: a new take is
+    /// not a continuation of a previous, unrelated take's beat grid, so there is nothing to
+    /// preserve. Safe to call whether or not Enabled is currently true, and whether or not this is
+    /// actually the first take in this dialog (a no-op then, since _sampleIndex is already 0).</summary>
+    public void Reset() => _sampleIndex = 0;
+
     public int Read(float[] buffer, int offset, int count)
     {
         int sampleRate = WaveFormat.SampleRate;
