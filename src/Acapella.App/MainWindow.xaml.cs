@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     public static readonly RoutedCommand SaveCommand = new();
     public static readonly RoutedCommand SaveAsCommand = new();
 
+    private const string MediaFileFilter = "Media files|*.mp4;*.mov;*.mkv;*.wav;*.mp3;*.m4a|All files|*.*";
+
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
     private readonly ProjectSession _session;
@@ -525,25 +527,39 @@ public partial class MainWindow : Window
         OpenRecordSetupForRow(row);
     }
 
+    private LayerRowViewModel AppendEmptyRow()
+    {
+        var row = new LayerRowViewModel(_tracks.Count + 1);
+        row.LiveParamChanged += DebounceRefreshPreview;
+        _tracks.Add(row);
+        return row;
+    }
+
+    /// <summary>Attaches one uploaded media file to an empty row -- the single definition of "what an
+    /// upload does to the model", shared by per-strip Upload and multi-file Import (spec D5). Does NOT
+    /// refresh the preview, set status, or push undo: callers do those once per user action.</summary>
+    private void AttachUploadedFile(LayerRowViewModel row, string filePath)
+    {
+        var kind = IsAudioOnlyExtension(Path.GetExtension(filePath))
+            ? LayerKind.UploadedAudioOnly
+            : LayerKind.UploadedVideo;
+        var layer = _layers.Add(kind, filePath);
+        // CellIndex binds to the row's own position (audit B8), not LayerCollection's insertion
+        // order -- e.g. row 2 uploading before row 1 must still land in grid cell 2.
+        layer.CellIndex = row.SlotNumber - 1;
+        row.Layer = layer;                                               // MUST precede Name: Name's setter no-ops while Layer is null
+        if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+    }
+
     private void UploadChoice_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
 
-        var dialog = new OpenFileDialog
-        {
-            Filter = "Media files|*.mp4;*.mov;*.mkv;*.wav;*.mp3;*.m4a|All files|*.*"
-        };
+        var dialog = new OpenFileDialog { Filter = MediaFileFilter };
         if (dialog.ShowDialog() != true) return;
 
-        var kind = IsAudioOnlyExtension(Path.GetExtension(dialog.FileName))
-            ? LayerKind.UploadedAudioOnly
-            : LayerKind.UploadedVideo;
-        var layer = _layers.Add(kind, dialog.FileName);
-        // CellIndex binds to the row's own position (audit B8), not LayerCollection's insertion
-        // order -- e.g. row 2 uploading before row 1 must still land in grid cell 2.
-        layer.CellIndex = row.SlotNumber - 1;
-        row.Layer = layer;
-        if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+        AttachUploadedFile(row, dialog.FileName);
+        UpdateAddLayerButtonState();                                     // new (D6)
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
         PushUndoSnapshot();
