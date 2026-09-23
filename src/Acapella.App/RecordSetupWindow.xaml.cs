@@ -207,13 +207,37 @@ public partial class RecordSetupWindow : Window
             StatusText.Text = $"{takeVerb} layer {takeLayerId}...";
         }
 
-        if (_metronome.Enabled)
+        // Bug audit #11: create the metronome's output unconditionally, not only when Enabled is
+        // already true -- MetronomeToggle stays live during a take (unlike CameraCombo/MicCombo,
+        // :221-222), so gating creation on a one-time snapshot of Enabled made checking the box
+        // mid-take silent for the rest of that take. Read()'s own _enabled check (MetronomeEngine.cs
+        // :61) already gates the audible output live, in both directions, so this is now symmetric:
+        // checking OR unchecking the box mid-take works the same way checking it before Record
+        // always did.
+        //
+        // Reset() first, and before Play(): _metronome (:34) is one instance for the whole dialog,
+        // so without this an M6 retry (:323-328) resumes the click wherever the discarded attempt's
+        // Read() calls left the phase, landing mid-beat instead of on beat 1. Reset() must run
+        // before Play() starts pulling on its own render thread -- see the doc's ordering
+        // subtleties for why resetting after would be worse than not resetting at all.
+        _metronome.Reset();
+        try
         {
             using var metronomeEnumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
             var metronomeDevice = metronomeEnumerator.GetDevice(_outputDevice.Id);
             _metronomeOutput = new WasapiOut(metronomeDevice, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
             _metronomeOutput.Init(_metronome);
             _metronomeOutput.Play();
+        }
+        catch
+        {
+            // The take itself (capture, and the guide track if any) already started above and must
+            // not be aborted over a monitoring-only nicety. Losing the click for this take is far
+            // cheaper than losing the take -- fall back to no metronome output, same as if the
+            // user had left the box unchecked the whole time. Dispose first: if `new WasapiOut(...)`
+            // succeeded but Init or Play threw, a bare null-out would leak that WasapiOut.
+            _metronomeOutput?.Dispose();
+            _metronomeOutput = null;
         }
 
         _isRecording = true;
