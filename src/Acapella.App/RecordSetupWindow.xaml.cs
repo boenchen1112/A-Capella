@@ -135,9 +135,17 @@ public partial class RecordSetupWindow : Window
 
         var videoDevice = _dshowVideoDevices[CameraCombo.SelectedIndex];
         var dshowAudioDevice = _dshowAudioDevices[MicCombo.SelectedIndex];
-        int nextLayerId = _layers.Layers.Count;
+        int nextLayerId = _layers.Layers.Count;                           // unchanged: still drives the guide-track branch (below) and status text
         Directory.CreateDirectory(_mediaDir);
-        string outputPath = Path.Combine(_mediaDir, $"layer{nextLayerId}.mkv");
+        string outputPath = RecordingPathAllocator.Allocate(_mediaDir);   // bug audit #6: never an existing file
+
+        // Bug audit #6: -y would silently destroy an existing take, and without -y M6 would accept the
+        // old file as the new take. The allocator already guarantees a fresh path; this only guards a race.
+        if (File.Exists(outputPath))
+        {
+            StatusText.Text = $"Refusing to overwrite existing recording {Path.GetFileName(outputPath)}; try again.";
+            return;
+        }
 
         _activeCapture = new FfmpegCaptureSession();
         double calibratedOffsetMs = 0;

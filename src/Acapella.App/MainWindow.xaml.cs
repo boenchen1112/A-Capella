@@ -476,7 +476,7 @@ public partial class MainWindow : Window
         OpenRecordSetupForRow(row);
     }
 
-    /// <summary>v7 Q3 (media-folder hygiene): recorded layerN.mkv files accumulate silently in
+    /// <summary>v7 Q3 (media-folder hygiene): recorded take files accumulate silently in
     /// _mediaDir with no visibility into how much disk they're using. Read-only report -- no
     /// deletion here, since deleting recorded media is a CLAUDE.md Pause Rule 1 action (needs the
     /// user's explicit say, not an automatic cleanup on close).</summary>
