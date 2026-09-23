@@ -461,8 +461,12 @@ public partial class MainWindow : Window
         // a source, so it isn't part of the ProjectFileDto snapshot ToDto serializes.
     }
 
-    private void UpdateAddLayerButtonState() =>
+    private void UpdateAddLayerButtonState()
+    {
         AddLayerButton.IsEnabled = _tracks.Count < LayerCollection.MaxLayers;
+        // Multi-file import: enabled while any LAYER slot is free, even if all 4 rows exist (spec D6).
+        ImportFilesButton.IsEnabled = _layers.Layers.Count < LayerCollection.MaxLayers;
+    }
 
     private void AddLayerMenuItem_Click(object sender, RoutedEventArgs e) => AddLayerButton_Click(sender, e);
 
@@ -506,6 +510,7 @@ public partial class MainWindow : Window
             dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
             row.Layer = dialog.CreatedLayer;
             if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+            UpdateAddLayerButtonState();
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
             PushUndoSnapshot();
@@ -563,6 +568,52 @@ public partial class MainWindow : Window
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
         PushUndoSnapshot();
+    }
+
+    /// <summary>Add > Import files as layers... and the mixer's "+ Import files..." button: one
+    /// multi-select dialog; files (sorted by name, spec D3) fill free slots lowest-first up to the
+    /// 4-layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
+    /// (spec D2). Overflow is reported in StatusText, never a dialog.</summary>
+    private void ImportFilesMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layers.Layers.Count >= LayerCollection.MaxLayers)
+        {
+            StatusText.Text = "No empty layer slots (4-layer cap reached).";
+            return;
+        }
+
+        var dialog = new OpenFileDialog { Filter = MediaFileFilter, Multiselect = true, Title = "Import files as layers" };
+        if (dialog.ShowDialog() != true) return;
+
+        // Occupancy is read AFTER the dialog closes, not before it opens.
+        var (assignments, skipped) = LayerImportPlanner.Plan(_layers.Layers.Select(l => l.CellIndex), dialog.FileNames);
+
+        // Invariant: from here to PushUndoSnapshot() there must be no await, MessageBox, dialog or other
+        // dispatcher pumping -- _hostedStatePollTimer can push an undo snapshot on any pump, which would
+        // record a half-imported project as its own undo step (breaks spec D2).
+        foreach (var (cellIndex, filePath) in assignments)
+        {
+            while (_tracks.Count <= cellIndex) AppendEmptyRow();         // appends exactly one row per new cell (spec D4)
+            AttachUploadedFile(_tracks[cellIndex], filePath);
+        }
+
+        UpdateAddLayerButtonState();
+        if (assignments.Count > 0)
+        {
+            RefreshPreviewLive();                                        // once per batch, not per file
+            PushUndoSnapshot();                                          // ONE undo step + one MarkDirty for the batch
+        }
+
+        StatusText.Text = FormatImportStatus(assignments.Count, skipped);
+    }
+
+    private static string FormatImportStatus(int imported, IReadOnlyList<string> skipped)
+    {
+        static string Files(int n) => n == 1 ? "1 file" : $"{n} files";
+        string text = $"Imported {Files(imported)}";
+        if (skipped.Count > 0)
+            text += $"; {Files(skipped.Count)} skipped (4-layer cap reached): {string.Join(", ", skipped.Select(Path.GetFileName))}";
+        return text + ".";
     }
 
     private static bool IsAudioOnlyExtension(string ext) =>
