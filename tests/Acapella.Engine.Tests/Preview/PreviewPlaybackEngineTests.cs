@@ -665,4 +665,194 @@ public class PreviewPlaybackEngineTests
             DeleteWithRetry(tempDir);
         }
     }
+
+    /// <summary>Bug audit #10: video and audio of independent lengths (audioSeconds 0 = no audio
+    /// stream at all, i.e. a video-only upload), in the given container. The video's red channel
+    /// switches 255 -> 0 and blue 0 -> 255 at switchAtSeconds, so a test can tell a frozen early
+    /// frame from a late one.</summary>
+    private static (string path, string tempDir) CreateMismatchedLengthFixtureClip(double videoSeconds, double audioSeconds, double switchAtSeconds, string extension = "mp4")
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-preview-end-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string path = Path.Combine(tempDir, $"layer.{extension}");
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string sw = switchAtSeconds.ToString(inv);
+        string geq = $"r='if(lt(T\\,{sw})\\,255\\,0)':g=0:b='if(gte(T\\,{sw})\\,255\\,0)'";
+
+        var args = new List<string> { "-y", "-f", "lavfi", "-i", $"color=c=black:s=64x64:r=10:d={videoSeconds.ToString(inv)}" };
+        if (audioSeconds > 0)
+            args.AddRange(new[] { "-f", "lavfi", "-i", $"sine=frequency=440:sample_rate=48000:duration={audioSeconds.ToString(inv)}" });
+        args.AddRange(new[] { "-vf", $"geq={geq}", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p" });
+        args.AddRange(audioSeconds > 0 ? new[] { "-c:a", "aac" } : new[] { "-an" });
+        args.Add(path);
+        RunFfmpeg(args.ToArray());
+
+        return (path, tempDir);
+    }
+
+    /// <summary>Plays to the natural end with a real-time sink; returns whether PlaybackStopped
+    /// fired within DurationMs + 3s, and the centre pixel of cell 0 in the last frame rendered.
+    /// Note (bug audit #10 test adaptation): FrameLoop unconditionally raises PlaybackStopped when
+    /// it exits for ANY reason, including SeekCore's internal StopCore call while restarting
+    /// playback at the new position (a separate, already-known, out-of-scope issue -- the "#5
+    /// runner-up spurious PlaybackStopped on every seek" this audit's own doc references). That
+    /// spurious event would otherwise set `stopped` immediately after the seek, before the
+    /// (still-playing) engine has actually reached DurationMs, so `stopped` is reset right after
+    /// the seek returns to wait for the real, final stop instead.</summary>
+    private static async Task<(bool Stopped, SKColor LastPixel, PreviewPlaybackEngine Engine)> PlayToEndWithRealtimeSink(LayerKind kind, string path, SimulatedRealtimeAudioSink sink, double? seekToMsAfterStart = null)
+    {
+        var layers = new LayerCollection();
+        layers.Restore(new[] { new LayerModel { LayerId = 0, Kind = kind, SourcePath = path } });
+
+        var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+        await engine.SetLayersAsync(layers.Layers);
+
+        object frameLock = new();
+        SKColor lastPixel = default;
+        var stopped = new ManualResetEventSlim(false);
+        engine.FrameReady += frame => { lock (frameLock) { lastPixel = frame.GetPixel(32, 32); } frame.Dispose(); };
+        engine.PlaybackStopped += () => stopped.Set();
+
+        await engine.PlayAsync();
+        if (seekToMsAfterStart is double seekMs)
+        {
+            Thread.Sleep(300);
+            await engine.SeekAsync(seekMs);
+            // See the method note above: SeekCore's internal restart raises a spurious
+            // PlaybackStopped that would otherwise be mistaken for the real, final stop.
+            stopped.Reset();
+        }
+        bool finished = stopped.Wait(TimeSpan.FromMilliseconds(engine.DurationMs + 3000));
+        lock (frameLock) return (finished, lastPixel, engine);
+    }
+
+    /// <summary>Bug audit #10, repro B: video 3s, audio 2s. With the audio clock driving the loop,
+    /// playback must run the video to its end and stop on its own -- previously the clock stopped
+    /// at the audio's end (~2020ms) and the loop never exited.</summary>
+    [Fact]
+    public async Task Play_WithRealtimeSink_VideoLongerThanAudio_PlaysToVideoEndAndStopsOnItsOwn()
+    {
+        var (path, tempDir) = CreateMismatchedLengthFixtureClip(videoSeconds: 3, audioSeconds: 2, switchAtSeconds: 2.5);
+        try
+        {
+            using var sink = new SimulatedRealtimeAudioSink();
+            var (stopped, lastPixel, engine) = await PlayToEndWithRealtimeSink(LayerKind.UploadedVideo, path, sink);
+            using (engine)
+            {
+                Assert.True(stopped, $"Playback did not stop on its own (stuck at {engine.PositionMs:F1} of {engine.DurationMs:F1}ms).");
+                Assert.False(engine.IsPlaying);
+                Assert.Equal(engine.DurationMs, engine.PositionMs, precision: 3);
+                Assert.True(lastPixel.Blue > 150, $"Expected the post-audio video (blue, >= 2.5s) to have been shown; last frame was {lastPixel}.");
+            }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Bug audit #10, repro A: a video-only layer (no audio stream, 0 decoded samples)
+    /// must advance past frame 0 and stop on its own -- previously PositionMs stayed 0 forever.</summary>
+    [Fact]
+    public async Task Play_WithRealtimeSink_VideoOnlyLayer_AdvancesPictureAndStopsOnItsOwn()
+    {
+        var (path, tempDir) = CreateMismatchedLengthFixtureClip(videoSeconds: 2, audioSeconds: 0, switchAtSeconds: 1.0);
+        try
+        {
+            using var sink = new SimulatedRealtimeAudioSink();
+            var (stopped, lastPixel, engine) = await PlayToEndWithRealtimeSink(LayerKind.UploadedVideo, path, sink);
+            using (engine)
+            {
+                Assert.True(stopped, $"Playback did not stop on its own (stuck at {engine.PositionMs:F1} of {engine.DurationMs:F1}ms).");
+                Assert.Equal(engine.DurationMs, engine.PositionMs, precision: 3);
+                Assert.True(lastPixel.Blue > 150, $"Expected the picture to reach the late (blue) content; last frame was {lastPixel}.");
+            }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Bug audit #10, repro C: an MKV written with FfmpegCaptureSession's codec args
+    /// (libx264 ultrafast crf 23 + AAC) decodes a few ms shorter than its container duration --
+    /// the common case of every untrimmed recorded take.</summary>
+    [Fact]
+    public async Task Play_WithRealtimeSink_CaptureFormatMkvTake_StopsOnItsOwn()
+    {
+        var (path, tempDir) = CreateMismatchedLengthFixtureClip(videoSeconds: 2, audioSeconds: 2, switchAtSeconds: 1.0, extension: "mkv");
+        try
+        {
+            using var sink = new SimulatedRealtimeAudioSink();
+            var (stopped, _, engine) = await PlayToEndWithRealtimeSink(LayerKind.RecordedAV, path, sink);
+            using (engine)
+            {
+                Assert.True(stopped, $"Playback did not stop on its own (stuck at {engine.PositionMs:F1} of {engine.DurationMs:F1}ms).");
+                Assert.False(engine.IsPlaying);
+            }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Bug audit #10, ordering subtleties 2/3: after a mid-play seek to a fractional
+    /// position, the padding is sized from that start position and playback still stops exactly
+    /// at DurationMs.</summary>
+    [Fact]
+    public async Task SeekMidPlay_ToFractionalPosition_WithRealtimeSink_StillStopsAtDuration()
+    {
+        var (path, tempDir) = CreateMismatchedLengthFixtureClip(videoSeconds: 3, audioSeconds: 2, switchAtSeconds: 2.5);
+        try
+        {
+            using var sink = new SimulatedRealtimeAudioSink();
+            var (stopped, _, engine) = await PlayToEndWithRealtimeSink(LayerKind.UploadedVideo, path, sink, seekToMsAfterStart: 1000.6);
+            using (engine)
+            {
+                Assert.True(stopped, $"Playback did not stop on its own after seek (stuck at {engine.PositionMs:F1} of {engine.DurationMs:F1}ms).");
+                Assert.Equal(engine.DurationMs, engine.PositionMs, precision: 3);
+            }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Bug audit #10, repro D / subtlety 4: a seek (or refresh) while playing to a
+    /// position past the audio's end but before DurationMs must play the silent remainder and
+    /// stop, not restart an endless "playing" state. Deliberately NOT a seek to exactly
+    /// DurationMs -- that already stops today (see subtlety 4's counter-example).</summary>
+    [Fact]
+    public async Task SeekPastAudioEndWhilePlaying_WithRealtimeSink_StopsInsteadOfReStalling()
+    {
+        var (path, tempDir) = CreateMismatchedLengthFixtureClip(videoSeconds: 3, audioSeconds: 2, switchAtSeconds: 2.5);
+        try
+        {
+            using var sink = new SimulatedRealtimeAudioSink();
+            var layers = new LayerCollection();
+            layers.Restore(new[] { new LayerModel { LayerId = 0, Kind = LayerKind.UploadedVideo, SourcePath = path } });
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            await engine.SetLayersAsync(layers.Layers);
+            engine.FrameReady += f => f.Dispose();
+            var stopped = new ManualResetEventSlim(false);
+            engine.PlaybackStopped += () => stopped.Set();
+
+            await engine.PlayAsync();
+            await engine.SeekAsync(2500); // audio ends ~2020ms, DurationMs = 3000ms
+            // See PlayToEndWithRealtimeSink's note: SeekCore's internal restart raises a spurious
+            // PlaybackStopped (a separate, out-of-scope, already-known issue) that would otherwise
+            // be mistaken here for the real, final stop.
+            stopped.Reset();
+
+            Assert.True(stopped.Wait(TimeSpan.FromSeconds(3)), $"Seeking past the audio's end while playing left the engine 'playing' (stuck at {engine.PositionMs:F1}ms).");
+            Assert.False(engine.IsPlaying);
+            Assert.Equal(engine.DurationMs, engine.PositionMs, precision: 3);
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
 }
