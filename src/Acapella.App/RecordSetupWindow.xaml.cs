@@ -196,8 +196,38 @@ public partial class RecordSetupWindow : Window
             // a WASAPI Stereo-Mix loopback, a different path) can't account for that.
             _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
             _activeCapture.WaitForCaptureStarted(TimeSpan.FromSeconds(3));
-            _guideTrackPlayer = new GuideTrackPlayer();
-            _guideTrackPlayer.Play(_outputDevice.Id, guideMix);
+
+            // Bug audit #12: _outputDevice (:72) is a one-time snapshot of one specific render
+            // endpoint, taken when this dialog was constructed and never refreshed -- there is no
+            // output-device picker to let the user redo that (DeviceCatalog.cs:35-40). If that
+            // exact endpoint has since gone away (unplugged, disabled -- a headset disconnecting
+            // is enough; a later default-device CHANGE to some other still-present device is not),
+            // GuideTrackPlayer.Play throws (at GetDevice, the WasapiOut constructor, or Init,
+            // depending on why the endpoint stopped working -- see the doc's root cause 1). By
+            // this point _activeCapture is already running (Start + WaitForCaptureStarted just
+            // above), and this app has no Application.DispatcherUnhandledException handler
+            // (App.xaml.cs), so letting that exception propagate crashes the whole process and
+            // orphans ffmpeg.exe -- a plain child process (no job-object tie, FfmpegCaptureSession
+            // .cs) that survives the crash and keeps the camera/mic devices open. Unlike the
+            // metronome's own device-open failure below (already guarded, bug audit #11), the
+            // guide track is the entire reason a take against existing layers would be usable --
+            // continuing silently without it produces an unsynced take nobody can salvage, so this
+            // aborts instead of swallowing the failure the way the metronome catch does.
+            try
+            {
+                _guideTrackPlayer = new GuideTrackPlayer();
+                _guideTrackPlayer.Play(_outputDevice.Id, guideMix);
+            }
+            catch (Exception ex)
+            {
+                _guideTrackPlayer?.Dispose();
+                _guideTrackPlayer = null;
+                _activeCapture.Stop();
+                _activeCapture.Dispose();
+                _activeCapture = null;
+                StatusText.Text = $"Couldn't start the guide track (output device unavailable: {ex.Message}). Close and reopen this dialog after checking your output device, then try again.";
+                return;
+            }
 
             StatusText.Text = $"{takeVerb} layer {takeLayerId} with guide track (offset {calibratedOffsetMs:F1}ms)...";
         }
