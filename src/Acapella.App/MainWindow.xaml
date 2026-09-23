@@ -38,9 +38,14 @@
 
         <!-- Applied to every FX/mix-parameter slider (not the timeline or master-volume sliders,
              which have their own commit handlers): pushes an undo snapshot once the drag ends,
-             not per-tick (v5 P1 task 2). -->
+             not per-tick (v5 P1 task 2). Bug audit #13: also on PreviewKeyUp, for the same reason:
+             Slider.Value binds TwoWay with the framework-default PropertyChanged trigger, so a
+             keyboard-driven edit (Up/Down/PageUp/PageDown/End; Left/Right/Home are already
+             claimed by MainWindow's own transport shortcuts, :267-291) already applies live with
+             no commit unless this fires too. -->
         <Style x:Key="CommitSlider" TargetType="Slider">
             <EventSetter Event="PreviewMouseUp" Handler="CommitSlider_PreviewMouseUp"/>
+            <EventSetter Event="PreviewKeyUp" Handler="CommitSlider_PreviewKeyUp"/>
         </Style>
 
         <!-- Small icon-only toolbar button (transport, undo/redo, monitor, window chrome). -->

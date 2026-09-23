@@ -256,6 +256,26 @@ public partial class MainWindow : Window
     /// CommitSlider}"): pushes an undo snapshot once the drag ends, not per-tick.</summary>
     private void CommitSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
 
+    /// <summary>Bug audit #13: Slider.Value binds TwoWay with the framework-default
+    /// UpdateSourceTrigger (PropertyChanged), unlike TextBox.Text -- so a keyboard-driven edit on a
+    /// focused CommitSlider already applies live, with nothing to fire PreviewMouseUp. Commits on
+    /// key-release (not key-down -- see the doc's ordering subtleties) for the same reason the mouse
+    /// handler commits on release, not per-tick: one undo step per discrete edit. Filtered to
+    /// Up/Down/PageUp/PageDown/End only -- Left/Right/Home are deliberately excluded: MainWindow's
+    /// own transport shortcut (MainWindow_PreviewKeyDown, :267-291) already consumes those three for
+    /// seek/restart before they ever reach a focused Slider's Value (root cause fact 3), so including
+    /// them here would fire a commit on every seek performed while any FX slider happens to be
+    /// focused -- not just a harmless no-op step, but one that clears the redo stack
+    /// (ProjectUndoStack.Push, :52) on every such seek, silently destroying whatever the user could
+    /// otherwise have redone.</summary>
+    private static readonly Key[] SliderCommitKeys =
+        { Key.Up, Key.Down, Key.PageUp, Key.PageDown, Key.End };
+
+    private void CommitSlider_PreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (Array.IndexOf(SliderCommitKeys, e.Key) >= 0) PushUndoSnapshot();
+    }
+
     private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
