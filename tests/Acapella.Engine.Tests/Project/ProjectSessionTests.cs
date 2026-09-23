@@ -445,4 +445,26 @@ public class ProjectSessionTests : IDisposable
         session.Save(path);
         Assert.Equal(2, fireCount);
     }
+
+    /// <summary>Bug audit #13: grounds the consequence half of the bug, independent of WPF -- this
+    /// is exactly what every CommitSlider-bound LayerRowViewModel setter does (e.g. Pan, GainDb,
+    /// LayerRowViewModel.cs:186,456) when its own PreviewMouseUp/PreviewKeyUp handler never fires.
+    /// Passes today already (it's the mechanism the fix depends on staying true, not new behavior) --
+    /// included so the assumption is pinned down rather than left implicit. Uses Save() (not
+    /// CommitEdit()) for the clean baseline: CommitEdit() itself calls MarkDirty() (ProjectSession
+    /// .cs:97-101, confirmed by CommitEdit_MarksDirty_SaveClearsItAndRemembersThePath above), so
+    /// committing the layer-add would leave IsDirty true and the first assert would fail for a
+    /// reason unrelated to what this test characterizes.</summary>
+    [Fact]
+    public void MutatingMixParametersDirectly_NeverMarksDirty()
+    {
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        session.Save(TempProjectPath());
+        Assert.False(session.IsDirty);   // clean baseline, mirrors a just-saved project
+
+        layer.MixParameters.Pan = 0.5f;   // exactly what LayerRowViewModel.Pan's setter does
+
+        Assert.False(session.IsDirty);   // characterizes the bug: nothing marks dirty without CommitEdit()
+    }
 }
