@@ -147,6 +147,8 @@ public partial class RecordSetupWindow : Window
 
         var videoDevice = _dshowVideoDevices[CameraCombo.SelectedIndex];
         var dshowAudioDevice = _dshowAudioDevices[MicCombo.SelectedIndex];
+        // TODO(polish): status text uses the zero-based LayerId ("layer 0"); switch new takes and
+        // retakes to 1-based together (retake spec, Known limitations: "Status numbering in the dialog").
         int takeLayerId = _retakeLayerId ?? _layers.Layers.Count;           // status text only (+ the unused _pendingLayerId)
         string takeVerb = _retakeLayerId is null ? "Recording" : "Re-recording";
         // Retake spec (a): ONE list drives both "is there a guide?" and the guide mix. For a new take
