@@ -207,11 +207,17 @@ public partial class MainWindow : Window
         _applyingHistory = true;
         try
         {
+            var previousRows = _tracks.ToList();   // bug audit #9: RestoreTracksFromLayers clears _tracks
+
             if (!restore()) return false;
 
             MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
             MasterVolumeSlider.Value = _session.MasterVolumeDb;
             RestoreTracksFromLayers();
+            // Bug audit #9: keep polling any FabFilter editor still open across the undo. AFTER
+            // restore() (baseline = post-restore live state), BEFORE RefreshPreviewLive (no chain
+            // build can create an instance in between), synchronous (no poll tick can land in between).
+            LayerRowViewModel.CarryEditorTracking(previousRows, _tracks);
             if (!_masterSelected && _selectedLayer is not null)
             {
                 var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId);

@@ -372,6 +372,44 @@ public class LayerRowViewModel : INotifyPropertyChanged
         return changed;
     }
 
+    /// <summary>Bug audit #9: MainWindow.RestoreTracksFromLayers builds brand-new rows on every
+    /// Undo/Redo, but the hosted instances -- and any editor window open on them -- survive the undo
+    /// by design (bug audit #5). Carries each old row's opened-slot tracking to the new row with the
+    /// same LayerId (the instance cache's key, not SlotNumber/CellIndex), so an editor left open across
+    /// a Ctrl+Z keeps being polled. Must run AFTER the session restore: the baseline is the live
+    /// instance's state as it is now (post-PushSavedStateIntoLiveInstances), so the first poll after
+    /// the undo sees no change. A slot with no live instance is not carried -- after Open/New's
+    /// ReleaseAll there is none, so this is a no-op there and a later fresh instance is never diffed
+    /// against a stale baseline (bug audit #5 §4).</summary>
+    internal static void CarryEditorTracking(IEnumerable<LayerRowViewModel> previousRows, IEnumerable<LayerRowViewModel> newRows)
+    {
+        var service = SharedHostedService;
+        if (service is null) return;
+
+        var openedByLayerId = new Dictionary<int, FxSlot[]>();
+        foreach (var old in previousRows)
+        {
+            if (old._layer is not null && old._openedHostedSlots.Count > 0)
+                openedByLayerId[old._layer.LayerId] = old._openedHostedSlots.ToArray();
+        }
+        if (openedByLayerId.Count == 0) return;
+
+        foreach (var row in newRows)
+        {
+            if (row._layer is null) continue;
+            if (!openedByLayerId.TryGetValue(row._layer.LayerId, out var slots)) continue;
+
+            foreach (var slot in slots)
+            {
+                var instance = service.TryGetLiveInstance(row._layer.LayerId, slot.Stage);
+                if (instance is null) continue;   // released (Open/New): nothing to track
+
+                row._openedHostedSlots.Add(slot);
+                row._lastPolledHostedState[slot] = service.PullLiveState(instance);
+            }
+        }
+    }
+
     // ----- Melodyne slot (v8 redesign: styled the same as the FX slots above -- a plain enable
     // checkbox + name, no separate mode picker). PitchBackendSelection.NativeAutomatic stays a
     // valid enum value and MixEngine still handles it -- it's just never reachable from this UI,
