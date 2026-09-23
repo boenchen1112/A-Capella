@@ -176,7 +176,7 @@
                             </MenuItem>
                             <MenuItem Header="_Tools">
                                 <MenuItem Header="_Recording setup..." Click="RecordingSetupMenuItem_Click"/>
-                                <MenuItem Header="_Calibrate latency..." Click="RecordingSetupMenuItem_Click"/>
+                                <MenuItem Header="_Calibrate latency..." Click="CalibrateLatencyMenuItem_Click"/>
                                 <Separator/>
                                 <MenuItem Header="_Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
                             </MenuItem>
