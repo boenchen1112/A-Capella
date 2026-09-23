@@ -20,6 +20,8 @@ namespace Acapella.App;
 /// calibration, guide-track playback against prior layers, capture start/stop, and zombie-layer
 /// validation (M6). On success the created layer is exposed via CreatedLayer and DialogResult is
 /// true; the caller (MainWindow) just attaches it to the track row.
+/// In retake mode (retakeLayerId set) it never touches the model: the take is exposed via
+/// RetakeResult and MainWindow applies it to the existing layer (retake spec D3).
 /// </summary>
 public partial class RecordSetupWindow : Window
 {
@@ -43,12 +45,21 @@ public partial class RecordSetupWindow : Window
 
     public LayerModel? CreatedLayer { get; private set; }
 
+    /// <summary>Retake mode only (retake spec D3): the new take's file and measured latency offset,
+    /// for MainWindow to apply to the existing layer via LayerModel.ReplaceSource. Null in new-layer
+    /// mode, and in retake mode until a take passes M6.</summary>
+    public (string SourcePath, double CalibratedOffsetMs)? RetakeResult { get; private set; }
+
+    /// <summary>Null = record a new layer (the pre-retake behaviour). Otherwise the LayerId whose
+    /// source this take will replace: excluded from the guide, and exempt from the layer cap.</summary>
+    private readonly int? _retakeLayerId;
+
     /// <summary>Current metronome BPM, read by MainWindow after the dialog closes so the next
     /// dialog (and a saved project) carries the last value forward -- BPM has no home in the
     /// main window anymore since the spec confines the metronome to this dialog.</summary>
     public double Bpm => _metronome.Bpm;
 
-    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm)
+    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null)
     {
         InitializeComponent();
         _deviceCatalog = deviceCatalog;
@@ -57,6 +68,7 @@ public partial class RecordSetupWindow : Window
         _layers = layers;
         _mixEngine = mixEngine;
         _mediaDir = mediaDir;
+        _retakeLayerId = retakeLayerId;
         _outputDevice = _deviceCatalog.GetDefaultRenderDevice();
         _metronome.Bpm = initialBpm;
         BpmTextBox.Text = initialBpm.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
@@ -127,7 +139,7 @@ public partial class RecordSetupWindow : Window
             return;
         }
 
-        if (_layers.Layers.Count >= LayerCollection.MaxLayers)
+        if (RecordTakeRules.IsBlockedByLayerCap(_layers.Layers.Count, _retakeLayerId))   // retake spec D2
         {
             StatusText.Text = "Layer cap reached (4).";
             return;
@@ -135,7 +147,11 @@ public partial class RecordSetupWindow : Window
 
         var videoDevice = _dshowVideoDevices[CameraCombo.SelectedIndex];
         var dshowAudioDevice = _dshowAudioDevices[MicCombo.SelectedIndex];
-        int nextLayerId = _layers.Layers.Count;                           // unchanged: still drives the guide-track branch (below) and status text
+        int takeLayerId = _retakeLayerId ?? _layers.Layers.Count;           // status text only (+ the unused _pendingLayerId)
+        string takeVerb = _retakeLayerId is null ? "Recording" : "Re-recording";
+        // Retake spec (a): ONE list drives both "is there a guide?" and the guide mix. For a new take
+        // it is every layer, so Count > 0 is exactly the old `nextLayerId > 0`.
+        var guideLayers = RecordTakeRules.GuideLayers(_layers.Layers, _retakeLayerId);
         Directory.CreateDirectory(_mediaDir);
         string outputPath = RecordingPathAllocator.Allocate(_mediaDir);   // bug audit #6: never an existing file
 
@@ -151,7 +167,7 @@ public partial class RecordSetupWindow : Window
         double calibratedOffsetMs = 0;
         _pendingGuideReferenceMono = null;
 
-        if (nextLayerId > 0)
+        if (guideLayers.Count > 0)
         {
             var loopbackDevice = FindLoopbackDevice();
             calibratedOffsetMs = loopbackDevice is not null
@@ -160,7 +176,7 @@ public partial class RecordSetupWindow : Window
 
             const int sampleRate = 44100;
             var timeline = new LayerTimeline(_mixEngine);
-            var mixInputs = _layers.Layers.Select(l => timeline.AudioInput(l, sampleRate)).ToList();
+            var mixInputs = guideLayers.Select(l => timeline.AudioInput(l, sampleRate)).ToList();
             var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
 
             // A second, independent provider graph built from the same mixInputs (BuildMix's
@@ -181,12 +197,12 @@ public partial class RecordSetupWindow : Window
             _guideTrackPlayer = new GuideTrackPlayer();
             _guideTrackPlayer.Play(_outputDevice.Id, guideMix);
 
-            StatusText.Text = $"Recording layer {nextLayerId} with guide track (offset {calibratedOffsetMs:F1}ms)...";
+            StatusText.Text = $"{takeVerb} layer {takeLayerId} with guide track (offset {calibratedOffsetMs:F1}ms)...";
         }
         else
         {
             _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
-            StatusText.Text = $"Recording layer {nextLayerId}...";
+            StatusText.Text = $"{takeVerb} layer {takeLayerId}...";
         }
 
         if (_metronome.Enabled)
@@ -204,7 +220,7 @@ public partial class RecordSetupWindow : Window
         MicCombo.IsEnabled = false;
 
         // Stash for StopRecording's zombie-layer bookkeeping.
-        _pendingLayerId = nextLayerId;
+        _pendingLayerId = takeLayerId;
         _pendingOutputPath = outputPath;
         _pendingCalibratedOffsetMs = calibratedOffsetMs;
     }
@@ -309,9 +325,18 @@ public partial class RecordSetupWindow : Window
             return;
         }
 
-        var layer = _layers.Add(LayerKind.RecordedAV, _pendingOutputPath);
-        layer.CalibratedOffsetMs = MeasureCalibratedOffsetMs(_pendingOutputPath, _pendingCalibratedOffsetMs);
-        CreatedLayer = layer;
+        if (_retakeLayerId is null)
+        {
+            var layer = _layers.Add(LayerKind.RecordedAV, _pendingOutputPath);                              // unchanged
+            layer.CalibratedOffsetMs = MeasureCalibratedOffsetMs(_pendingOutputPath, _pendingCalibratedOffsetMs); // unchanged
+            CreatedLayer = layer;                                                                            // unchanged
+        }
+        else
+        {
+            // Retake spec D3: never mutate the model from inside the modal loop -- MainWindow applies
+            // this to the existing layer and pushes the undo step in one synchronous block.
+            RetakeResult = (_pendingOutputPath, MeasureCalibratedOffsetMs(_pendingOutputPath, _pendingCalibratedOffsetMs));
+        }
         DialogResult = true;
         Close();
     }
