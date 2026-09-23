@@ -9,11 +9,19 @@ public static class LayerImportPlanner
 {
     public readonly record struct Assignment(int CellIndex, string FilePath);
 
+    /// <summary>Unoccupied grid cells in ascending order, never beyond LayerCollection.MaxLayers. The one
+    /// definition of "free slot", shared by Plan (multi-file import) and the Record entry points (bug
+    /// audit #7), so both fill the lowest free cell first.</summary>
+    public static IReadOnlyList<int> FreeCells(IEnumerable<int> occupiedCellIndices)
+    {
+        var occupied = occupiedCellIndices.ToHashSet();
+        return Enumerable.Range(0, LayerCollection.MaxLayers).Where(c => !occupied.Contains(c)).ToList();
+    }
+
     public static (IReadOnlyList<Assignment> Assignments, IReadOnlyList<string> Skipped) Plan(
         IEnumerable<int> occupiedCellIndices, IEnumerable<string> filePaths)
     {
-        var occupied = occupiedCellIndices.ToHashSet();
-        var freeCells = Enumerable.Range(0, LayerCollection.MaxLayers).Where(c => !occupied.Contains(c)).ToList();
+        var freeCells = FreeCells(occupiedCellIndices);
 
         // TODO(polish): natural sort so "take10" follows "take2" (spec Known limitations).
         var sorted = filePaths

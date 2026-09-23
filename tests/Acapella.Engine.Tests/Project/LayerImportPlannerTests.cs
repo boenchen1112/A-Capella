@@ -89,4 +89,36 @@ public class LayerImportPlannerTests
         Assert.Equal(new LayerImportPlanner.Assignment(0, @"C:\a\take.wav"), assignments[0]);
         Assert.Equal(new LayerImportPlanner.Assignment(1, @"C:\b\take.wav"), assignments[1]);
     }
+
+    [Fact]
+    public void FreeCells_EmptyProject_IsEveryCellAscending()
+    {
+        var free = LayerImportPlanner.FreeCells(Array.Empty<int>());
+
+        Assert.Equal(new[] { 0, 1, 2, 3 }, free);
+    }
+
+    [Fact]
+    public void FreeCells_GapBelowHighestOccupied_ComesFirst()
+    {
+        var free = LayerImportPlanner.FreeCells(new[] { 0, 2 });
+
+        Assert.Equal(new[] { 1, 3 }, free);
+    }
+
+    [Fact]
+    public void FreeCells_OccupiedInAnyOrder_IsSortedAscending()
+    {
+        var free = LayerImportPlanner.FreeCells(new[] { 3, 1 });
+
+        Assert.Equal(new[] { 0, 2 }, free);
+    }
+
+    [Fact]
+    public void FreeCells_AllOccupied_IsEmpty()
+    {
+        var free = LayerImportPlanner.FreeCells(new[] { 2, 0, 3, 1 });
+
+        Assert.Empty(free);
+    }
 }
