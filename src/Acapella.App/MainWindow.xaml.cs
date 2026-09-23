@@ -494,10 +494,10 @@ public partial class MainWindow : Window
         MessageBox.Show(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    /// <summary>Shared by a track row's own "Record" button and the Tools menu's "Recording
-    /// setup..."/"Calibrate latency..." entries -- both funnel into the same capture-setup dialog
-    /// (its Calibrate button is usable standalone, without completing a recording).</summary>
-    private void OpenRecordSetupForRow(LayerRowViewModel row)
+    /// <summary>Opens the capture-setup dialog. If a take is recorded, attaches it to the row that
+    /// resolveRow returns. resolveRow runs ONLY on success, AFTER the dialog closes, so a cancelled or
+    /// calibrate-only session never creates or claims a row (bug audit #7).</summary>
+    private void OpenRecordSetup(Func<LayerRowViewModel?> resolveRow)
     {
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm) { Owner = this };
         bool? result = dialog.ShowDialog();
@@ -505,6 +505,9 @@ public partial class MainWindow : Window
 
         if (result == true && dialog.CreatedLayer is not null)
         {
+            var row = resolveRow();
+            if (row is null) return;   // unreachable in practice: the dialog refuses to record at the cap (RecordSetupWindow.xaml.cs:130)
+
             // CellIndex binds to the row's own position (audit B8), not LayerCollection's
             // insertion order -- e.g. row 2 recording before row 1 must still land in grid cell 2.
             dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
@@ -517,19 +520,43 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>A strip's own Rec button: records into that strip.</summary>
+    private void OpenRecordSetupForRow(LayerRowViewModel row) => OpenRecordSetup(() => row);
+
+    /// <summary>Toolbar ⏺ and Tools > Recording setup...: records into the lowest free layer slot,
+    /// reusing an existing empty strip before appending one (bug audit #7).</summary>
     private void RecordingSetupMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        if (_tracks.Count >= LayerCollection.MaxLayers)
+        int? targetCell = LowestFreeCell();   // read BEFORE ShowDialog -- see bug audit #7 step 3
+        if (targetCell is null)
         {
             StatusText.Text = "Layer cap reached (4).";
             return;
         }
+        OpenRecordSetup(() => RowForCell(targetCell.Value));
+    }
 
-        var row = new LayerRowViewModel(_tracks.Count + 1);
-        row.LiveParamChanged += DebounceRefreshPreview;
-        _tracks.Add(row);
-        UpdateAddLayerButtonState();
-        OpenRecordSetupForRow(row);
+    /// <summary>Tools > Calibrate latency...: opens the same dialog for its Calibrate button. It never
+    /// creates or claims a row and is not blocked by the layer cap, because calibration is not a
+    /// layer. If the user records from here anyway, the take goes to the lowest free slot, as with ⏺.</summary>
+    private void CalibrateLatencyMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        int? targetCell = LowestFreeCell();   // same ordering rule; null (a full project) is fine here
+        OpenRecordSetup(() => targetCell is int cell ? RowForCell(cell) : null);
+    }
+
+    private int? LowestFreeCell()
+    {
+        var free = LayerImportPlanner.FreeCells(_layers.Layers.Select(l => l.CellIndex));
+        return free.Count > 0 ? free[0] : null;
+    }
+
+    /// <summary>The row for a free grid cell: the existing empty row if there is one, else one appended
+    /// row (rows are contiguous by SlotNumber, so at most one append -- multi-file spec D4).</summary>
+    private LayerRowViewModel RowForCell(int cellIndex)
+    {
+        while (_tracks.Count <= cellIndex) AppendEmptyRow();
+        return _tracks[cellIndex];
     }
 
     private LayerRowViewModel AppendEmptyRow()
@@ -798,7 +825,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Toolbar's Record button (image shows it distinct from Play/Stop): opens the same
-    /// capture-setup dialog as Tools > Recording setup... for the next empty layer slot.</summary>
+    /// capture-setup dialog as Tools > Recording setup... for the next empty layer slot (bug audit
+    /// #7: reuses an empty strip before appending).</summary>
     private void RecordButton_Click(object sender, RoutedEventArgs e) => RecordingSetupMenuItem_Click(sender, e);
 
     private void RestartButton_Click(object sender, RoutedEventArgs e) => RunPreviewCommand(_previewEngine.RestartAsync());
