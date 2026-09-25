@@ -1,8 +1,6 @@
 # CLAUDE.md — Acapella Rebuild Project
 
-This file governs how Claude Code should operate autonomously on this project. Read this before starting any session. The full technical plan is in `Acapella_Build_Plan.md` — that file is the source of truth for phases, architecture, and acceptance criteria. This file is the source of truth for *how to behave* while executing it.
-
-There is no pre-existing app to build on. This is a from-scratch project. Phase 0 of the build plan is project scaffolding, not a code audit.
+This file governs how Claude Code should operate autonomously on this project. Read this before starting any session. The build plan (see Reference, below) is the source of truth for phases, architecture, and acceptance criteria. This file is the source of truth for *how to behave* while executing it.
 
 ## Prime Directive
 
@@ -20,7 +18,7 @@ Quality passes happen later, as a separate explicit phase, only when asked for.
 
 ## Operating Mode: Continuous, Minimal-Pause
 
-Default behavior is to keep working without stopping to ask permission. These four rules exist to catch rare, genuinely blocking situations — they are not routine checkpoints, and should almost never trigger during normal work. **If in doubt, do NOT pause.** Pick the most reasonable default, note the assumption in the commit message, and keep going. Only pause in these four cases:
+Default behavior is to keep working without stopping to ask permission. The three pause rules below exist to catch rare, genuinely blocking situations — they are not routine checkpoints, and should almost never trigger during normal work. Outside them, pick the most reasonable default, note the assumption in the commit message, and keep going.
 
 ### 1. Destructive / Irreversible Actions — PAUSE
 Stop and ask before:
@@ -38,14 +36,14 @@ Everything *inside* the repo that's tracked by git does not need a pause before 
 Stop and ask before:
 - Swapping a chosen library/technology from the plan (e.g., replacing JUCE, Rubber Band, WPF, NAudio, SkiaSharp, or the FFmpeg CLI-plus-pipes approach with an alternative).
 - Adding a new dependency not listed in the plan.
-- Changing any of the locked-in product decisions: 4-layer cap, 2x2 grid layout, MP4 output, the FX list (EQ/pan/noise gate/metronome/pitch correction), Melodyne-via-VST3/ARA as the primary pitch path with a native fallback.
+- Changing any of the locked-in product decisions: 4-layer cap, 2x2 grid layout, MP4 output, the FX list (see the scope snapshot under Reference), Melodyne-via-VST3/ARA as the primary pitch path with a native fallback.
 - Expanding scope to features explicitly marked out-of-scope in the plan (collaboration, other layouts, more layers, other output formats).
 
 Small implementation-detail choices within an already-approved technology do not need a pause. One pre-approved escalation: if piped preview decode via the FFmpeg CLI proves too slow, switching to FFmpeg.AutoGen is allowed without a pause — the plan already anticipates this, so it isn't a scope change.
 
 ### 3. Input Only I Can Provide — PAUSE
 Stop and ask when:
-- Phase 2A's plugin scanner can't find an ARA-capable Melodyne install. Note: Melodyne is already installed and used as a plugin via FL Studio, so it should be sitting in the standard shared VST3 folder and discoverable without any new install — this pause condition is a fallback in case the scan doesn't find it or the installed tier turns out not to expose ARA, not an expected blocker.
+- The plugin scanner stops finding Melodyne or the FabFilter set listed under Environment. Both are confirmed installed, so a miss means the machine changed, and only I can reinstall.
 - A **[human]**-tagged acceptance criterion needs judgment (does this sound in sync, does the pitch correction sound natural, does this look right) — batch these into short check-ins at the end of each phase rather than after every change, per the Definition of Done above.
 - Something in the brief is genuinely ambiguous and no reasonable default resolves it.
 
@@ -63,13 +61,13 @@ Stop and ask when:
 
 ## Recorded Media
 
-Test recordings and other captured audio/video are large binaries and don't belong in git history. Add a `media/` (or `recordings/`) directory to `.gitignore`. This directory is still protected by Pause Rule 1 (deleting anything in it requires asking) — it's just not backed by git, so be more careful with it than with tracked code.
+Test recordings and other captured audio/video are large binaries and don't belong in git history; `media/` and `recordings/` are gitignored. These directories are still protected by Pause Rule 1 (deleting anything in them requires asking) — they're just not backed by git, so be more careful with them than with tracked code.
 
 ## Testing Approach
 
 - Write automated tests for anything with an objective, checkable acceptance criterion: latency offset math, project file save/load round-trips, mixdown correctness, frame compositing placement, export file validity. These are the **[auto]**-tagged criteria in the build plan.
 - Do not write tests for subjective qualities (does it sound natural, does it look right, does it feel in sync to a listener). Those are the **[human]**-tagged criteria — verified by the person at phase-boundary check-ins (Pause Rule 3), not asserted programmatically.
-- Where a criterion looks subjective but can be made objective, prefer that: e.g. a sync-offset check doesn't need a human to listen if a recorded click track's offset is measured via a cross-correlation script instead. A virtual loopback audio device (VB-Cable or Windows' Stereo Mix) makes latency and "does the metronome leak into the recording" checks fully automatable — set one up during Phase 1 rather than defaulting straight to a human check.
+- Where a criterion looks subjective but can be made objective, prefer that: e.g. a sync-offset check doesn't need a human to listen if a recorded click track's offset is measured via a cross-correlation script instead. A virtual loopback audio device (VB-Cable or Windows' Stereo Mix) makes latency and "does the metronome leak into the recording" checks fully automatable — use one rather than defaulting straight to a human check.
 - A phase is "done" when its **[auto]** criteria in the build plan are met, not when the code is maximally clean.
 - Regression carve-out: if a later phase's change touches code an earlier phase's automated tests cover, re-run those tests once. A failure means the earlier phase's "done" status is revoked until it's fixed.
 
@@ -79,8 +77,8 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Git
 - Visual Studio "18" (2026) Community, C++ workload (MSVC 14.51.36231, Windows 10 SDK 10.0.26100.0)
 - Standalone CMake 4.3.4 (`cmake` on PATH)
-- Melodyne (via FL Studio's plugin install): `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3`, v5.4.1.4. Tier/ARA-factory support unconfirmed at runtime (deferred to Phase 2A's spike).
-- **All five FabFilter v6 targets, confirmed present** under `C:\Program Files\Common Files\VST3\FabFilter\`: Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of v6 scope). Reinstalled 2026-07-14 under this vendor subfolder — a prior install had them flat under `VST3\` directly; `HostedPluginCatalog.cs` was updated to match.
+- Melodyne (via FL Studio's plugin install): `C:\Program Files\Common Files\VST3\Celemony\Melodyne\Melodyne.vst3`, v5.4.1.4, ARA-capable (confirmed at runtime in Phase 2A).
+- **All five FabFilter targets, confirmed present** under `C:\Program Files\Common Files\VST3\FabFilter\` (the path `HostedPluginCatalog.cs` expects): Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2 (also Pro-DS, Pro-MB present but out of scope).
 
 **Native module:** always build via `build.ps1`, never `cmake -G "Visual Studio 18 2026"` (broken VS toolset file — details in `src/Acapella.Host.Native/CLAUDE.md`).
 
@@ -90,13 +88,13 @@ Test recordings and other captured audio/video are large binaries and don't belo
 - Video/audio capture, decode, encode, mux: FFmpeg via CLI + raw pipes (escalate to FFmpeg.AutoGen only if piped preview decode is too slow — pre-approved, see Pause Rule 2)
 - Compositing: SkiaSharp (SkiaSharp.Views.WPF for the WPF integration)
 - Pitch correction fallback: Rubber Band Library + a pitch-tracking library
-- Plugin hosting bridge (v6 P3a, also used by Phase 2A): JUCE (C++, `juce_audio_processors`' `VST3PluginFormat`) exposing a plain C ABI, called from C# via P/Invoke — not C++/CLI. Own-window (JUCE `DocumentWindow`) native editors, never embedded inline.
-- Hosted plugin vendors (v6, hard limit): only FabFilter (Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2) and Melodyne. No other vendor without a new explicit decision.
+- Plugin hosting bridge (FabFilter and Melodyne/ARA alike): JUCE (C++, `juce_audio_processors`' `VST3PluginFormat`) exposing a plain C ABI, called from C# via P/Invoke — not C++/CLI. Own-window (JUCE `DocumentWindow`) native editors, never embedded inline.
+- Hosted plugin vendors (hard limit): only FabFilter (Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G, Pro-R 2) and Melodyne. No other vendor without a new explicit decision.
 
 **Canonical commands:**
 - Build native module (only needed when `src/Acapella.Host.Native` changes): `powershell -File src/Acapella.Host.Native/build.ps1` — must run *before* `dotnet build` picks up a changed `AcapellaHostNative.dll` (both `Acapella.App.csproj` and `Acapella.Engine.Tests.csproj` copy it into their own output post-build).
 
 ## Reference
 
-- Full phased plan, architecture, and per-phase acceptance criteria: `Acapella_Build_Plan_v6.md` (supersedes v5; v5/v4/original kept for history).
+- Full phased plan, architecture, and per-phase acceptance criteria: `Acapella_Build_Plan_v7.md`, written as a delta on `Acapella_Build_Plan_v6.md`, so read both (v5 and the original `Acapella_Build_Plan.md` are kept for history only).
 - Confirmed scope snapshot: 4-layer cap, upload-or-record for layer 1, toggleable metronome, EQ/pan/noise gate/compressor/limiter/pitch-correction/reverb FX (native + FabFilter-hosted backends), fixed 2x2 grid, MP4 output, native Windows C#/.NET + JUCE native module, Melodyne (ARA) + FabFilter (generic VST3) as the only hosted-plugin vendors.

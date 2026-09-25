@@ -24,7 +24,7 @@ minkernel\crts\ucrt\src\appcrt\heap\debug_heap.cpp(908) : Assertion failed: is_b
 Root cause traced to `MainWindow`'s startup `Task.Run(() => _hostedService.EnsureScanned())`, which
 calls `aca_scan_plugin` (JUCE's `VST3PluginFormat::findAllTypesForFile`) once per known FabFilter/
 Melodyne VST3 path, off the JUCE-message thread that `aca_initialize()` bound. Investigated once
-already (previously written up in a now-deleted `Message_to_Claude_Code.md`): re-ran the full test
+already: re-ran the full test
 suite with `_CRTDBG_CHECK_ALWAYS_DF` (a full heap walk on *every* alloc/free — catches
 overruns/double-frees at the exact call site) and it passed clean, i.e. no real corruption was ever
 found — just a debug-CRT report triggered by cross-thread/plugin-DLL-unload interaction that the
