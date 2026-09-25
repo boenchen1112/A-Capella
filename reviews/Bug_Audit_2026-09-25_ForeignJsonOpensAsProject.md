@@ -232,6 +232,7 @@ The user then sees `Open failed: Not an Acapella project file: package.json` (`M
 ### Every file the app has ever saved still opens
 
 **The marker is the presence of `LayoutId`, and every save has had it.**
+- The shortest argument is that `LayoutId` has had the `= "2x2"` initializer at every revision. `git log -G LayoutId -- src` shows nothing ever assigned it anything else, and `JsonOptions` never skipped properties. So every `ProjectFileDto` ever serialized, however it was constructed, wrote `"LayoutId": "2x2"`. The bullets below confirm it path by path.
 - `ProjectFileDto` and `ProjectPersistenceService` have six revisions: `56a7577`, `c106f51`, `1ab4511`, `8bb76cf`, `1968b19`, `4df6ddb`. At every one, `ToDto` sets `LayoutId = "2x2"`, and `JsonOptions` is `{ WriteIndented = true }`. There is no naming policy and no null-skipping, so the key is always written as `"LayoutId"` (PascalCase).
 - `git log -G LayoutId -- src` touches only `56a7577`. The line has never changed.
 - `ToDto` is the only constructor of a `ProjectFileDto` in `src/`, ever (`git log -S "new ProjectFileDto" -- src`: `56a7577` only).
@@ -254,7 +255,7 @@ The user then sees `Open failed: Not an Acapella project file: package.json` (`M
 ### Rejected alternatives
 
 - **Throw from `FromDto` when `LayoutId` is null** (#16's suggested direction). `FromDto` also runs for every Undo/Redo (`ProjectSession.Restore`, `:164`), and `ProjectPersistenceTests` calls it on in-memory DTOs. Neither is foreign input. `LoadFromFile` is the file boundary, and the check belongs there.
-- **`[JsonRequired]` on `LayoutId`.** It keeps the initializer and gets the deserializer to enforce presence. But the user then sees `Open failed: JSON deserialization for type 'Acapella.Engine.Persistence.ProjectFileDto' was missing required properties, including the following: LayoutId`, which reads like corruption, not "wrong file". It also applies to the undo stack's own `Deserialize` (`ProjectUndoStack.cs:82-83`).
+- **`[JsonRequired]` on `LayoutId`.** It keeps the initializer and gets the deserializer to enforce presence. But the user then sees `System.Text.Json`'s generic `JsonException` text, something like "JSON deserialization for type '...ProjectFileDto' was missing required properties, including the following: LayoutId" (wording not measured here), which reads like corruption, not "wrong file". It also applies to the undo stack's own `Deserialize` (`ProjectUndoStack.cs:82-83`).
 - **Keep the initializer and probe the raw JSON with `JsonDocument` for a `LayoutId` key.** It is equivalent, but parses the file twice. And `{"LayoutId":null}` would pass the probe, then open as an empty project, because nothing reads the value.
 - **Reject "empty-looking" DTOs** (no layers and all defaults). The counter-example is File > New then Ctrl+S: that legitimate save is exactly `LayoutId` + defaults + `"Layers": []`, and this would reject it.
 - **Add a `FormatVersion` field and require it.** Every existing save lacks it, so it would have to be optional for old files. An optional field can't tell an old save from `package.json`. `LayoutId` already does that job.
@@ -462,6 +463,7 @@ Notes:
 - **Save As on a project opened as plain `foo.json` proposes `foo.json.acapella.json`.** Reasoned from code, not run.
   - **Mechanism:** `SaveProject` pre-fills `dialog.FileName = "foo.json"` (`MainWindow.xaml.cs:1048`). L7 then appends the suffix to any name that doesn't end in `.acapella.json` (`:1055-1057`).
   - **Effect:** accepting the default writes a second file with a doubled extension next to the original, and `CurrentFilePath` moves to it.
+  - The Save-affordances spec's pre-fill reasoning (`Feature_Spec_2026-09-23_SaveAffordances.md:305`) considered only names that already end in the suffix. This is distinct from the original L7 (`Bug_Audit_2026-07-12.md:141`), which was about `DefaultExt`.
   - Cosmetic, with no data loss. A fix would strip `.json` before appending, or pre-fill the stem.
 - **An out-of-range `CellIndex` in a loaded project creates more than four sidebar rows.** Reasoned only.
   - **Mechanism:** `LayerCollection.Restore` checks only the layer *count* (`LayerModel.cs:103-104`). `RestoreTracksFromLayers` then creates `max(CellIndex)+1` rows (`MainWindow.xaml.cs:791-802`). So `"CellIndex": 6` yields 7 rows in a 2x2 app.
