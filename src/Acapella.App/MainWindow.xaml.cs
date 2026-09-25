@@ -292,6 +292,14 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Space:
+                // Bug audit #14: Space is ButtonBase's own activation key (Button/CheckBox/
+                // ToggleButton/RadioButton all invoke Click on Space) -- don't steal it from a
+                // focused one of those, or it silently fails to toggle/click and fires Play/Stop
+                // instead (see doc's root cause 2-3). Checked here, not added to the TextBox
+                // exclusion above, because Left/Right/Home have no such conflict for these
+                // controls (root cause fact 3's table lists none) -- see Ordering subtleties for
+                // why broadening the exclusion is a regression, not a simplification.
+                if (Keyboard.FocusedElement is ButtonBase) return;
                 if (_previewEngine.IsPlaying) StopButton_Click(this, new RoutedEventArgs());
                 else PlayButton_Click(this, new RoutedEventArgs());
                 e.Handled = true;
