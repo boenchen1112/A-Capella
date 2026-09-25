@@ -123,9 +123,10 @@ public sealed class ProjectSession
     }
 
     /// <summary>Replaces the session with the project at filePath; undo history starts fresh.
-    /// Releases every live hosted-plugin instance and ARA session FIRST, before restoring (bug
-    /// audit #5): layer ids are positional and restart at 0 per project, so without this the
-    /// opened project's layer 0 would silently inherit the previous project's live plugin
+    /// Reads and converts the file first (bug audit #16), then releases every live hosted-plugin
+    /// instance and ARA session before installing it (bug audit #5): layer ids are positional and
+    /// restart at 0 per project, so without this the opened project's layer 0 would silently
+    /// inherit the previous project's live plugin
     /// instances -- PushSavedStateIntoLiveInstances only pushes non-null saved state, so a layer
     /// with no hosted state of its own could never clear a stale instance, and Snapshot()'s
     /// SyncLiveStateIntoParameters would then bake the stale state into the opened project's undo
@@ -134,10 +135,13 @@ public sealed class ProjectSession
     /// chain build creates a fresh instance seeded from the opened project's own state.</summary>
     public void Open(string filePath)
     {
-        _mixEngine.ReleaseAllHostedInstances();          // unchanged, still FIRST (bug audit #5)
-        Restore(_persistence.LoadFromFile(filePath));
+        // Bug audit #16: read AND convert before releasing -- a file that fails either step must
+        // leave the current project, including its live plugin instances, untouched.
+        var loaded = _persistence.FromDto(_persistence.LoadFromFile(filePath));
+        _mixEngine.ReleaseAllHostedInstances();          // still before any layer is replaced (bug audit #5)
+        Apply(loaded);
         _undoStack.Reset(Snapshot());
-        SetSaveState(filePath, dirty: false);            // LAST: Restore() assigns MetronomeBpm/MasterVolumeDb through their dirty-marking setters
+        SetSaveState(filePath, dirty: false);            // LAST: Apply() assigns MetronomeBpm/MasterVolumeDb through their dirty-marking setters
     }
 
     /// <summary>Empties the project (keeping the last-used BPM); undo history starts fresh.
@@ -157,15 +161,18 @@ public sealed class ProjectSession
     private bool Restore(ProjectFileDto? dto)
     {
         if (dto is null) return false;
+        Apply(_persistence.FromDto(dto));
+        return true;
+    }
 
-        var (layers, bpm, latencyOffset, masterVolumeDb) = _persistence.FromDto(dto);
-        Layers.Restore(layers.Layers);
-        MetronomeBpm = bpm;
-        LatencyOffsetMsUsed = latencyOffset;
-        MasterVolumeDb = masterVolumeDb;
+    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) loaded)
+    {
+        Layers.Restore(loaded.Layers.Layers);
+        MetronomeBpm = loaded.MetronomeBpm;
+        LatencyOffsetMsUsed = loaded.LatencyOffsetMsUsed;
+        MasterVolumeDb = loaded.MasterVolumeDb;
 
         foreach (var layer in Layers.Layers)
             _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
-        return true;
     }
 }
