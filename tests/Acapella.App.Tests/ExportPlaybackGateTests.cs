@@ -23,6 +23,7 @@ public class ExportPlaybackGateTests
         }
         finally
         {
+            window.ExportMenuItem.IsEnabled = true;   // bug audit #15: a close with the export flag down is now refused
             window.Close();
         }
     }
@@ -62,6 +63,7 @@ public class ExportPlaybackGateTests
         }
         finally
         {
+            window.ExportMenuItem.IsEnabled = true;   // bug audit #15: a close with the export flag down is now refused
             window.Close();
         }
     }
