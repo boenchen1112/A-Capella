@@ -454,10 +454,10 @@ public class ProjectSessionTests : IDisposable
     [InlineData("empty file", "")]
     [InlineData("JSON array", "[1, 2]")]
     [InlineData("literal null", "null")]
-    [InlineData("unknown layer Kind", "{\"Layers\":[{\"LayerId\":0,\"Kind\":\"Bogus\",\"SourcePath\":\"x.wav\"}]}")]
-    [InlineData("null Layers", "{\"Layers\":null}")]
-    [InlineData("bad hosted-state base64", "{\"Layers\":[{\"LayerId\":0,\"Kind\":\"RecordedAV\",\"SourcePath\":\"x.wav\",\"MixParameters\":{\"EqHostedStateBase64\":\"!!\"}}]}")]
-    [InlineData("five layers", "{\"Layers\":[{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"}]}")]
+    [InlineData("unknown layer Kind", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"Bogus\",\"SourcePath\":\"x.wav\"}]}")]
+    [InlineData("null Layers", "{\"LayoutId\":\"2x2\",\"Layers\":null}")]
+    [InlineData("bad hosted-state base64", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"RecordedAV\",\"SourcePath\":\"x.wav\",\"MixParameters\":{\"EqHostedStateBase64\":\"!!\"}}]}")]
+    [InlineData("five layers", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"}]}")]
     public void FailedOpen_KeepsTheCurrentProjectsLivePluginInstances(string description, string? fileContent)
     {
         var session = new ProjectSession(_mixEngine);
@@ -493,6 +493,108 @@ public class ProjectSessionTests : IDisposable
 
         Assert.True(plugin.Disposed);
         Assert.NotSame(plugin, OpenEqEditorLiveInstance(session.Layers.Layers.Single()));
+    }
+
+    // ----- Bug audit #17: a JSON file that is not a project must not open as an empty one -----
+
+    // Verbatim output of the first persistence build (56a7577), the oldest format ever saved.
+    private const string SavedBy56a7577Empty = """
+        {
+          "LayoutId": "2x2",
+          "MetronomeBpm": 120,
+          "LatencyOffsetMsUsed": null,
+          "Layers": []
+        }
+        """;
+
+    private const string SavedBy56a7577OneLayer = """
+        {
+          "LayoutId": "2x2",
+          "MetronomeBpm": 96,
+          "LatencyOffsetMsUsed": 162.5,
+          "Layers": [
+            {
+              "LayerId": 0,
+              "CellIndex": 0,
+              "Kind": "RecordedAV",
+              "SourcePath": "take1.mkv",
+              "CalibratedOffsetMs": 0,
+              "ManualOffsetMs": 0,
+              "AraArchiveKey": null,
+              "MixParameters": {
+                "GainDb": 0,
+                "Mute": false,
+                "Solo": false,
+                "Pan": 0,
+                "LowShelfGainDb": 0,
+                "MidBellGainDb": 0,
+                "HighShelfGainDb": 0,
+                "NoiseGateThresholdDb": -60,
+                "NoiseGateReleaseMs": 100,
+                "PitchBackend": "None"
+              }
+            }
+          ]
+        }
+        """;
+
+    [Theory]
+    [InlineData("package.json", "{\"name\":\"my-app\",\"version\":\"1.0.0\",\"dependencies\":{}}")]
+    [InlineData("VS Code settings", "{\"editor.fontSize\": 14}")]
+    [InlineData("empty object", "{}")]
+    [InlineData("camelCase keys", "{\"layoutId\":\"2x2\",\"layers\":[]}")]
+    public void Open_RejectsAJsonObjectThatIsNotAProject(string description, string fileContent)
+    {
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        string projectPath = TempProjectPath();
+        session.Save(projectPath);
+        var plugin = OpenEqEditorLiveInstance(layer);
+
+        string foreignPath = TempProjectPath();
+        File.WriteAllText(foreignPath, fileContent);
+
+        Assert.Throws<InvalidDataException>(() => session.Open(foreignPath));
+
+        Assert.Equal(projectPath, session.CurrentFilePath);   // so Ctrl+S still targets the real project
+        Assert.False(session.IsDirty, description);
+        Assert.Same(layer, session.Layers.Layers.Single());
+        Assert.False(plugin.Disposed, $"{description}: the rejected Open released the live instance.");
+    }
+
+    [Theory]
+    [InlineData(SavedBy56a7577Empty, 0, 120)]
+    [InlineData(SavedBy56a7577OneLayer, 1, 96)]
+    public void Open_AcceptsAProjectSavedByTheFirstPersistenceBuild(string json, int layerCount, double bpm)
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "other.wav");
+        string path = TempProjectPath();
+        File.WriteAllText(path, json);
+
+        session.Open(path);
+
+        Assert.Equal(layerCount, session.Layers.Layers.Count);
+        Assert.Equal(bpm, session.MetronomeBpm);
+        Assert.Equal(path, session.CurrentFilePath);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void Open_AcceptsAnEmptyProjectSavedByTheApp()
+    {
+        var saved = new ProjectSession(_mixEngine);
+        saved.New();
+        string path = TempProjectPath();
+        saved.Save(path);
+
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "other.wav");
+        session.Open(path);
+
+        Assert.Empty(session.Layers.Layers);
+        Assert.Equal(path, session.CurrentFilePath);
+        Assert.False(session.IsDirty);
     }
 
     /// <summary>Bug audit #13: grounds the consequence half of the bug, independent of WPF -- this
