@@ -46,8 +46,11 @@ public class ProjectPersistenceService
     public ProjectFileDto LoadFromFile(string filePath)
     {
         string json = File.ReadAllText(filePath);
-        return JsonSerializer.Deserialize<ProjectFileDto>(json)
+        var dto = JsonSerializer.Deserialize<ProjectFileDto>(json)
             ?? throw new InvalidDataException($"Could not parse project file: {filePath}");
+        // Bug audit #17: every save since the first (56a7577) writes LayoutId; a JSON object without it isn't a project.
+        return dto.LayoutId is not null ? dto
+            : throw new InvalidDataException($"Not an Acapella project file: {Path.GetFileName(filePath)}");
     }
 
     private static LayerDto ToLayerDto(LayerModel layer) => new()

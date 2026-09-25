@@ -9,8 +9,9 @@ namespace Acapella.Engine.Persistence;
 public class ProjectFileDto
 {
     /// <summary>Locked to "2x2" for v1 -- stored explicitly per the Data Model Rule rather than
-    /// assumed, so raising the layout options later doesn't require a format migration.</summary>
-    public string LayoutId { get; set; } = "2x2";
+    /// assumed, so raising the layout options later doesn't require a format migration.
+    /// No initializer (bug audit #17): null after a load means the file had no LayoutId, i.e. isn't a project.</summary>
+    public string? LayoutId { get; set; }
 
     public double MetronomeBpm { get; set; } = 120;
 
