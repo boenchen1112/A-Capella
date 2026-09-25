@@ -446,6 +446,55 @@ public class ProjectSessionTests : IDisposable
         Assert.Equal(2, fireCount);
     }
 
+    // ----- Bug audit #16: a failed Open must not release the current project's plugin state -----
+
+    [Theory]
+    [InlineData("missing file", null)]
+    [InlineData("truncated JSON", "{ \"LayoutId\": \"2x2\", \"Layers\": [")]
+    [InlineData("empty file", "")]
+    [InlineData("JSON array", "[1, 2]")]
+    [InlineData("literal null", "null")]
+    [InlineData("unknown layer Kind", "{\"Layers\":[{\"LayerId\":0,\"Kind\":\"Bogus\",\"SourcePath\":\"x.wav\"}]}")]
+    [InlineData("null Layers", "{\"Layers\":null}")]
+    [InlineData("bad hosted-state base64", "{\"Layers\":[{\"LayerId\":0,\"Kind\":\"RecordedAV\",\"SourcePath\":\"x.wav\",\"MixParameters\":{\"EqHostedStateBase64\":\"!!\"}}]}")]
+    [InlineData("five layers", "{\"Layers\":[{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"}]}")]
+    public void FailedOpen_KeepsTheCurrentProjectsLivePluginInstances(string description, string? fileContent)
+    {
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        var plugin = OpenEqEditorLiveInstance(layer);
+        plugin.TweakInEditor(new byte[] { 9, 9, 9 });   // live only: never polled/snapshotted into MixParameters
+
+        string badPath = TempProjectPath();
+        if (fileContent is not null) File.WriteAllText(badPath, fileContent);
+
+        Assert.ThrowsAny<Exception>(() => session.Open(badPath));
+
+        Assert.False(plugin.Disposed, $"{description}: a failed Open released the live instance.");
+        Assert.Same(plugin, OpenEqEditorLiveInstance(layer));
+        Assert.Equal(new byte[] { 9, 9, 9 }, plugin.State);
+        Assert.Same(layer, session.Layers.Layers.Single());
+    }
+
+    [Fact]
+    public void SuccessfulOpen_StillReleasesThePreviousProjectsInstances()
+    {
+        // Guards against over-fixing #16: bug audit #5's release must still happen on a real Open.
+        var saved = new ProjectSession(_mixEngine);   // saved BEFORE the live instance exists (see #5's test note)
+        saved.Layers.Add(LayerKind.UploadedVideo, "clip.mp4");
+        string path = TempProjectPath();
+        saved.Save(path);
+
+        var session = new ProjectSession(_mixEngine);
+        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        var plugin = OpenEqEditorLiveInstance(layer);
+
+        session.Open(path);
+
+        Assert.True(plugin.Disposed);
+        Assert.NotSame(plugin, OpenEqEditorLiveInstance(session.Layers.Layers.Single()));
+    }
+
     /// <summary>Bug audit #13: grounds the consequence half of the bug, independent of WPF -- this
     /// is exactly what every CommitSlider-bound LayerRowViewModel setter does (e.g. Pan, GainDb,
     /// LayerRowViewModel.cs:186,456) when its own PreviewMouseUp/PreviewKeyUp handler never fires.
