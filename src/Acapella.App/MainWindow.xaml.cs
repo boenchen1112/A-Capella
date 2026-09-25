@@ -168,6 +168,15 @@ public partial class MainWindow : Window
 
         Closing += (s, e) =>
         {
+            // Refuse close mid-export: the teardown below would dispose the hosted service under the
+            // export and exit, truncating the MP4 (bug audit #15).
+            if (!ExportMenuItem.IsEnabled)
+            {
+                StatusText.Text = "Finish the export first.";
+                e.Cancel = true;
+                return;
+            }
+
             // Save-affordances spec: prompt FIRST, before anything is stopped or disposed -- a cancelled
             // close (Cancel, or Yes followed by a cancelled/failed save) must leave the app fully running.
             if (!ConfirmDiscardUnsavedChanges())
