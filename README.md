@@ -82,3 +82,5 @@ Acapella never bundles or redistributes FabFilter or Melodyne plugins. It only h
 Copyright (C) 2026 boenchen1112
 
 Licensed under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE). Acapella links [JUCE](https://juce.com/), which is available under AGPLv3 (or a commercial license), and uses the [ARA SDK](https://github.com/Celemony/ARA_SDK) (Apache-2.0), [Rubber Band](https://breakfastquay.com/rubberband/) (GPL), NAudio (MIT) and SkiaSharp (MIT).
+
+The bundled UI fonts, IBM Plex Sans and IBM Plex Mono (`src/Acapella.App/Fonts/`), are Copyright © 2017 IBM Corp., licensed under the [SIL Open Font License 1.1](https://openfontlicense.org/).
