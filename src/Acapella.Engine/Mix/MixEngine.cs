@@ -1,3 +1,4 @@
+using System.Linq;
 using Acapella.Engine.Host;
 using Acapella.Engine.Pitch;
 using NAudio.Wave;
@@ -71,6 +72,16 @@ public class MixEngine : IDisposable
     // the one the layer is waiting on (and so worth a refresh) or stale (superseded, ignored).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, Task<float[]>> _pendingPitchRenders = new();
 
+    // Freeze: a per-layer rendered buffer of its whole chain (minus Mute/Solo), replayed instead of
+    // running the chain live while LayerMixParameters.Frozen is set. Static (shared across every
+    // MixEngine instance, like PitchCorrectionCache above it) because MainWindow/PreviewPlaybackEngine/
+    // ExportEngine each own a separate MixEngine -- a per-instance cache would re-render on every
+    // export even though the preview just rendered the identical buffer. Keyed by layerId only (the
+    // string key folds in everything that should invalidate it); a stale entry from a previous
+    // project's same layerId simply fails the key comparison once that project's different SourceKey
+    // is folded in, the same way PitchCorrectionCache never needs an explicit clear on project switch.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, (string Key, float[] Buffer)> FrozenBufferCache = new();
+
     /// <summary>Only PreviewPlaybackEngine sets this. Export and every other caller leave it false,
     /// so BuildLayerChain's pitch correction stays fully synchronous for them -- a cache miss
     /// renders in place and the chain is built from the finished result, exactly as before this
@@ -104,6 +115,15 @@ public class MixEngine : IDisposable
     /// <summary>Fires whenever a background pitch render throws, current or not -- the failure is
     /// still worth surfacing even if the user has since moved on to a different key.</summary>
     public event Action<int, string>? PitchRenderFailed;
+
+    /// <summary>Fires when a frozen layer's chain-build hits a cache miss and starts (blocking)
+    /// rendering its frozen buffer -- for a status-bar "Freezing layer N..." indicator, same
+    /// started/completed shape as the pitch-render events above. Unlike pitch rendering this never
+    /// runs in the background: BuildLayerChain blocks the calling thread (the preview's command
+    /// thread, or export's own thread) until the render finishes, since both callers already rebuild
+    /// their whole chain off the UI thread.</summary>
+    public event Action<int>? FreezeRenderStarted;
+    public event Action<int>? FreezeRenderCompleted;
 
     // True only when this MixEngine created its own private HostedPluginService (the
     // availability-only constructor, kept for callers/tests that don't need to share one service
@@ -253,7 +273,145 @@ public class MixEngine : IDisposable
         return (masterTap, masterVolumeStage);
     }
 
-    public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)
+    /// <summary>Frozen layers (LayerMixParameters.Frozen) skip the live chain entirely and instead
+    /// play a cached pre-rendered buffer of it, re-rendered only when the baked parameters actually
+    /// change -- see BuildFrozenLayerChain. Mute/Solo are never baked: they're re-applied live on top
+    /// of the frozen buffer every time, same as a normal layer.</summary>
+    public ISampleProvider BuildLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate) =>
+        layer.Parameters.Frozen
+            ? BuildFrozenLayerChain(layer, anySolo, outputSampleRate)
+            : BuildLiveLayerChain(layer, anySolo, outputSampleRate);
+
+    private ISampleProvider BuildFrozenLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate)
+    {
+        _hostedService.EnsureScanned();
+        var buffer = GetOrRenderFrozenBuffer(layer, outputSampleRate);
+
+        ISampleProvider source = new StereoArraySampleProvider(buffer, outputSampleRate);
+        bool effectiveMute = layer.Parameters.Mute || (anySolo && !layer.Parameters.Solo);
+        ISampleProvider withGain = new VolumeSampleProvider(source) { Volume = effectiveMute ? 0f : 1f };
+
+        var layerTap = new MeterTapSampleProvider(withGain);
+        _layerTaps[layer.LayerId] = layerTap;
+        // A frozen layer has no live bypassable nodes (its FX rack isn't built at all) -- drop any
+        // stale entry from before it was frozen so TrySetSlotEnabled correctly reports "nothing to
+        // flip" rather than toggling a node that isn't actually wired into this chain anymore.
+        _slotNodes.TryRemove(layer.LayerId, out _);
+        return layerTap;
+    }
+
+    /// <summary>Renders (or reuses the cached) frozen buffer for this layer: the whole live chain
+    /// built with Mute/Solo forced off, in blocking pitch mode, read to the end (including the
+    /// reverb tail and latency skip) into an interleaved stereo float[] at outputSampleRate.
+    /// FreezeRenderStarted/Completed fire only around an actual render (a cache miss), mirroring the
+    /// pitch-render status pair, for a "Freezing layer N..." status-bar indicator.</summary>
+    private float[] GetOrRenderFrozenBuffer(MixLayerInput layer, int outputSampleRate)
+    {
+        string? key = BuildFrozenCacheKey(layer, outputSampleRate);
+        if (key is not null && FrozenBufferCache.TryGetValue(layer.LayerId, out var cached) && cached.Key == key)
+            return cached.Buffer;
+
+        FreezeRenderStarted?.Invoke(layer.LayerId);
+        try
+        {
+            var buffer = RenderFrozenBuffer(layer, outputSampleRate);
+            // Null key (no SourceKey) means "render every time" -- never cache it, so the next call
+            // always misses and re-renders, same as PitchCorrectionCache's null-sourceKey behavior.
+            if (key is not null) FrozenBufferCache[layer.LayerId] = (key, buffer);
+            else FrozenBufferCache.TryRemove(layer.LayerId, out _);
+            return buffer;
+        }
+        finally
+        {
+            FreezeRenderCompleted?.Invoke(layer.LayerId);
+        }
+    }
+
+    /// <summary>Cache key for the frozen buffer: the layer's SourceKey, outputSampleRate, the ARA
+    /// edit generation, and every LayerMixParameters property except Mute/Solo/Frozen (reflected over
+    /// rather than listed by hand, so a future parameter can't be silently left out of the key -- see
+    /// the design note on what gets baked). byte[] hosted-state blobs are hashed rather than embedded
+    /// raw so the key string doesn't itself carry megabytes of VST3 state. Null SourceKey disables
+    /// caching entirely, same meaning as everywhere else SourceKey is used.</summary>
+    private string? BuildFrozenCacheKey(MixLayerInput layer, int outputSampleRate)
+    {
+        if (layer.SourceKey is null) return null;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(layer.SourceKey).Append('|').Append(outputSampleRate).Append('|')
+          .Append(_hostedService.GetAraEditGeneration(layer.LayerId)).Append('|');
+
+        foreach (var prop in typeof(LayerMixParameters).GetProperties().OrderBy(p => p.Name))
+        {
+            if (prop.Name is nameof(LayerMixParameters.Mute) or nameof(LayerMixParameters.Solo) or nameof(LayerMixParameters.Frozen))
+                continue;
+
+            var value = prop.GetValue(layer.Parameters);
+            string piece = value switch
+            {
+                byte[] bytes when bytes.Length > 0 => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+                byte[] => "",
+                null => "null",
+                _ => value.ToString() ?? "",
+            };
+            sb.Append(prop.Name).Append('=').Append(piece).Append(';');
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Builds a Mute/Solo/Frozen-off variant of the layer and runs it through the normal
+    /// live chain (BuildLiveLayerChain, forFreezeRender: true -- blocking pitch mode, no tap/slot-node
+    /// registration since this chain is never played live), reading it to completion. Bounded by
+    /// maxFrames (source length + this layer's own tail, generously padded) so a chain that somehow
+    /// never returns 0 -- a bug, not an expected case -- fails fast instead of hanging the calling
+    /// thread (the preview's command thread, or export's thread) forever.</summary>
+    private float[] RenderFrozenBuffer(MixLayerInput layer, int outputSampleRate)
+    {
+        var renderParams = layer.Parameters.Clone();
+        renderParams.Mute = false;
+        renderParams.Solo = false;
+        renderParams.Frozen = false;
+        var renderInput = layer with { Parameters = renderParams };
+
+        var chain = BuildLiveLayerChain(renderInput, anySolo: false, outputSampleRate, forFreezeRender: true);
+
+        int sourceFrames = (int)Math.Ceiling((double)layer.Samples.Length / layer.SampleRate * outputSampleRate);
+        double tailSeconds = GetTailSeconds(layer.LayerId, layer.Parameters, outputSampleRate);
+        int tailFrames = (int)Math.Ceiling(tailSeconds * outputSampleRate);
+        int marginFrames = outputSampleRate * 5; // headroom for hosted latency + resampler slop
+        int maxFrames = sourceFrames + tailFrames + marginFrames;
+
+        return ReadToEnd(chain, maxFrames);
+    }
+
+    private static float[] ReadToEnd(ISampleProvider provider, int maxFrames)
+    {
+        int maxFloats = checked(maxFrames * 2);
+        float[] buffer = new float[Math.Min(maxFloats, 1 << 20)];
+        int length = 0;
+        var scratch = new float[16384];
+        int n;
+        while ((n = provider.Read(scratch, 0, scratch.Length)) > 0)
+        {
+            if (length + n > maxFloats)
+                throw new InvalidOperationException("Freeze render exceeded its expected length -- the layer's chain may not be terminating.");
+            if (length + n > buffer.Length)
+                Array.Resize(ref buffer, Math.Min(maxFloats, Math.Max(buffer.Length * 2, length + n)));
+            Array.Copy(scratch, 0, buffer, length, n);
+            length += n;
+        }
+        Array.Resize(ref buffer, length);
+        return buffer;
+    }
+
+    /// <summary>The normal (unfrozen) chain: pitch correction -> FX rack pre-pan slots -> pan ->
+    /// post-pan slots -> gain/mute/solo -> post-gain slots -> latency skip -> meter tap.
+    /// forFreezeRender, when true (RenderFrozenBuffer only), forces pitch correction to run in
+    /// blocking mode regardless of NonBlockingPitchCorrection (a background-rendered placeholder must
+    /// never get baked into a frozen buffer) and skips registering this chain as the layer's live
+    /// meter tap/slot nodes, since it's never actually played -- only read to produce the frozen
+    /// buffer.</summary>
+    private ISampleProvider BuildLiveLayerChain(MixLayerInput layer, bool anySolo, int outputSampleRate, bool forFreezeRender = false)
     {
         // v7 Q0 (audit A3): MainWindow fires EnsureScanned() via Task.Run at startup, but that's
         // fire-and-forget -- if a chain build (on the command thread or export's Task.Run thread)
@@ -273,14 +431,14 @@ public class MixEngine : IDisposable
         // other hosted stage already uses when its matching plugin isn't detected.
         float[] processedSamples = parameters.PitchBackend switch
         {
-            PitchBackendSelection.Automatic2B => BuildAutomaticCorrectedSamples(layer),
+            PitchBackendSelection.Automatic2B => BuildAutomaticCorrectedSamples(layer, forFreezeRender),
             // Bug audit A5 ("stale correction cache"): the edit generation is folded into the cache
             // key so closing Melodyne's editor (HostedPluginService.CloseAraEditor bumps it) forces
             // a fresh Correct() call on the next rebuild instead of replaying PitchCorrectionCache's
             // pre-edit output -- the layer's own SourceKey alone never changes just because the
             // user tweaked pitch inside Melodyne's own editor.
             PitchBackendSelection.Manual2A when _hostedService.IsAraAvailable(MelodynePluginLabel) =>
-                BuildMelodyneCorrectedSamples(layer),
+                BuildMelodyneCorrectedSamples(layer, forFreezeRender),
             _ => layer.Samples,
         };
 
@@ -313,6 +471,8 @@ public class MixEngine : IDisposable
         foreach (var slot in FxSlots.All)
             if (slotNodes.TryGetValue(slot.Stage, out var node)) node.Bypassed = !slot.IsEnabled(parameters);
 
+        if (forFreezeRender) return finished;
+
         var layerTap = new MeterTapSampleProvider(finished);
         _layerTaps[layer.LayerId] = layerTap;
         _slotNodes[layer.LayerId] = slotNodes;
@@ -341,11 +501,11 @@ public class MixEngine : IDisposable
         return backend;
     }
 
-    private float[] BuildAutomaticCorrectedSamples(MixLayerInput layer)
+    private float[] BuildAutomaticCorrectedSamples(MixLayerInput layer, bool forceBlocking = false)
     {
         var backend = AutomaticBackendOverride ?? AutomaticBackend;
         return GetPitchCorrectedSamples(layer.LayerId, layer.SourceKey, backend.GetType().Name, layer.Samples,
-            () => backend.Correct(layer.Samples, layer.SampleRate));
+            () => backend.Correct(layer.Samples, layer.SampleRate), forceBlocking);
     }
 
     /// <summary>Trim/Melodyne-edit-survival fix: renders through the layer's persistent ARA session
@@ -358,7 +518,7 @@ public class MixEngine : IDisposable
     /// NonBlockingPitchCorrection on, that closure runs on a worker thread, and _melodyneBackends is
     /// a plain Dictionary -- looking it up (and possibly inserting into it) from both that worker
     /// thread and a later BuildLayerChain call on the calling thread at the same time would race.</summary>
-    private float[] BuildMelodyneCorrectedSamples(MixLayerInput layer)
+    private float[] BuildMelodyneCorrectedSamples(MixLayerInput layer, bool forceBlocking = false)
     {
         var melodyneBackend = GetOrCreateMelodyneBackend(layer.LayerId);
         string? sourceKey = layer.SourceKey is null
@@ -378,7 +538,7 @@ public class MixEngine : IDisposable
                 rawSamples, layer.SampleRate, trimStart, trimLength,
                 layer.RawContentKey ?? layer.SourceKey ?? string.Empty);
             return AudioShiftHelper.ApplyShift(corrected, layer.ShiftMs, layer.SampleRate);
-        });
+        }, forceBlocking);
     }
 
     /// <summary>Blocking by default (NonBlockingPitchCorrection off -- export, tests, and anyone
@@ -391,9 +551,9 @@ public class MixEngine : IDisposable
     /// uncorrected audio -- so BuildLayerChain never blocks on it. PitchRenderStarted/Completed/
     /// Failed track that render for a status-bar indicator and so the caller (PreviewPlaybackEngine)
     /// knows when to rebuild the chain again and pick up the finished result.</summary>
-    private float[] GetPitchCorrectedSamples(int layerId, string? sourceKey, string backendType, float[] fallbackSamples, Func<float[]> correct)
+    private float[] GetPitchCorrectedSamples(int layerId, string? sourceKey, string backendType, float[] fallbackSamples, Func<float[]> correct, bool forceBlocking = false)
     {
-        if (!NonBlockingPitchCorrection || sourceKey is null)
+        if (forceBlocking || !NonBlockingPitchCorrection || sourceKey is null)
             return PitchCorrectionCache.GetOrCorrect(layerId, sourceKey, backendType, correct);
 
         if (PitchCorrectionCache.TryGetCached(layerId, sourceKey, backendType, out var cached))

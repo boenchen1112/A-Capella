@@ -115,6 +115,7 @@ public class ProjectPersistenceService
         LimiterHostedStateBase64 = ToBase64(p.LimiterHostedState),
         ReverbEnabled = p.ReverbEnabled,
         ReverbHostedStateBase64 = ToBase64(p.ReverbHostedState),
+        Frozen = p.Frozen,
     };
 
     private static string? ToBase64(byte[]? data) => data is null ? null : Convert.ToBase64String(data);
@@ -146,5 +147,6 @@ public class ProjectPersistenceService
         target.LimiterHostedState = FromBase64(dto.LimiterHostedStateBase64);
         target.ReverbEnabled = dto.ReverbEnabled;
         target.ReverbHostedState = FromBase64(dto.ReverbHostedStateBase64);
+        target.Frozen = dto.Frozen;
     }
 }

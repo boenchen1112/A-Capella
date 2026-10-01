@@ -150,6 +150,13 @@ public class PreviewPlaybackEngine : IDisposable
     public event Action<int, bool>? PitchRenderCompleted;
     public event Action<int, string>? PitchRenderFailed;
 
+    /// <summary>Forwarded from MixEngine -- fires around a frozen layer's (blocking) buffer render,
+    /// for a "Freezing layer N..." status-bar indicator. Unlike the pitch events above there's no
+    /// "stillCurrent"/refresh dance: the render already happened inline, by the time Completed fires
+    /// the chain just built already reflects it.</summary>
+    public event Action<int>? FreezeRenderStarted;
+    public event Action<int>? FreezeRenderCompleted;
+
     public bool IsPlaying { get; private set; }
     public double PositionMs { get; private set; }
     public double DurationMs { get; private set; }
@@ -192,6 +199,8 @@ public class PreviewPlaybackEngine : IDisposable
             Enqueue(() => { if (!_disposed) SeekCore(PositionMs); });
         };
         _mixEngine.PitchRenderFailed += (layerId, message) => PitchRenderFailed?.Invoke(layerId, message);
+        _mixEngine.FreezeRenderStarted += layerId => FreezeRenderStarted?.Invoke(layerId);
+        _mixEngine.FreezeRenderCompleted += layerId => FreezeRenderCompleted?.Invoke(layerId);
 
         _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
         _commandThread.Start();

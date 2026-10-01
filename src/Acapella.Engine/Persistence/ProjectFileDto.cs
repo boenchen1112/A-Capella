@@ -88,4 +88,9 @@ public class MixParametersDto
 
     public bool ReverbEnabled { get; set; }
     public string? ReverbHostedStateBase64 { get; set; }
+
+    /// <summary>Only the flag is saved -- the frozen buffer itself is re-rendered after load, not
+    /// persisted. Defaults false, so a file saved before this field existed (plain JSON absence)
+    /// loads as not frozen.</summary>
+    public bool Frozen { get; set; }
 }

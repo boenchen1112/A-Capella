@@ -61,4 +61,22 @@ public class LayerMixParameters
     /// per the plan, so this is simply skipped if Pro-R 2 isn't detected even when true.</summary>
     public bool ReverbEnabled { get; set; } = false;
     public byte[]? ReverbHostedState { get; set; }
+
+    /// <summary>When true, the layer plays a pre-rendered buffer of its whole chain (everything
+    /// above except Mute/Solo, which stay live) instead of running it live -- see MixEngine's
+    /// frozen-layer path. Defaults false, including for a project file saved before this field
+    /// existed (System.Text.Json just leaves a missing bool at its default).</summary>
+    public bool Frozen { get; set; } = false;
+
+    /// <summary>Shallow copy -- used to build a Mute/Solo/Frozen-off variant of a layer's parameters
+    /// for rendering its frozen buffer, without disturbing the live parameters object a UI control is
+    /// bound to. byte[] hosted-state fields are shared by reference with the original, which is safe
+    /// here since the render path only reads them.</summary>
+    public LayerMixParameters Clone()
+    {
+        var clone = new LayerMixParameters();
+        foreach (var prop in typeof(LayerMixParameters).GetProperties())
+            if (prop.CanWrite) prop.SetValue(clone, prop.GetValue(this));
+        return clone;
+    }
 }
