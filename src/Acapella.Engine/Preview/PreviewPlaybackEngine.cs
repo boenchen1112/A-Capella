@@ -130,15 +130,24 @@ public class PreviewPlaybackEngine : IDisposable
     private readonly System.Collections.Concurrent.BlockingCollection<Action> _commandQueue = new();
     private readonly Thread _commandThread;
 
+    // Set first thing in Dispose. A background pitch-render completion can land on a thread-pool
+    // thread at any time, including while Dispose is already running on the UI thread -- this stops
+    // its refresh from enqueueing (or running) a SeekCore/PlayCore that could try to marshal onto
+    // that same blocked UI thread.
+    private volatile bool _disposed;
+
     public event Action<SKBitmap>? FrameReady;
     public event Action? PlaybackStopped;
 
     /// <summary>Forwarded from MixEngine -- see its own PitchRenderStarted/Completed/Failed docs.
-    /// A completed render also triggers a refresh at the current position here (see the
-    /// constructor) so the corrected audio actually replaces the placeholder the next time this
-    /// engine's chain is rebuilt; callers only need these for UI feedback (status bar).</summary>
+    /// A completed render that's still current also triggers a refresh at the current position here
+    /// (see the constructor) so the corrected audio actually replaces the placeholder the next time
+    /// this engine's chain is rebuilt; callers only need these for UI feedback (status bar), and
+    /// PitchRenderCompleted's bool is only meaningful to a caller that cares whether a refresh
+    /// happened -- counting Started against Completed/Failed for a pending-count indicator balances
+    /// regardless of its value.</summary>
     public event Action<int>? PitchRenderStarted;
-    public event Action<int>? PitchRenderCompleted;
+    public event Action<int, bool>? PitchRenderCompleted;
     public event Action<int, string>? PitchRenderFailed;
 
     public bool IsPlaying { get; private set; }
@@ -170,16 +179,17 @@ public class PreviewPlaybackEngine : IDisposable
         // Play/Seek/Refresh for however long that took. Export keeps the blocking default.
         _mixEngine.NonBlockingPitchCorrection = true;
         _mixEngine.PitchRenderStarted += layerId => PitchRenderStarted?.Invoke(layerId);
-        _mixEngine.PitchRenderCompleted += layerId =>
+        _mixEngine.PitchRenderCompleted += (layerId, stillCurrent) =>
         {
-            PitchRenderCompleted?.Invoke(layerId);
+            PitchRenderCompleted?.Invoke(layerId, stillCurrent);
+            if (!stillCurrent) return; // superseded -- nothing currently built needs refreshing
             // Re-run the existing refresh path at the current position: BuildLayerChain looks the
-            // layer's pitch cache up again from scratch, so this just needs to happen, not to know
-            // whether the key that just finished is still the layer's current one -- if it isn't,
-            // the rebuild below will simply find a different (possibly still-pending) cache entry
-            // and nothing changes. Enqueue is a no-op (returns a cancelled task) once Dispose has
-            // completed adding, so this can't deadlock on close.
-            Enqueue(() => SeekCore(PositionMs));
+            // layer's pitch cache up again from scratch, so this just needs to happen. _disposed
+            // guards against this landing while Dispose is mid-teardown: a refresh that reached
+            // SeekCore during that window could call PlayCore, which can block-marshal hosted calls
+            // onto the UI thread -- the same thread Dispose's StopAsync().GetAwaiter().GetResult()
+            // below is about to block on without pumping.
+            Enqueue(() => { if (!_disposed) SeekCore(PositionMs); });
         };
         _mixEngine.PitchRenderFailed += (layerId, message) => PitchRenderFailed?.Invoke(layerId, message);
 
@@ -489,6 +499,7 @@ public class PreviewPlaybackEngine : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         // StopCore never marshals to the UI thread, so waiting here is deadlock-free.
         StopAsync().GetAwaiter().GetResult();
         _commandQueue.CompleteAdding();

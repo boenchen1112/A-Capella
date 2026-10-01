@@ -184,7 +184,7 @@ public partial class MainWindow : Window
             _pendingPitchRenderCount++;
             StatusText.Text = "Processing pitch...";
         });
-        _previewEngine.PitchRenderCompleted += _ => Dispatcher.InvokeAsync(() =>
+        _previewEngine.PitchRenderCompleted += (_, _) => Dispatcher.InvokeAsync(() =>
         {
             _pendingPitchRenderCount = Math.Max(0, _pendingPitchRenderCount - 1);
             if (_pendingPitchRenderCount == 0) StatusText.Text = "Pitch correction updated.";

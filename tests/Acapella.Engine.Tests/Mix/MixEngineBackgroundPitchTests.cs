@@ -71,7 +71,7 @@ public class MixEngineBackgroundPitchTests
 
         int startedCount = 0, completedCount = 0;
         engine.PitchRenderStarted += id => { if (id == layerId) Interlocked.Increment(ref startedCount); };
-        engine.PitchRenderCompleted += id => { if (id == layerId) Interlocked.Increment(ref completedCount); };
+        engine.PitchRenderCompleted += (id, _) => { if (id == layerId) Interlocked.Increment(ref completedCount); };
 
         var parameters = new LayerMixParameters { PitchBackend = PitchBackendSelection.Automatic2B };
         var layerInput = new MixLayerInput(layerId, samples, sampleRate, parameters, sourceKey);

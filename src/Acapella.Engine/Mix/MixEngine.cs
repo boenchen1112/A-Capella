@@ -93,11 +93,13 @@ public class MixEngine : IDisposable
     /// again before it finishes.</summary>
     public event Action<int>? PitchRenderStarted;
 
-    /// <summary>Fires once a background pitch render finishes successfully and is still the render
-    /// the layer is waiting on (see _pendingPitchRenders doc above) -- a render superseded by a
-    /// newer request before it finished doesn't raise this, since that newer request has already
-    /// taken over the layer's "pending" state.</summary>
-    public event Action<int>? PitchRenderCompleted;
+    /// <summary>Fires once a background pitch render finishes successfully, current or not -- the
+    /// bool is true if this is still the render the layer is waiting on (see _pendingPitchRenders
+    /// doc above), false if a newer request has since superseded it. Always raised (one per
+    /// PitchRenderStarted) so a subscriber using it to count pending renders -- a status-bar
+    /// indicator -- stays balanced even when a stale render finishes after the layer's moved on;
+    /// only a caller that wants to refresh the built chain needs to check the bool.</summary>
+    public event Action<int, bool>? PitchRenderCompleted;
 
     /// <summary>Fires whenever a background pitch render throws, current or not -- the failure is
     /// still worth surfacing even if the user has since moved on to a different key.</summary>
@@ -412,14 +414,16 @@ public class MixEngine : IDisposable
             PitchRenderStarted?.Invoke(layerId);
             task.ContinueWith(t =>
             {
-                // Only true if nothing has superseded this render as the layer's current one --
-                // see _pendingPitchRenders' doc. A superseded render's own completion is simply
-                // ignored: the newer request owns the layer's pending state and will raise its own
-                // PitchRenderStarted/Completed when it finishes.
+                // True only if nothing has superseded this render as the layer's current one --
+                // see _pendingPitchRenders' doc. Always raised regardless (every PitchRenderStarted
+                // gets exactly one matching PitchRenderCompleted/Failed, even when stale) so a
+                // subscriber counting pending renders for a status indicator stays balanced; only a
+                // refresh needs to check the flag -- a superseded render's own completion changed
+                // nothing the layer is currently showing.
                 bool stillCurrent = _pendingPitchRenders.TryRemove(new KeyValuePair<int, Task<float[]>>(layerId, task));
                 if (t.IsCompletedSuccessfully)
                 {
-                    if (stillCurrent) PitchRenderCompleted?.Invoke(layerId);
+                    PitchRenderCompleted?.Invoke(layerId, stillCurrent);
                 }
                 else if (t.IsFaulted)
                 {

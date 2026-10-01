@@ -63,10 +63,10 @@ public class PitchCorrectionCacheTests
         Assert.Equal(2, backend.CallCount);
     }
 
-    /// <summary>Background-pitch-rendering design point 2: ConcurrentDictionary.GetOrAdd can run
-    /// its factory more than once under contention, which for the Melodyne path would mean two
-    /// concurrent renders against one ARA session. GetOrStartCorrect must hand out the same
-    /// in-flight task to every concurrent caller for a key instead.</summary>
+    /// <summary>ConcurrentDictionary.GetOrAdd can run its factory more than once under contention,
+    /// which for the Melodyne path would mean two concurrent renders against one ARA session.
+    /// GetOrStartCorrect must hand out the same in-flight task to every concurrent caller for a key
+    /// instead.</summary>
     [Fact]
     public async Task GetOrStartCorrect_ConcurrentRequestsForSameKey_RunsCorrectionOnce()
     {
@@ -96,9 +96,9 @@ public class PitchCorrectionCacheTests
         Assert.Same(result1, result2);
     }
 
-    /// <summary>Design point 2's other half: a blocking caller (export) that hits a key already
-    /// being rendered in the background must wait for that same task rather than starting a second
-    /// render.</summary>
+    /// <summary>The other half of the same hazard: a blocking caller (export) that hits a key
+    /// already being rendered in the background must wait for that same task rather than starting a
+    /// second render.</summary>
     [Fact]
     public void GetOrCorrect_WhileRenderInFlight_WaitsForSameRenderInsteadOfStartingAnother()
     {
@@ -126,8 +126,8 @@ public class PitchCorrectionCacheTests
         Assert.Same(expected, result);
     }
 
-    /// <summary>Design point 3: a failed render must not be cached, and must not permanently wedge
-    /// the key either -- the next request (blocking here) retries it.</summary>
+    /// <summary>A failed render must not be cached, and must not permanently wedge the key either --
+    /// the next request (blocking here) retries it.</summary>
     [Fact]
     public void GetOrCorrect_RenderThrows_IsNotCachedAndRetryRunsAgain()
     {
