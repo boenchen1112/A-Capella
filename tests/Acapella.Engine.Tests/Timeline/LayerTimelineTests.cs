@@ -71,7 +71,7 @@ public class LayerTimelineTests
         Assert.Equal(2500, timeline.DurationMs(new[] { Layer(0, cellIndex: 0), Layer(500, cellIndex: 1) }, 44100), 6);
     }
 
-    /// <summary>Q1 task 5 (bug audit B11): a Pro-R tail-length change made in its own editor must be
+    /// <summary>A Pro-R tail-length change made in its own editor must be
     /// picked up by the next DurationMs call (what every preview-rebuild path uses, directly or via
     /// PreviewPlaybackEngine.RefreshAsync's SetLayersCore) -- not frozen at whatever the tail was
     /// when the chain/instance was first created. FxSlot.TailSeconds queries the live instance's
