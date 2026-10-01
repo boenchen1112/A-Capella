@@ -12,6 +12,14 @@
     <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0" />
   </ItemGroup>
 
+  <!-- Bundled IBM Plex fonts (SIL OFL license, see Fonts/OFL.txt) used by the redesigned UI: Plex
+       Sans for body text, Plex Mono for times/dB readouts. Built as Resource so they're embedded in
+       the assembly and reachable via the pack://application:,,,/ family-name syntax without needing
+       to be installed on the machine. -->
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
