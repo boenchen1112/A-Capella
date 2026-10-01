@@ -8,6 +8,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Shell;
 using System.Windows.Threading;
+using Acapella.App.Layout;
 using Acapella.App.ViewModels;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
@@ -298,6 +299,62 @@ public partial class MainWindow : Window
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
+    // ----- Lane clip-bar drag-to-trim -----
+
+    private ClipTrimDrag? _activeTrimDrag;
+    private LayerRowViewModel? _activeTrimDragRow;
+    private Point _trimDragStartMousePos;
+    private Canvas? _trimDragCanvas;
+
+    private static bool IsInHandle(Thumb thumb) => (string)thumb.Tag == "In";
+
+    /// <summary>Snapshots the handle's starting value and the track's current scale. No-ops (leaves
+    /// _activeTrimDrag null) when the source duration or timeline duration isn't known yet, so a
+    /// drag started before MediaProbe returns has no effect rather than clamping against a bogus 0.</summary>
+    private void TrimHandle_DragStarted(object sender, DragStartedEventArgs e)
+    {
+        if (sender is not Thumb thumb || thumb.DataContext is not LayerRowViewModel row || thumb.Parent is not Canvas canvas)
+            return;
+        if (row.TimelineDurationMs <= 0 || row.SourceDurationMs <= 0)
+            return;
+
+        _trimDragCanvas = canvas;
+        _trimDragStartMousePos = Mouse.GetPosition(canvas);
+        _activeTrimDragRow = row;
+        _activeTrimDrag = IsInHandle(thumb)
+            ? new ClipTrimDrag(ClipTrimDrag.Handle.In, row.TrimStartMs, row.EffectiveTrimEndMs, row.SourceDurationMs, row.TimelineDurationMs, canvas.ActualWidth)
+            : new ClipTrimDrag(ClipTrimDrag.Handle.Out, row.EffectiveTrimEndMs, row.TrimStartMs, row.SourceDurationMs, row.TimelineDurationMs, canvas.ActualWidth);
+    }
+
+    /// <summary>Applies the drag's clamped value live, for immediate visual feedback on the clip
+    /// bar -- the actual commit (PushUndoSnapshot) happens once, on release, in DragCompleted.</summary>
+    private void TrimHandle_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (_activeTrimDrag is null || _activeTrimDragRow is null || _trimDragCanvas is null || sender is not Thumb thumb)
+            return;
+
+        double totalDeltaPx = Mouse.GetPosition(_trimDragCanvas).X - _trimDragStartMousePos.X;
+        double newValueMs = _activeTrimDrag.ValueAt(totalDeltaPx);
+        if (IsInHandle(thumb)) _activeTrimDragRow.TrimStartMs = newValueMs;
+        else _activeTrimDragRow.TrimEndMs = newValueMs;
+    }
+
+    /// <summary>One undo step per completed drag -- none at all if the pointer never actually moved
+    /// the value (same no-op-skip rule as CommitNameIfChanged).</summary>
+    private void TrimHandle_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (_activeTrimDrag is not null && _activeTrimDragRow is not null && sender is Thumb thumb)
+        {
+            double currentValueMs = IsInHandle(thumb) ? _activeTrimDragRow.TrimStartMs : _activeTrimDragRow.EffectiveTrimEndMs;
+            if (_activeTrimDrag.HasChangedFrom(currentValueMs))
+                PushUndoSnapshot();
+        }
+
+        _activeTrimDrag = null;
+        _activeTrimDragRow = null;
+        _trimDragCanvas = null;
+    }
+
     // ----- Keyboard transport shortcuts (v5 P1 task 6) -----
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -331,6 +388,14 @@ public partial class MainWindow : Window
                 break;
             case Key.Home:
                 RestartButton_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+            case Key.I:
+                SetSongIn();
+                e.Handled = true;
+                break;
+            case Key.O:
+                SetSongOut();
                 e.Handled = true;
                 break;
         }
@@ -863,14 +928,29 @@ public partial class MainWindow : Window
         var row = _selectedLayer;
 
         var deleteItem = new MenuItem { Header = "Delete layer", IsEnabled = row is not null && IsLiveRow(row) };
-        deleteItem.Click += (_, _) => DeleteLayer(row);
+        deleteItem.Click += (_, _) => ConfirmAndDeleteLayer(row);
 
         var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
         menu.Items.Add(deleteItem);
         menu.IsOpen = true;
     }
 
-    private void DeleteLayerMenuItem_Click(object sender, RoutedEventArgs e) => DeleteLayer(_selectedLayer);
+    private void DeleteLayerMenuItem_Click(object sender, RoutedEventArgs e) => ConfirmAndDeleteLayer(_selectedLayer);
+
+    /// <summary>Asks before deleting (the slot is still undoable via Ctrl+Z, but a destructive
+    /// action that removes a recorded/uploaded layer from the grid still warrants a confirmation).
+    /// DeleteLayer itself stays a separate, dialog-free method so the actual delete logic is
+    /// testable without a MessageBox blocking the test thread.</summary>
+    private void ConfirmAndDeleteLayer(LayerRowViewModel? row)
+    {
+        if (row is null || !IsLiveRow(row)) return;
+
+        var answer = MessageBox.Show(this, $"Delete layer {row.SlotNumber}? You can undo this.", "Delete Layer",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) return;
+
+        DeleteLayer(row);
+    }
 
     private void DeleteLayer(LayerRowViewModel? row)
     {
@@ -1035,6 +1115,97 @@ public partial class MainWindow : Window
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
         SetTimeReadout(_previewEngine.PositionMs, durationMs);
         foreach (var row in _tracks) row.TimelineDurationMs = durationMs;
+        RedrawRulerCanvas();
+    }
+
+    private void RulerCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => RedrawRulerCanvas();
+
+    /// <summary>Draws the ruler's time-tick labels (0:00, 0:30, 1:00 ... scaled to the project
+    /// duration) plus the song in/out markers, and updates the readout text beside them. Rebuilt
+    /// from scratch on every call (cheap: a handful of TextBlocks/lines) rather than diffed, so a
+    /// duration or track-width change, or a song in/out edit, always redraws correctly.</summary>
+    private void RedrawRulerCanvas()
+    {
+        RulerCanvas.Children.Clear();
+        double durationMs = _previewEngine.DurationMs;
+        double widthPx = RulerCanvas.ActualWidth;
+
+        foreach (double tickMs in ClipTimelineMath.ComputeTickTimesMs(durationMs, widthPx))
+        {
+            var (x, _) = ClipTimelineMath.ToPixelRange(tickMs, tickMs, durationMs, widthPx);
+            var label = new TextBlock
+            {
+                Text = ClipTimelineMath.FormatTickLabel(tickMs),
+                FontSize = 10,
+                Foreground = (System.Windows.Media.Brush)FindResource("MutedTextBrush"),
+            };
+            Canvas.SetLeft(label, x);
+            Canvas.SetTop(label, 2);
+            RulerCanvas.Children.Add(label);
+        }
+
+        AddSongRangeMarker(_session.SongInMs, durationMs, widthPx, "In");
+        AddSongRangeMarker(_session.SongOutMs, durationMs, widthPx, "Out");
+
+        SongRangeReadoutText.Text = _session.SongInMs is null && _session.SongOutMs is null
+            ? ""
+            : $"In {(_session.SongInMs is double i ? FormatTime(i) : "0:00.0")} · Out {(_session.SongOutMs is double o ? FormatTime(o) : "end")}";
+    }
+
+    private void AddSongRangeMarker(double? markerMs, double durationMs, double widthPx, string label)
+    {
+        if (markerMs is not double ms) return;
+
+        var (x, _) = ClipTimelineMath.ToPixelRange(ms, ms, durationMs, widthPx);
+        var line = new System.Windows.Shapes.Line
+        {
+            X1 = x, X2 = x, Y1 = 0, Y2 = 20,
+            Stroke = (System.Windows.Media.Brush)FindResource("StrongBorderBrush"),
+            StrokeThickness = 2,
+            ToolTip = $"Song {label}: {FormatTime(ms)}",
+        };
+        RulerCanvas.Children.Add(line);
+    }
+
+    // ----- Song in/out (project-wide export range, set from the playhead) -----
+
+    private void SetSongInMenuItem_Click(object sender, RoutedEventArgs e) => SetSongIn();
+    private void SetSongOutMenuItem_Click(object sender, RoutedEventArgs e) => SetSongOut();
+    private void ClearSongRangeMenuItem_Click(object sender, RoutedEventArgs e) => ClearSongRange();
+
+    /// <summary>Set In at the current playhead; nudged below the existing Out (if any) so In always
+    /// stays before Out rather than producing an empty or inverted range.</summary>
+    private void SetSongIn()
+    {
+        double candidateMs = _previewEngine.PositionMs;
+        if (_session.SongOutMs is double outMs && candidateMs >= outMs)
+            candidateMs = Math.Max(0, outMs - 1);
+
+        _session.SongInMs = candidateMs;
+        RedrawRulerCanvas();
+        PushUndoSnapshot();
+        StatusText.Text = $"Song in set to {FormatTime(candidateMs)}.";
+    }
+
+    private void SetSongOut()
+    {
+        double candidateMs = _previewEngine.PositionMs;
+        if (_session.SongInMs is double inMs && candidateMs <= inMs)
+            candidateMs = inMs + 1;
+
+        _session.SongOutMs = candidateMs;
+        RedrawRulerCanvas();
+        PushUndoSnapshot();
+        StatusText.Text = $"Song out set to {FormatTime(candidateMs)}.";
+    }
+
+    private void ClearSongRange()
+    {
+        if (!_session.ClearSongRange()) return;
+
+        RedrawRulerCanvas();
+        PushUndoSnapshot();
+        StatusText.Text = "Song in/out cleared.";
     }
 
     /// <summary>v8 redesign: short "m:ss.t" (mock's "0:07.2 / 2:15.0"), one decisecond of
@@ -1193,7 +1364,7 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.StopAsync());      // bug audit #8: one audio graph at a time
         StatusText.Text = "Exporting...";                           // after the stop: AwaitPreviewCommand may write "Preview error: ..."
 
-        var (snapshotLayers, snapshotMasterVolumeDb) = _session.SnapshotForExport();
+        var (snapshotLayers, snapshotMasterVolumeDb, snapshotSongInMs, snapshotSongOutMs) = _session.SnapshotForExport();
 
         // Built on the UI thread (candidate 3 / Improvement_Proposal_2026-09-24): Progress<T>
         // captures the current SynchronizationContext at construction, so every Report() call from
@@ -1211,7 +1382,8 @@ public partial class MainWindow : Window
             try
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
-                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress);
+                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
+                    rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)

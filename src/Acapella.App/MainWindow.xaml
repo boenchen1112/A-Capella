@@ -39,10 +39,25 @@
         <conv:TrimmedBarGeometryConverter x:Key="TrimmedBarGeom"/>
         <conv:UnitToHeightConverter x:Key="UnitToHeight"/>
         <conv:PitchModeEqualsConverter x:Key="PitchModeEquals"/>
+        <conv:TrimHandleXConverter x:Key="TrimHandleX"/>
+
+        <!-- A lane's drag-to-trim handle: a plain filled bar, no chrome beyond that; it's small
+             and only ever seen hovering over the lane's own accent-colored clip bars. -->
+        <Style x:Key="TrimHandleThumb" TargetType="Thumb">
+            <Setter Property="Background" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Cursor" Value="SizeWE"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="2" Opacity="0.85"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <!-- Applied to every FX/mix-parameter slider (not the timeline or master-volume sliders,
              which have their own commit handlers): pushes an undo snapshot once the drag ends, not
-             per-tick. Bug audit #13: also on PreviewKeyUp, since Slider.Value binds TwoWay with the
+             per-tick. Also on PreviewKeyUp, since Slider.Value binds TwoWay with the
              framework-default PropertyChanged trigger, so a keyboard-driven edit already applies
              live with nothing else to catch it. -->
         <Style x:Key="CommitSlider" TargetType="Slider">
@@ -51,9 +66,10 @@
         </Style>
 
         <!-- One lane row: 248px name/meter section + a relative clip track showing the full-source
-             (dashed) span and the trimmed (solid) span as proportional bars. Trim itself is edited
-             via the channel panel's In/Out text boxes, not by dragging these bars; see the
-             ticket's scope note on why interactive drag handles weren't built this pass. -->
+             (dashed) span and the trimmed (solid) span as proportional bars, with drag handles at
+             both ends of the solid span. Dragging a handle sets TrimStartMs/TrimEndMs live
+             (MainWindow's TrimHandle_DragDelta); the channel panel's In/Out text boxes read and
+             write the same two properties, so either path stays in sync with the other. -->
         <DataTemplate x:Key="LaneRowTemplate" DataType="{x:Type vm:LayerRowViewModel}">
             <Grid Height="62" Background="Transparent" MouseDown="LaneRow_MouseDown">
                 <Grid.ColumnDefinitions>
@@ -133,6 +149,31 @@
                             </MultiBinding>
                         </Canvas.Left>
                     </Border>
+
+                    <Thumb Tag="In" Canvas.Top="11" Width="10" Height="40" Style="{StaticResource TrimHandleThumb}"
+                           Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}"
+                           DragStarted="TrimHandle_DragStarted" DragDelta="TrimHandle_DragDelta" DragCompleted="TrimHandle_DragCompleted">
+                        <Canvas.Left>
+                            <MultiBinding Converter="{StaticResource TrimHandleX}" ConverterParameter="In">
+                                <Binding Path="TrimStartMs"/>
+                                <Binding Path="EffectiveTrimEndMs"/>
+                                <Binding Path="TimelineDurationMs"/>
+                                <Binding ElementName="ClipTrack" Path="ActualWidth"/>
+                            </MultiBinding>
+                        </Canvas.Left>
+                    </Thumb>
+                    <Thumb Tag="Out" Canvas.Top="11" Width="10" Height="40" Style="{StaticResource TrimHandleThumb}"
+                           Visibility="{Binding HasSource, Converter={StaticResource BoolToVis}}"
+                           DragStarted="TrimHandle_DragStarted" DragDelta="TrimHandle_DragDelta" DragCompleted="TrimHandle_DragCompleted">
+                        <Canvas.Left>
+                            <MultiBinding Converter="{StaticResource TrimHandleX}" ConverterParameter="Out">
+                                <Binding Path="TrimStartMs"/>
+                                <Binding Path="EffectiveTrimEndMs"/>
+                                <Binding Path="TimelineDurationMs"/>
+                                <Binding ElementName="ClipTrack" Path="ActualWidth"/>
+                            </MultiBinding>
+                        </Canvas.Left>
+                    </Thumb>
                 </Canvas>
             </Grid>
         </DataTemplate>
@@ -174,6 +215,11 @@
                         <MenuItem Header="_Layers">
                             <MenuItem Header="Import _files as layers..." Click="ImportFilesMenuItem_Click"/>
                             <MenuItem Header="_Delete selected layer" Click="DeleteLayerMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="_Song">
+                            <MenuItem Header="Set Song _In" Click="SetSongInMenuItem_Click" InputGestureText="I"/>
+                            <MenuItem Header="Set Song _Out" Click="SetSongOutMenuItem_Click" InputGestureText="O"/>
+                            <MenuItem Header="_Clear Song In/Out" Click="ClearSongRangeMenuItem_Click"/>
                         </MenuItem>
                         <MenuItem Header="_View">
                             <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
@@ -322,6 +368,18 @@
                                     PreviewMouseDown="TimelineSlider_PreviewMouseDown"
                                     PreviewMouseUp="TimelineSlider_PreviewMouseUp"
                                     ValueChanged="TimelineSlider_ValueChanged"/>
+                        </Grid>
+                        <!-- Time-tick ruler (0:00, 0:30, 1:00 ... scaled to the project duration) plus
+                             the song in/out markers, both drawn in code (RedrawRulerCanvas) since
+                             their positions depend on the live timeline duration and track width. -->
+                        <Grid DockPanel.Dock="Top" Height="20" Background="{StaticResource RaisedBrush}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="248"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="SongRangeReadoutText" Grid.Column="0" FontSize="10"
+                                       Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <Canvas x:Name="RulerCanvas" Grid.Column="1" IsHitTestVisible="False" SizeChanged="RulerCanvas_SizeChanged"/>
                         </Grid>
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource LaneRowTemplate}">
