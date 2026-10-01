@@ -11,6 +11,12 @@ public enum FxSlotPosition
     PostGain,
 }
 
+/// <summary>What FxSlot.Insert wired into the chain: the provider to read from, and -- if that
+/// provider supports being bypassed in place -- the node MixEngine should register so a later slot
+/// power toggle can flip it without rebuilding anything. Node is null for a slot that wasn't built
+/// at all (disabled and never used).</summary>
+internal readonly record struct SlotInsertResult(NAudio.Wave.ISampleProvider Provider, ISlotBypassNode? Node);
+
 /// <summary>
 /// One FL-style insert slot in a layer's FX rack: its enabled flag, its hosted FabFilter plugin
 /// (with the saved VST3 state blob), and its native fallback when that plugin isn't installed.
@@ -57,21 +63,38 @@ public sealed class FxSlot
     public void SetHostedState(LayerMixParameters parameters, byte[]? state) => _setHostedState(parameters, state);
 
     /// <summary>Inserts this slot after source: the hosted plugin if installed (reset first so a
-    /// reused instance doesn't replay the last run's buffered audio, audit A5; its latency added to
-    /// totalLatency for the layer's single trim), else the native fallback, else passthrough.</summary>
-    internal ISampleProvider Insert(ISampleProvider source, int layerId, LayerMixParameters parameters, HostedPluginService hosted, int sampleRate, ref int totalLatency)
+    /// reused instance doesn't replay the last run's buffered audio; its latency added to
+    /// totalLatency for the layer's single trim), else the native fallback, else passthrough. Also
+    /// returns the live bypassable node (if any) so MixEngine can register it for in-place slot
+    /// power toggling later, without a full chain rebuild.
+    ///
+    /// A native-fallback stage is always built, enabled or not (cheap, and lets its power toggle
+    /// flip a live bypass flag instead of rebuilding). A hosted stage is only built when enabled or
+    /// already live for this (layerId, stage) -- building a disabled, never-used hosted stage would
+    /// create a plugin instance nobody asked for. A tail-extending stage (reverb) is excluded from
+    /// that live-but-disabled case: a disabled reverb kept live would still flush its tail past the
+    /// layer's own computed duration, so it stays exactly as before -- built only when enabled.</summary>
+    internal SlotInsertResult Insert(ISampleProvider source, int layerId, LayerMixParameters parameters, HostedPluginService hosted, int sampleRate, ref int totalLatency)
     {
-        if (!IsEnabled(parameters)) return source;
+        bool enabled = IsEnabled(parameters);
 
         if (!hosted.IsAvailable(PluginLabel))
-            return _buildNative is null ? source : _buildNative(source, parameters);
+        {
+            if (_buildNative is null) return new SlotInsertResult(source, null);
+            var processed = _buildNative(source, parameters);
+            var nativeNode = new BypassableSampleProvider(source, processed) { Bypassed = !enabled };
+            return new SlotInsertResult(nativeNode, nativeNode);
+        }
+
+        bool keepLiveButDisabled = !ExtendsTail && !enabled && hosted.TryGetLiveInstance(layerId, Stage) is not null;
+        if (!enabled && !keepLiveButDisabled) return new SlotInsertResult(source, null);
 
         var instance = hosted.GetOrCreateInstance(layerId, Stage, PluginLabel, GetHostedState(parameters), sampleRate);
         hosted.Reset(instance);
         int tailFrames = ExtendsTail ? (int)(instance.TailSeconds * sampleRate) : 0;
-        var provider = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames);
+        var provider = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames) { Bypassed = !enabled };
         totalLatency += provider.LatencySamples;
-        return provider;
+        return new SlotInsertResult(provider, provider);
     }
 
     /// <summary>How far this slot extends the layer past its source, in seconds.</summary>

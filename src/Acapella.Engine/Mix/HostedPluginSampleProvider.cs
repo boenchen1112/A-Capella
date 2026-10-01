@@ -22,7 +22,7 @@ namespace Acapella.Engine.Mix;
 /// exists solely for the reverb stage's tail extension (v6 P3 task 5), which is deliberately NOT
 /// trimmed away -- it's the desired lengthening of the layer's audible duration.
 /// </summary>
-public sealed class HostedPluginSampleProvider : ISampleProvider
+public sealed class HostedPluginSampleProvider : ISampleProvider, ISlotBypassNode
 {
     public const int DefaultBlockSize = 4096;
 
@@ -39,6 +39,19 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
 
     private bool _sourceExhausted;
     private int _silenceFramesRemaining;
+
+    // Slot power toggle (bypass without rebuilding the chain): while bypassed, the plugin's own
+    // ProcessBlock is never called, and output is the input delayed by exactly LatencySamples via
+    // this ring buffer instead -- that keeps this stage's total output delay identical whether it's
+    // bypassed or active, so MixEngine's one combined LatencySkipSampleProvider for the layer never
+    // needs to change when a toggle flips this flag mid-stream. The ring is fed every block
+    // regardless of bypass state, so flipping the flag mid-stream is seamless (no silence gap) --
+    // only an initially-bypassed stage (or one bypassed since before its first LatencySamples of
+    // audio) actually outputs leading silence, matching a real plugin's own warm-up.
+    private volatile bool _bypassed;
+    private readonly float[]? _delayRingL;
+    private readonly float[]? _delayRingR;
+    private int _delayRingPos;
 
     public HostedPluginSampleProvider(ISampleProvider source, IHostedPlugin instance, int blockSize = DefaultBlockSize, int extraTailFrames = 0)
     {
@@ -59,11 +72,26 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
 
         LatencySamples = instance.LatencySamples;
         _silenceFramesRemaining = LatencySamples + Math.Max(0, extraTailFrames);
+
+        if (LatencySamples > 0)
+        {
+            _delayRingL = new float[LatencySamples];
+            _delayRingR = new float[LatencySamples];
+        }
     }
 
     /// <summary>The wrapped instance's own reported processing delay, for MixEngine to sum across
     /// a layer's hosted stages and trim once via LatencySkipSampleProvider.</summary>
     public int LatencySamples { get; }
+
+    /// <summary>True suppresses calling the plugin's ProcessBlock; the stage still delays its
+    /// output by LatencySamples (see the ring buffer above) so toggling this doesn't change the
+    /// layer's required latency trim.</summary>
+    public bool Bypassed
+    {
+        get => _bypassed;
+        set => _bypassed = value;
+    }
 
     public WaveFormat WaveFormat => _source.WaveFormat;
 
@@ -126,7 +154,40 @@ public sealed class HostedPluginSampleProvider : ISampleProvider
             }
         }
 
-        _instance.ProcessBlock(_inL, _inR, _outL, _outR, framesThisBlock);
+        bool bypassed = _bypassed;
+
+        if (_delayRingL is not null)
+        {
+            // Fed every block regardless of bypass state, so the ring always holds genuine
+            // trailing history -- flipping Bypassed mid-stream never starts from a zeroed buffer.
+            for (int i = 0; i < framesThisBlock; i++)
+            {
+                float delayedL = _delayRingL[_delayRingPos];
+                float delayedR = _delayRingR![_delayRingPos];
+                _delayRingL[_delayRingPos] = _inL[i];
+                _delayRingR[_delayRingPos] = _inR[i];
+                _delayRingPos++;
+                if (_delayRingPos == LatencySamples) _delayRingPos = 0;
+
+                if (bypassed)
+                {
+                    _outL[i] = delayedL;
+                    _outR[i] = delayedR;
+                }
+            }
+
+            if (!bypassed)
+                _instance.ProcessBlock(_inL, _inR, _outL, _outR, framesThisBlock);
+        }
+        else if (bypassed)
+        {
+            Array.Copy(_inL, _outL, framesThisBlock);
+            Array.Copy(_inR, _outR, framesThisBlock);
+        }
+        else
+        {
+            _instance.ProcessBlock(_inL, _inR, _outL, _outR, framesThisBlock);
+        }
 
         for (int i = 0; i < framesThisBlock; i++)
         {

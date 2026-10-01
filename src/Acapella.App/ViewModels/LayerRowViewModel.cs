@@ -42,6 +42,13 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action? LiveParamChanged;
 
+    /// <summary>Raised instead of LiveParamChanged by the five FX slot power toggles (NoiseGate/
+    /// Compressor/Eq/Limiter/Reverb Enabled), carrying which slot and its new state -- lets the
+    /// caller try applying the toggle in place to the running chain before falling back to a full
+    /// debounced preview refresh, which a slider edit (still routed through LiveParamChanged) always
+    /// needs.</summary>
+    public event Action<FxSlot, bool>? SlotToggled;
+
     public LayerRowViewModel(int slotNumber)
     {
         SlotNumber = slotNumber;
@@ -334,7 +341,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool EqEnabled
     {
         get => Params?.EqEnabled ?? false;
-        set { if (Params is null) return; Params.EqEnabled = value; OnPropertyChanged(nameof(EqEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.EqEnabled = value; OnPropertyChanged(nameof(EqEnabled)); OnPropertyChanged(nameof(SourceLabel)); SlotToggled?.Invoke(FxSlots.Eq, value); }
     }
 
     public float LowShelfGainDb
@@ -366,7 +373,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool NoiseGateEnabled
     {
         get => Params?.NoiseGateEnabled ?? false;
-        set { if (Params is null) return; Params.NoiseGateEnabled = value; OnPropertyChanged(nameof(NoiseGateEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.NoiseGateEnabled = value; OnPropertyChanged(nameof(NoiseGateEnabled)); OnPropertyChanged(nameof(SourceLabel)); SlotToggled?.Invoke(FxSlots.NoiseGate, value); }
     }
 
     public float NoiseGateThresholdDb
@@ -388,7 +395,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool CompressorEnabled
     {
         get => Params?.CompressorEnabled ?? false;
-        set { if (Params is null) return; Params.CompressorEnabled = value; OnPropertyChanged(nameof(CompressorEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.CompressorEnabled = value; OnPropertyChanged(nameof(CompressorEnabled)); OnPropertyChanged(nameof(SourceLabel)); SlotToggled?.Invoke(FxSlots.Compressor, value); }
     }
 
     public float CompressorThresholdDb
@@ -410,7 +417,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool LimiterEnabled
     {
         get => Params?.LimiterEnabled ?? false;
-        set { if (Params is null) return; Params.LimiterEnabled = value; OnPropertyChanged(nameof(LimiterEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.LimiterEnabled = value; OnPropertyChanged(nameof(LimiterEnabled)); OnPropertyChanged(nameof(SourceLabel)); SlotToggled?.Invoke(FxSlots.Limiter, value); }
     }
 
     public float LimiterCeilingDb
@@ -432,7 +439,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool ReverbEnabled
     {
         get => Params?.ReverbEnabled ?? false;
-        set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); OnPropertyChanged(nameof(SourceLabel)); SlotToggled?.Invoke(FxSlots.Reverb, value); }
     }
 
     // ----- Hosted-backend auto-selection (v6 P3 task 1): each stage below shows a native slider

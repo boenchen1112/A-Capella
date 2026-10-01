@@ -52,6 +52,13 @@ public class MixEngine : IDisposable
     // stale if PositionMs isn't advancing rather than something this class needs to clear itself.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, MeterTapSampleProvider> _layerTaps = new();
     private volatile MeterTapSampleProvider? _masterTap;
+
+    // Live bypassable slot nodes from the most recent BuildLayerChain call, keyed by layerId then
+    // stage name. Swapped in wholesale per layer (same pattern as _layerTaps) so a layer's entry
+    // always reflects exactly what that layer's last rebuild actually wired into the chain -- a
+    // stage that didn't get built this time (disabled and never used) just isn't in the dictionary,
+    // and TrySetSlotEnabled below correctly reports "no live node" for it.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, IReadOnlyDictionary<string, ISlotBypassNode>> _slotNodes = new();
     // True only when this MixEngine created its own private HostedPluginService (the
     // availability-only constructor, kept for callers/tests that don't need to share one service
     // across the whole app session) -- only then does Dispose() also dispose the service. A
@@ -140,7 +147,25 @@ public class MixEngine : IDisposable
     {
         _melodyneBackends.Clear();
         _layerTaps.Clear();
+        _slotNodes.Clear();
         _hostedService.ReleaseAll();
+    }
+
+    /// <summary>Flips a slot's live bypass flag on the running chain instead of rebuilding it --
+    /// lets a power-toggle click apply instantly during playback. Returns false when the caller
+    /// must fall back to a full preview refresh instead: the slot extends the layer's tail
+    /// (reverb -- toggling it changes DurationMs, which a bypass flip can't), or there's no live
+    /// node for (layerId, stage) in the most recent chain build (the slot was never enabled yet, so
+    /// nothing is there to flip).</summary>
+    public bool TrySetSlotEnabled(int layerId, string stage, bool enabled)
+    {
+        var slot = FxSlots.All.FirstOrDefault(s => s.Stage == stage);
+        if (slot is null || slot.ExtendsTail) return false;
+        if (!_slotNodes.TryGetValue(layerId, out var stages)) return false;
+        if (!stages.TryGetValue(stage, out var node)) return false;
+
+        node.Bypassed = !enabled;
+        return true;
     }
 
     public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
@@ -239,30 +264,43 @@ public class MixEngine : IDisposable
             chain = new WdlResamplingSampleProvider(chain, outputSampleRate);
 
         int totalHostedLatency = 0;
+        var slotNodes = new Dictionary<string, ISlotBypassNode>();
 
-        chain = InsertSlots(FxSlotPosition.PrePan, chain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
+        chain = InsertSlots(FxSlotPosition.PrePan, chain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
 
         ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
-        afterPan = InsertSlots(FxSlotPosition.PostPan, afterPan, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
+        afterPan = InsertSlots(FxSlotPosition.PostPan, afterPan, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
 
         bool effectiveMute = parameters.Mute || (anySolo && !parameters.Solo);
         float linearGain = effectiveMute ? 0f : DbToLinear(parameters.GainDb);
         ISampleProvider withGain = new VolumeSampleProvider(afterPan) { Volume = linearGain };
-        withGain = InsertSlots(FxSlotPosition.PostGain, withGain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
+        withGain = InsertSlots(FxSlotPosition.PostGain, withGain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
 
         ISampleProvider finished = totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
 
+        // Re-applies each node's bypass flag from parameters one last time, right before this
+        // chain goes live: a slot power toggle landing on TrySetSlotEnabled between this method
+        // reading `parameters` above and this point would otherwise flip the node by reference --
+        // safe once it's actually wired into the chain, but if that race lands mid-build, the node
+        // it flipped could still get overwritten by the freshly-built one below with its original,
+        // now-stale enabled state. Re-asserting here closes that window.
+        foreach (var slot in FxSlots.All)
+            if (slotNodes.TryGetValue(slot.Stage, out var node)) node.Bypassed = !slot.IsEnabled(parameters);
+
         var layerTap = new MeterTapSampleProvider(finished);
         _layerTaps[layer.LayerId] = layerTap;
+        _slotNodes[layer.LayerId] = slotNodes;
         return layerTap;
     }
 
-    private ISampleProvider InsertSlots(FxSlotPosition position, ISampleProvider source, int layerId, LayerMixParameters parameters, int sampleRate, ref int totalHostedLatency)
+    private ISampleProvider InsertSlots(FxSlotPosition position, ISampleProvider source, int layerId, LayerMixParameters parameters, int sampleRate, ref int totalHostedLatency, Dictionary<string, ISlotBypassNode> slotNodes)
     {
         foreach (var slot in FxSlots.All)
         {
-            if (slot.Position == position)
-                source = slot.Insert(source, layerId, parameters, _hostedService, sampleRate, ref totalHostedLatency);
+            if (slot.Position != position) continue;
+            var result = slot.Insert(source, layerId, parameters, _hostedService, sampleRate, ref totalHostedLatency);
+            source = result.Provider;
+            if (result.Node is not null) slotNodes[slot.Stage] = result.Node;
         }
         return source;
     }

@@ -836,6 +836,7 @@ public partial class MainWindow : Window
             if (byCellIndex.TryGetValue(cellIndex, out var layer))
                 row.Layer = layer;
             row.LiveParamChanged += DebounceRefreshPreview;
+            row.SlotToggled += (slot, enabled) => OnSlotToggled(row, slot, enabled);
             _tracks.Add(row);
         }
         UpdateLaneHeaderCount();
@@ -981,6 +982,17 @@ public partial class MainWindow : Window
     {
         _previewDebounceTimer.Stop();
         _previewDebounceTimer.Start();
+    }
+
+    /// <summary>A slot power toggle tries to apply in place to the already-running chain first
+    /// (instant, no restart/glitch); only falls back to the usual debounced full refresh when
+    /// there's no live node for it yet (e.g. the slot has never been enabled this session) or it's
+    /// reverb, whose tail extension changes the project's duration and always needs a real
+    /// rebuild.</summary>
+    private void OnSlotToggled(LayerRowViewModel row, FxSlot slot, bool enabled)
+    {
+        if (row.Layer is null || !_previewEngine.TrySetSlotEnabled(row.Layer.LayerId, slot.Stage, enabled))
+            DebounceRefreshPreview();
     }
 
     /// <summary>Awaits a preview command without blocking the UI thread, then refreshes the

@@ -442,6 +442,14 @@ public class PreviewPlaybackEngine : IDisposable
     /// <summary>Q1 task 3: peak/RMS in dBFS for the master bus meter tap.</summary>
     public (float PeakDb, float RmsDb) GetMasterLevels() => _mixEngine.GetMasterLevels();
 
+    /// <summary>Tries to flip a slot's power toggle on the currently-playing chain in place,
+    /// without a full rebuild -- not routed through the command queue, same reasoning as
+    /// MasterVolumeDb: this is a value push onto an already-built graph's live node, not an
+    /// operation that needs to be atomic relative to SetLayers/Play/Stop/Seek. Returns false when
+    /// there's no live node to flip (see MixEngine.TrySetSlotEnabled), in which case the caller
+    /// should fall back to a full refresh.</summary>
+    public bool TrySetSlotEnabled(int layerId, string stage, bool enabled) => _mixEngine.TrySetSlotEnabled(layerId, stage, enabled);
+
     public void Dispose()
     {
         // StopCore never marshals to the UI thread, so waiting here is deadlock-free.
