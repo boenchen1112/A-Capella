@@ -46,4 +46,21 @@ public class SettingsService
         settings.LatencyOffsetsMs[key] = offsetMs;
         Save(settings);
     }
+
+    /// <summary>Candidate 4: the last camera/mic/metronome choice, so the next recording dialog
+    /// (even across app launches) doesn't default back to device index 0.</summary>
+    public (string? CameraName, string? MicName, bool MetronomeEnabled) GetLastRecordingSetup()
+    {
+        var settings = Load();
+        return (settings.LastCameraName, settings.LastMicName, settings.LastMetronomeEnabled);
+    }
+
+    public void SetLastRecordingSetup(string? cameraName, string? micName, bool metronomeEnabled)
+    {
+        var settings = Load();
+        settings.LastCameraName = cameraName;
+        settings.LastMicName = micName;
+        settings.LastMetronomeEnabled = metronomeEnabled;
+        Save(settings);
+    }
 }

@@ -73,8 +73,20 @@ public partial class RecordSetupWindow : Window
         _metronome.Bpm = initialBpm;
         BpmTextBox.Text = initialBpm.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
 
+        // Candidate 4 (Improvement_Proposal_2026-09-24): pre-select the last-used camera/mic/
+        // metronome state instead of always defaulting to device index 0 -- persisted in
+        // settings.json, so it carries forward across app launches too, not just within a session.
+        (_lastCameraName, _lastMicName, bool lastMetronomeEnabled) = _settingsService.GetLastRecordingSetup();
+        MetronomeToggle.IsChecked = lastMetronomeEnabled;
+        _metronome.Enabled = lastMetronomeEnabled;
+
         RefreshDevices();
+        Closed += (_, _) => _settingsService.SetLastRecordingSetup(
+            CameraCombo.SelectedItem as string, MicCombo.SelectedItem as string, _metronome.Enabled);
     }
+
+    private readonly string? _lastCameraName;
+    private readonly string? _lastMicName;
 
     private void RefreshDevices()
     {
@@ -85,8 +97,12 @@ public partial class RecordSetupWindow : Window
 
         CameraCombo.ItemsSource = _dshowVideoDevices.Select(d => d.Name).ToList();
         MicCombo.ItemsSource = _dshowAudioDevices.Select(d => d.Name).ToList();
-        if (CameraCombo.Items.Count > 0) CameraCombo.SelectedIndex = 0;
-        if (MicCombo.Items.Count > 0) MicCombo.SelectedIndex = 0;
+
+        int cameraIndex = _lastCameraName is null ? -1 : _dshowVideoDevices.FindIndex(d => d.Name == _lastCameraName);
+        CameraCombo.SelectedIndex = cameraIndex >= 0 ? cameraIndex : (CameraCombo.Items.Count > 0 ? 0 : -1);
+
+        int micIndex = _lastMicName is null ? -1 : _dshowAudioDevices.FindIndex(d => d.Name == _lastMicName);
+        MicCombo.SelectedIndex = micIndex >= 0 ? micIndex : (MicCombo.Items.Count > 0 ? 0 : -1);
     }
 
     /// <summary>The spec's dialog has no separate loopback-device picker -- Windows' built-in
