@@ -71,6 +71,18 @@ public class LayerRowViewModel : INotifyPropertyChanged
         set { _meterLevel = value; OnPropertyChanged(nameof(MeterLevel)); }
     }
 
+    private double _timelineDurationMs;
+
+    /// <summary>The project's overall timeline duration, mirrored onto every row by MainWindow
+    /// whenever it changes (UpdateTimelineRangeUi) -- gives the lane clip-bar's XAML bindings
+    /// (ClipBarGeometryConverter) a per-row bindable value without MainWindow needing
+    /// INotifyPropertyChanged of its own.</summary>
+    public double TimelineDurationMs
+    {
+        get => _timelineDurationMs;
+        set { if (_timelineDurationMs == value) return; _timelineDurationMs = value; OnPropertyChanged(nameof(TimelineDurationMs)); }
+    }
+
     public LayerModel? Layer
     {
         get => _layer;

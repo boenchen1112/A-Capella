@@ -73,10 +73,8 @@ public partial class MainWindow : Window
     private bool _isScrubbing;
 
     // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
-    // mixer strip (a layer, or the Master strip) is selected at a time, driving the FX panel's
-    // DataContext. Null LayerRowViewModel + _masterSelected=true means the Master strip.
+    // of the fixed 4 lane rows is selected at a time, driving the channel panel's DataContext.
     private LayerRowViewModel? _selectedLayer;
-    private bool _masterSelected = true;
 
     // Undo/redo (v5 P1 task 2): one undo step per discrete edit (slider release/focus-loss, not
     // per-tick). _applyingHistory guards against re-pushing a snapshot while an Undo/Redo restore
@@ -105,9 +103,10 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
-        UpdateAddLayerButtonState();
+        EmptyCellOverlay.ItemsSource = _tracks;
+        RestoreTracksFromLayers();   // v8 redesign: fixed 4-lane model -- rows exist from app start, not grown on demand
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
-        SelectMasterStrip();
+        SelectLane(_tracks[0]);
 
         _session.SaveStateChanged += UpdateWindowTitle;
         UpdateWindowTitle();
@@ -242,14 +241,10 @@ public partial class MainWindow : Window
                 if (old.Layer is not null && !survivingLayerIds.Contains(old.Layer.LayerId))
                     old.CloseAllOpenedEditors();
             }
-            if (!_masterSelected && _selectedLayer is not null)
-            {
-                var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId);
-                if (stillPresent is not null)
-                    SelectMixerStrip(stillPresent);
-                else
-                    SelectMasterStrip();
-            }
+            var stillPresent = _selectedLayer is not null
+                ? _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId)
+                : null;
+            SelectLane(stillPresent ?? _tracks[0]);
             RefreshPreviewLive();
             return true;
         }
@@ -324,8 +319,9 @@ public partial class MainWindow : Window
                 // controls (root cause fact 3's table lists none) -- see Ordering subtleties for
                 // why broadening the exclusion is a regression, not a simplification.
                 if (Keyboard.FocusedElement is ButtonBase) return;
-                if (_previewEngine.IsPlaying) StopButton_Click(this, new RoutedEventArgs());
-                else PlayButton_Click(this, new RoutedEventArgs());
+                // v8 redesign: PlayButton is now a single Play/Stop toggle (PlayButton_Click
+                // itself branches on _previewEngine.IsPlaying), so Space just clicks it once.
+                PlayButton_Click(this, new RoutedEventArgs());
                 e.Handled = true;
                 break;
             case Key.Left:
@@ -348,28 +344,14 @@ public partial class MainWindow : Window
 
     private void SeekRelative(double deltaMs) => RunPreviewCommand(_previewEngine.SeekByAsync(deltaMs));
 
-    /// <summary>Toolbar master-volume knob and the mixer's Master-strip fader both control the
-    /// same value (image shows both) -- kept as two independent Sliders synced here rather than a
-    /// shared binding source, guarded against the re-entrant ValueChanged each Slider.Value write
-    /// below would otherwise trigger.</summary>
+    /// <summary>v8 redesign: MasterVolumeSlider is the single master-volume control (the old
+    /// mixer-strip's separate fader is gone) -- _syncingMasterVolume stays only to guard against a
+    /// re-entrant ValueChanged if this is ever set programmatically (e.g. ApplyRestore).</summary>
     private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_syncingMasterVolume) return;
         _session.MasterVolumeDb = (float)e.NewValue;
         ApplyMasterVolume();
-        _syncingMasterVolume = true;
-        MixerMasterFader.Value = e.NewValue;
-        _syncingMasterVolume = false;
-    }
-
-    private void MixerMasterFader_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_syncingMasterVolume) return;
-        _session.MasterVolumeDb = (float)e.NewValue;
-        ApplyMasterVolume();
-        _syncingMasterVolume = true;
-        MasterVolumeSlider.Value = e.NewValue;
-        _syncingMasterVolume = false;
     }
 
     /// <summary>Applies the stored master volume unless the Monitor toggle has muted the output --
@@ -402,17 +384,18 @@ public partial class MainWindow : Window
         var now = DateTime.UtcNow;
         var cpuNow = process.TotalProcessorTime;
 
+        double cpuPercent = 0;
         double wallElapsedMs = (now - _lastCpuSampleAt).TotalMilliseconds;
         if (wallElapsedMs > 0)
         {
             double cpuElapsedMs = (cpuNow - _lastCpuTime).TotalMilliseconds;
-            double cpuPercent = 100.0 * cpuElapsedMs / (wallElapsedMs * Environment.ProcessorCount);
-            CpuLoadText.Text = $"CPU {Math.Clamp(cpuPercent, 0, 100):F0}%";
+            cpuPercent = 100.0 * cpuElapsedMs / (wallElapsedMs * Environment.ProcessorCount);
         }
         _lastCpuTime = cpuNow;
         _lastCpuSampleAt = now;
 
-        MemoryUsageText.Text = $"{process.WorkingSet64 / (1024 * 1024)} MB";
+        long memoryMb = process.WorkingSet64 / (1024 * 1024);
+        PerfText.Text = $"CPU {Math.Clamp(cpuPercent, 0, 100):F0}% · {memoryMb} MB";
     }
 
     private void DrainFrameMailbox()
@@ -438,29 +421,17 @@ public partial class MainWindow : Window
     /// <summary>v8 redesign: Current timing and Total Duration are now two separate toolbar
     /// fields (image shows them apart), each h:mm:ss -- replaces the old single "0:00 / 0:00"
     /// combined readout.</summary>
-    /// <summary>Highlights whichever of the separate Play/Stop buttons reflects the current
-    /// transport state (image shows them as distinct buttons, not one toggling label).</summary>
+    /// <summary>v8 redesign: PlayButton is a single toggling circle (mock's 48px Play control) --
+    /// swap its glyph between play/stop rather than driving two separate buttons.</summary>
     private void SetPlayStopContent(bool isPlaying)
     {
-        PlayButton.Background = isPlaying ? (System.Windows.Media.Brush)Resources["AccentBrush"] : (System.Windows.Media.Brush)Resources["RowBrush"];
+        PlayButton.Content = isPlaying ? "■" : "▶";
     }
 
     private void SetTimeReadout(double positionMs, double durationMs)
     {
         CurrentTimeText.Text = FormatTime(positionMs);
         TotalDurationText.Text = FormatTime(durationMs);
-    }
-
-    // ----- Hint panel (v8 redesign): shows a short instruction for whatever the pointer is over.
-    // Only wired to a curated set of controls (transport, Melodyne launcher) per Q1's "create one,
-    // show instruction to user" -- not every widget, to avoid the project's no-gold-plating rule. -----
-
-    private const string DefaultHint = "Click a mixer channel to edit its FX. Space = Play/Stop.";
-
-    private void Hint_MouseEnter(object sender, MouseEventArgs e)
-    {
-        if (((FrameworkElement)sender).Tag is string hint)
-            HintText.Text = hint;
     }
 
     // ----- Custom window chrome (v8 redesign): minimize/restore/close glyphs in the toolbar,
@@ -514,37 +485,22 @@ public partial class MainWindow : Window
             row.MeterLevel = ToUnit(rmsDb);
         }
 
-        var (masterPeakDb, masterRmsDb) = _previewEngine.GetMasterLevels();
-        MasterMeterBar.Value = ToUnit(masterRmsDb);
+        var (masterPeakDb, _) = _previewEngine.GetMasterLevels();
         ToolbarPeakMeter.Value = ToUnit(masterPeakDb);
     }
 
-    // ----- Track sidebar: add / record / upload -----
+    // ----- Track sidebar: record / upload (v8 redesign: fixed 4-lane model -- no Add/remove-row
+    // machinery; UpdateLaneHeaderCount replaces the old UpdateAddLayerButtonState). -----
 
-    private void AddLayerButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Refreshes the lanes panel's "Layers · n of 4" header and the transport Record
+    /// button's "Record layer N" label/enabled state.</summary>
+    private void UpdateLaneHeaderCount()
     {
-        if (_tracks.Count >= LayerCollection.MaxLayers)
-        {
-            StatusText.Text = "Layer cap reached (4).";
-            return;
-        }
-
-        var row = new LayerRowViewModel(_tracks.Count + 1);
-        row.LiveParamChanged += DebounceRefreshPreview;
-        _tracks.Add(row);
-        UpdateAddLayerButtonState();
-        // Not pushed to undo history yet: this row has no LayerModel until Record/Upload attaches
-        // a source, so it isn't part of the ProjectFileDto snapshot ToDto serializes.
+        LaneHeaderCountText.Text = $"Layers · {_layers.Layers.Count} of {LayerCollection.MaxLayers}";
+        int? freeCell = LowestFreeCell();
+        RecordButtonText.Text = freeCell is int cell ? $"● Record layer {cell + 1}" : "● Record (full)";
+        RecordButton.IsEnabled = freeCell is not null;
     }
-
-    private void UpdateAddLayerButtonState()
-    {
-        AddLayerButton.IsEnabled = _tracks.Count < LayerCollection.MaxLayers;
-        // Multi-file import: enabled while any LAYER slot is free, even if all 4 rows exist (spec D6).
-        ImportFilesButton.IsEnabled = _layers.Layers.Count < LayerCollection.MaxLayers;
-    }
-
-    private void AddLayerMenuItem_Click(object sender, RoutedEventArgs e) => AddLayerButton_Click(sender, e);
 
     private void RecordChoice_Click(object sender, RoutedEventArgs e)
     {
@@ -609,7 +565,7 @@ public partial class MainWindow : Window
             dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
             row.Layer = dialog.CreatedLayer;
             if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
-            UpdateAddLayerButtonState();
+            UpdateLaneHeaderCount();
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
             PushUndoSnapshot();
@@ -717,21 +673,10 @@ public partial class MainWindow : Window
         return free.Count > 0 ? free[0] : null;
     }
 
-    /// <summary>The row for a free grid cell: the existing empty row if there is one, else one appended
-    /// row (rows are contiguous by SlotNumber, so at most one append -- multi-file spec D4).</summary>
-    private LayerRowViewModel RowForCell(int cellIndex)
-    {
-        while (_tracks.Count <= cellIndex) AppendEmptyRow();
-        return _tracks[cellIndex];
-    }
-
-    private LayerRowViewModel AppendEmptyRow()
-    {
-        var row = new LayerRowViewModel(_tracks.Count + 1);
-        row.LiveParamChanged += DebounceRefreshPreview;
-        _tracks.Add(row);
-        return row;
-    }
+    /// <summary>v8 redesign: the row for a grid cell -- rows are a fixed set of exactly
+    /// LayerCollection.MaxLayers, always present from app start, so this is just an index now
+    /// (no growth/append).</summary>
+    private LayerRowViewModel RowForCell(int cellIndex) => _tracks[cellIndex];
 
     /// <summary>The single "what LayerKind is an uploaded file" rule -- Upload, Import and Replace with
     /// file all use it (retake spec D7).</summary>
@@ -759,7 +704,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
 
         AttachUploadedFile(row, dialog.FileName);
-        UpdateAddLayerButtonState();                                     // new (D6)
+        UpdateLaneHeaderCount();
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
         PushUndoSnapshot();
@@ -787,12 +732,9 @@ public partial class MainWindow : Window
         // dispatcher pumping -- _hostedStatePollTimer can push an undo snapshot on any pump, which would
         // record a half-imported project as its own undo step (breaks spec D2).
         foreach (var (cellIndex, filePath) in assignments)
-        {
-            while (_tracks.Count <= cellIndex) AppendEmptyRow();         // appends exactly one row per new cell (spec D4)
             AttachUploadedFile(_tracks[cellIndex], filePath);
-        }
 
-        UpdateAddLayerButtonState();
+        UpdateLaneHeaderCount();
         if (assignments.Count > 0)
         {
             RefreshPreviewLive();                                        // once per batch, not per file
@@ -816,17 +758,17 @@ public partial class MainWindow : Window
         ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
         ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Rebuilds sidebar rows keyed by CellIndex, not LayerCollection's internal list
-    /// order (audit B8/B9): a project saved with gaps (e.g. only cells 0 and 2 populated) recreates
-    /// rows 1 and 3 with their layers and rows 2 empty, rather than compacting layers into the
-    /// first N rows and silently reassigning their grid cells.</summary>
+    /// <summary>v8 redesign: rebuilds the fixed 4 lane rows keyed by CellIndex, not LayerCollection's
+    /// internal list order (audit B8/B9) -- a project saved with gaps (e.g. only cells 0 and 2
+    /// populated) recreates rows 1 and 3 with their layers and rows 2/4 empty, never compacting
+    /// layers into the first N rows or reassigning their grid cells. Always exactly MaxLayers rows,
+    /// present even for a brand-new project, since the lanes panel no longer grows on demand.</summary>
     private void RestoreTracksFromLayers()
     {
         _tracks.Clear();
         var byCellIndex = _layers.Layers.ToDictionary(l => l.CellIndex);
-        int maxCellIndex = byCellIndex.Count > 0 ? byCellIndex.Keys.Max() : -1;
 
-        for (int cellIndex = 0; cellIndex <= maxCellIndex; cellIndex++)
+        for (int cellIndex = 0; cellIndex < LayerCollection.MaxLayers; cellIndex++)
         {
             var row = new LayerRowViewModel(cellIndex + 1);
             if (byCellIndex.TryGetValue(cellIndex, out var layer))
@@ -834,42 +776,24 @@ public partial class MainWindow : Window
             row.LiveParamChanged += DebounceRefreshPreview;
             _tracks.Add(row);
         }
-        UpdateAddLayerButtonState();
+        UpdateLaneHeaderCount();
     }
 
-    // ----- Mixer strip selection (v8 redesign, replaces the old Editor/Mixing screen switch) -----
-    // Clicking a strip's Border (MixerStripTemplate/Master strip in MainWindow.xaml) switches which
-    // layer's FX chain the FX panel shows; the Master strip has no FX (locked product decision) so
-    // it shows a placeholder instead.
+    // ----- Lane selection (v8 redesign, replaces the old Editor/Mixing screen switch) -----
+    // Clicking a lane row switches which layer's FX chain the channel panel shows.
 
-    private void MixerStrip_MouseDown(object sender, MouseButtonEventArgs e)
+    private void LaneRow_MouseDown(object sender, MouseButtonEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
-        SelectMixerStrip(row);
+        SelectLane(row);
     }
 
-    private void MasterStrip_MouseDown(object sender, MouseButtonEventArgs e) => SelectMasterStrip();
-
-    private void SelectMixerStrip(LayerRowViewModel row)
+    private void SelectLane(LayerRowViewModel row)
     {
         foreach (var track in _tracks) track.IsSelected = track == row;
         _selectedLayer = row;
-        _masterSelected = false;
-        FxPanel.DataContext = row;
-        FxHeaderText.Text = $"FX — {row.DisplayName}";
-        FxPlaceholderText.Visibility = Visibility.Collapsed;
-        FxRackScrollViewer.Visibility = Visibility.Visible;
-    }
-
-    private void SelectMasterStrip()
-    {
-        foreach (var track in _tracks) track.IsSelected = false;
-        _selectedLayer = null;
-        _masterSelected = true;
-        FxPanel.DataContext = null;
-        FxHeaderText.Text = "FX — Master";
-        FxPlaceholderText.Visibility = Visibility.Visible;
-        FxRackScrollViewer.Visibility = Visibility.Collapsed;
+        ChannelPanel.DataContext = row;
+        FxHeaderText.Text = row.DisplayName;
     }
 
     // Bug audit A1/C3/C5: replaces the old stub (a plain dialog explaining itself) with a real
@@ -893,11 +817,81 @@ public partial class MainWindow : Window
     // its enable/disable, and clicking the FX name opens the live hosted plugin instance's own
     // editor window (never embedded -- P3a task 7); no-ops when that stage isn't hosted, since
     // there's no plugin editor to open (the native fallback sliders are what's shown instead). -----
-    private void OpenEqEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Eq);
-    private void OpenNoiseGateEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.NoiseGate);
-    private void OpenCompressorEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Compressor);
-    private void OpenLimiterEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Limiter);
-    private void OpenReverbEditor_Click(object sender, MouseButtonEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Reverb);
+    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Eq);
+    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.NoiseGate);
+    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Compressor);
+    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Limiter);
+    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Reverb);
+
+    private void PitchModeMelodyne_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        row.PitchMode = LayerRowViewModel.PitchEngineMode.Melodyne;
+        PushUndoSnapshot();
+    }
+
+    private void PitchModeAuto_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        row.PitchMode = LayerRowViewModel.PitchEngineMode.Auto;
+        PushUndoSnapshot();
+    }
+
+    // ----- Lane name rename-in-place (v8 redesign: inline TextBox in the lane row, committed only
+    // on a real change via CommitNameIfChanged, matching the CommitSlider/CommitCheckBox pattern). -----
+
+    private void LaneNameTextBox_GotFocus(object sender, RoutedEventArgs e) => ((TextBox)sender).SelectAll();
+
+    private void LaneNameTextBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox textBox || textBox.DataContext is not LayerRowViewModel row) return;
+        if (row.CommitNameIfChanged(textBox.Text))
+            PushUndoSnapshot();
+        textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();   // reflect the trimmed/reverted value
+    }
+
+    private void LaneNameTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+    }
+
+    // ----- Delete layer (v8 redesign, new feature): undoable, no cell compaction -- the row stays
+    // in its slot, now empty, exactly like a row that was never recorded/uploaded into. -----
+
+    private void ChannelMoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var row = _selectedLayer;
+
+        var deleteItem = new MenuItem { Header = "Delete layer", IsEnabled = row is not null && IsLiveRow(row) };
+        deleteItem.Click += (_, _) => DeleteLayer(row);
+
+        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        menu.Items.Add(deleteItem);
+        menu.IsOpen = true;
+    }
+
+    private void DeleteLayerMenuItem_Click(object sender, RoutedEventArgs e) => DeleteLayer(_selectedLayer);
+
+    private void DeleteLayer(LayerRowViewModel? row)
+    {
+        if (row is null || !IsLiveRow(row)) return;
+
+        string name = row.DisplayName;
+        row.CloseAllOpenedEditors();
+        _layers.Remove(row.Layer!);
+        row.Layer = null;   // the slot stays, now empty -- no cell compaction (locked product decision)
+        UpdateLaneHeaderCount();
+        RefreshPreviewLive();
+        if (ReferenceEquals(_selectedLayer, row))
+            SelectLane(row);   // re-show the now-empty row's (now empty) channel panel
+        StatusText.Text = $"Deleted {name}.";
+        PushUndoSnapshot();
+    }
 
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom -----
     //
@@ -951,15 +945,22 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.RefreshAsync(_layers.Layers));
     }
 
+    /// <summary>v8 redesign: PlayButton is a single toggling 48px circle (mock), not separate
+    /// Play/Stop buttons -- branches on IsPlaying first so Space (which just clicks this once, see
+    /// MainWindow_PreviewKeyDown) toggles correctly either way.</summary>
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_previewEngine.IsPlaying)
+        {
+            await StopPlaybackAsync();
+            return;
+        }
+
         if (!ExportMenuItem.IsEnabled)
         {
             StatusText.Text = "Finish the export first.";   // bug audit #8
             return;
         }
-
-        if (_previewEngine.IsPlaying) return;
 
         if (_layers.Layers.Count == 0)
         {
@@ -986,7 +987,7 @@ public partial class MainWindow : Window
     /// <summary>Stop resets the playhead to the start, not just pausing in place (media-player
     /// convention, per redesign feedback) -- always seeks to 0 even if playback was already
     /// stopped, so pressing Stop is also a reliable "rewind" shortcut.</summary>
-    private async void StopButton_Click(object sender, RoutedEventArgs e)
+    private async Task StopPlaybackAsync()
     {
         bool wasPlaying = _previewEngine.IsPlaying;
         var stop = _previewEngine.StopAsync();
@@ -1038,14 +1039,16 @@ public partial class MainWindow : Window
         if (!_isScrubbing)
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
         SetTimeReadout(_previewEngine.PositionMs, durationMs);
+        foreach (var row in _tracks) row.TimelineDurationMs = durationMs;
     }
 
-    /// <summary>v8 redesign: h:mm:ss (Q1 answer switches the reference layout's B:S:T bars/beats
-    /// format to plain time, since Acapella has no bars/beats sequencing).</summary>
+    /// <summary>v8 redesign: short "m:ss.t" (mock's "0:07.2 / 2:15.0"), one decisecond of
+    /// precision -- replaces the old h:mm:ss format now that current/total share one readout.</summary>
     private static string FormatTime(double ms)
     {
         var ts = TimeSpan.FromMilliseconds(Math.Max(0, ms));
-        return $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+        int totalMinutes = (int)ts.TotalMinutes;
+        return $"{totalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds / 100}";
     }
 
     private void CompositeCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
