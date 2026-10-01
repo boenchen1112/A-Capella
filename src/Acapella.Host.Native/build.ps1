@@ -36,7 +36,10 @@ $env:INCLUDE = "$msvc\include;$sdkRoot\Include\$sdkVersion\ucrt;$sdkRoot\Include
 $env:LIB = "$msvc\lib\x64;$sdkRoot\Lib\$sdkVersion\ucrt\x64;$sdkRoot\Lib\$sdkVersion\um\x64"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$buildDir = Join-Path $scriptDir "build"
+# One CMake tree per configuration: Ninja is single-config and CMAKE_BUILD_TYPE is fixed at
+# configure time, so a shared tree would silently keep building whichever config it was first
+# configured with. Outputs still land in build\bin\<Configuration> (see CMakeLists.txt).
+$buildDir = Join-Path $scriptDir "build\cmake-$Configuration"
 
 # Forward slashes: CMake writes this path verbatim into a generated .cmake file, where a backslash
 # is a string-escape character -- "\x64\rc.exe" broke on the (already-escape-like) "\x64" sequence.

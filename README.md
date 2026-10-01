@@ -73,6 +73,13 @@ tools/HardwareChecks       Manual real-hardware checks (devices, sync, throughpu
 
    Tests that need a specific FabFilter or Melodyne plugin are skipped, with a message, when that plugin isn't installed.
 
+   For everyday use, run a Release build: Debug builds of the plugin host are several times slower and can struggle with a full effects chain.
+
+   ```powershell
+   powershell -File src/Acapella.Host.Native/build.ps1 -Configuration Release
+   dotnet run -c Release --project src/Acapella.App
+   ```
+
 ## Third-party plugins
 
 Acapella never bundles or redistributes FabFilter or Melodyne plugins. It only hosts copies the user has installed and licensed themselves.
