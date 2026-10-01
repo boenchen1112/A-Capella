@@ -114,6 +114,10 @@ public sealed class HostedPluginService : IDisposable
 
     public void CloseEditor(IHostedPlugin instance) => _dispatcher.Invoke(instance.CloseEditorWindow);
 
+    /// <summary>Hides/shows an already-open editor window without closing it (app minimize/restore).
+    /// Safe to call when no editor is open.</summary>
+    public void SetEditorVisible(IHostedPlugin instance, bool visible) => _dispatcher.Invoke(() => instance.SetEditorVisible(visible));
+
     /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>
     public void Release(int layerId, string stage) => _dispatcher.Invoke(() => _cache.Release(layerId, stage));
 
@@ -182,6 +186,14 @@ public sealed class HostedPluginService : IDisposable
     {
         if (_araLayerSessions.TryGetValue(layerId, out var entry))
             entry.Session.CloseEditorWindow();
+    });
+
+    /// <summary>Hides/shows this layer's Melodyne editor window without closing it (app
+    /// minimize/restore). Safe to call when no session or editor exists.</summary>
+    public void SetAraEditorVisible(int layerId, bool visible) => _dispatcher.Invoke(() =>
+    {
+        if (_araLayerSessions.TryGetValue(layerId, out var entry))
+            entry.Session.SetEditorVisible(visible);
     });
 
     /// <summary>Bug audit A5 ("stale correction cache"): exports this layer's ARA archive and

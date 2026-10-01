@@ -20,6 +20,9 @@ internal static class NativeHostBridge
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_close_editor_window(IntPtr handle);
 
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_set_editor_visible(IntPtr handle, int visible);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern int aca_scan_plugin(string pluginPath,
         byte[] outName, int outNameSize,
@@ -123,6 +126,9 @@ internal static class NativeHostBridge
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_ara_close_editor_window(IntPtr sessionHandle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_ara_set_editor_visible(IntPtr sessionHandle, int visible);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_ara_release_audio_source(IntPtr sessionHandle, IntPtr audioSourceHandle);

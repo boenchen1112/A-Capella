@@ -100,6 +100,10 @@ public sealed class HostedPluginInstance : IHostedPlugin
     /// thread-affinity requirement as ShowEditorWindow.</summary>
     public void CloseEditorWindow() => NativeHostBridge.aca_close_editor_window(_handle);
 
+    /// <summary>Hides/shows an already-open editor window without destroying it. Same thread
+    /// affinity as ShowEditorWindow.</summary>
+    public void SetEditorVisible(bool visible) => NativeHostBridge.aca_set_editor_visible(_handle, visible ? 1 : 0);
+
     /// <summary>Binds JUCE's MessageManager to the calling thread. Call exactly once, from the
     /// app's WPF UI thread, before any other HostedPluginInstance/HostedPluginAvailability call --
     /// every plugin-lifecycle and editor-window call must then happen on that same thread

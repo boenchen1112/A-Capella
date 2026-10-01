@@ -27,8 +27,11 @@ public class LayerRowEditorTrackingTests
         public string GetParameterName(int index) => "";
         public float GetParameterValue(int index) => 0f;
         public void SetParameterValue(int index, float value) { }
-        public bool ShowEditorWindow(string title) => true;
-        public void CloseEditorWindow() { }
+        public bool EditorOpen { get; private set; }
+        public bool? EditorVisible { get; private set; }
+        public bool ShowEditorWindow(string title) { EditorOpen = true; EditorVisible = true; return true; }
+        public void CloseEditorWindow() { EditorOpen = false; EditorVisible = null; }
+        public void SetEditorVisible(bool visible) { if (EditorOpen) EditorVisible = visible; }
         public void Dispose() { }
     }
 
@@ -158,5 +161,47 @@ public class LayerRowEditorTrackingTests
 
         Assert.True(newSlot1.PollEditorChanges());   // layer 1's open editor is tracked
         Assert.False(newSlot2.PollEditorChanges());  // layer 0's editor was never opened
+    });
+
+    /// <summary>Closing/removing a layer (e.g. an Undo that drops it) must close that layer's open
+    /// hosted-plugin editor window -- it must not leave a Pro-Q window floating for a layer that no
+    /// longer exists in the project.</summary>
+    [StaFact]
+    public void CloseAllOpenedEditors_ClosesTheWindowButLeavesTheLiveInstanceAlone() => WithService(s =>
+    {
+        var row = RowWithOpenEq(1, Layer(0, 0));
+        var instance = Live(s, 0);
+        Assert.True(instance.EditorOpen);
+
+        row.CloseAllOpenedEditors();
+
+        Assert.False(instance.EditorOpen);                       // window closed
+        Assert.Same(instance, s.TryGetLiveInstance(0, FxSlots.Eq.Stage));   // instance still live
+    });
+
+    /// <summary>App minimize/restore hides/shows open editor windows without closing them.</summary>
+    [StaFact]
+    public void SetOpenedEditorsVisible_HidesAndRestoresWithoutClosing() => WithService(s =>
+    {
+        var row = RowWithOpenEq(1, Layer(0, 0));
+        var instance = Live(s, 0);
+
+        row.SetOpenedEditorsVisible(false);
+        Assert.True(instance.EditorOpen);
+        Assert.Equal(false, instance.EditorVisible);
+
+        row.SetOpenedEditorsVisible(true);
+        Assert.True(instance.EditorOpen);
+        Assert.Equal(true, instance.EditorVisible);
+    });
+
+    /// <summary>A row with nothing opened is a safe no-op for both operations.</summary>
+    [StaFact]
+    public void EditorWindowOperations_AreNoOpsWhenNothingWasOpened() => WithService(s =>
+    {
+        var row = new LayerRowViewModel(1) { Layer = Layer(0, 0) };
+        row.SetOpenedEditorsVisible(false);
+        row.SetOpenedEditorsVisible(true);
+        row.CloseAllOpenedEditors();
     });
 }

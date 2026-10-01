@@ -732,6 +732,16 @@ extern "C"
         static_cast<AcaAraSession*>(sessionHandle)->editorWindow.reset();
     }
 
+    // Mirrors HostBridge.cpp's aca_set_editor_visible: hides or shows an already-open editor window
+    // without destroying it, for the same app-minimize/restore use. Safe no-op if no editor is open.
+    __declspec(dllexport) void aca_ara_set_editor_visible(void* sessionHandle, int visible)
+    {
+        if (sessionHandle == nullptr) return;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        if (session->editorWindow != nullptr)
+            session->editorWindow->setVisible(visible != 0);
+    }
+
     // Task 38: deregisters and frees one audio source. Safe to call with a handle from a different
     // session (no-op) since it only searches this session's own list.
     __declspec(dllexport) void aca_ara_release_audio_source(void* sessionHandle, void* audioSourceHandle)

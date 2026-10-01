@@ -198,6 +198,8 @@ public partial class MainWindow : Window
         PreviewKeyDown += MainWindow_PreviewKeyDown;
     }
 
+    private WindowState _lastWindowState = WindowState.Normal;
+
     // ----- Undo/redo (v5 P1 task 2) -----
 
     /// <summary>Call after any discrete project edit completes (a slider release, a checkbox
@@ -227,6 +229,15 @@ public partial class MainWindow : Window
             // restore() (baseline = post-restore live state), BEFORE RefreshPreviewLive (no chain
             // build can create an instance in between), synchronous (no poll tick can land in between).
             LayerRowViewModel.CarryEditorTracking(previousRows, _tracks);
+            // Close editor windows for any layer this restore dropped (e.g. an Undo back past the
+            // point a layer was added) -- only the window, not the live instance underneath it (see
+            // LayerRowViewModel.CloseAllOpenedEditors), so this is safe during playback/export.
+            var survivingLayerIds = _tracks.Where(t => t.Layer is not null).Select(t => t.Layer!.LayerId).ToHashSet();
+            foreach (var old in previousRows)
+            {
+                if (old.Layer is not null && !survivingLayerIds.Contains(old.Layer.LayerId))
+                    old.CloseAllOpenedEditors();
+            }
             if (!_masterSelected && _selectedLayer is not null)
             {
                 var stillPresent = _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId);
@@ -461,8 +472,26 @@ public partial class MainWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
-    private void MainWindow_StateChanged(object? sender, EventArgs e) =>
+    /// <summary>Besides swapping the restore-button glyph, hides every open hosted-plugin (and
+    /// Melodyne/ARA) editor window while the app window is minimized, and shows them again on
+    /// restore -- a minimized app with its FabFilter/Melodyne editors still floating on screen looks
+    /// broken, and leaving them open also means they outlive the window that owns them (Alt+Tab
+    /// still cycles to Pro-Q even though "Acapella" is minimized). Only hides/shows
+    /// (LayerRowViewModel.SetOpenedEditorsVisible), never closes -- the user's editor layout survives
+    /// the round-trip exactly as left.</summary>
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
         RestoreButton.Content = WindowState == WindowState.Maximized ? "🗗" : "🗖";
+
+        bool wasMinimized = _lastWindowState == WindowState.Minimized;
+        bool isMinimized = WindowState == WindowState.Minimized;
+        _lastWindowState = WindowState;
+        if (isMinimized != wasMinimized)
+        {
+            foreach (var row in _tracks)
+                row.SetOpenedEditorsVisible(!isMinimized);
+        }
+    }
 
     /// <summary>v7 Q1 task 3 (v8: per-strip meters). Maps -60..0 dBFS RMS onto the 0..1 range
     /// (below -60dB reads as silence) -- a fixed floor is simpler than a full logarithmic meter

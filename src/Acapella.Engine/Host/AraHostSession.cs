@@ -135,6 +135,10 @@ public sealed class AraHostSession : IDisposable
     /// this session's hosted thread.</summary>
     public void CloseEditorWindow() => NativeHostBridge.aca_ara_close_editor_window(_handle);
 
+    /// <summary>Hides/shows an already-open editor window without destroying it. Same thread
+    /// affinity as ShowEditorWindow.</summary>
+    public void SetEditorVisible(bool visible) => NativeHostBridge.aca_ara_set_editor_visible(_handle, visible ? 1 : 0);
+
     // Mirrors HostedPluginInstance.GetState's cap and optimistic-buffer-then-retry shape (task 40).
     private const int MaxArchiveBytes = 1024 * 1024;
     private const int OptimisticArchiveBufferBytes = 8192;

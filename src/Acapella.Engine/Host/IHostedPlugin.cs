@@ -41,6 +41,10 @@ public interface IHostedPlugin : IDisposable
 
     /// <summary>Safe to call when no editor is open.</summary>
     void CloseEditorWindow();
+
+    /// <summary>Hides or shows an already-open editor window without closing it -- used while the
+    /// app window is minimized/restored. Safe to call when no editor is open.</summary>
+    void SetEditorVisible(bool visible);
 }
 
 /// <summary>Creates hosted plugin instances by catalog label (HostedPluginCatalog.KnownPluginPaths' keys).</summary>

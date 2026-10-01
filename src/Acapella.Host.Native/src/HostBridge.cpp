@@ -391,6 +391,19 @@ extern "C"
         static_cast<AcaPluginInstance*>(handle)->editorWindow.reset();
     }
 
+    // Hides or shows an already-open editor window without destroying it (unlike
+    // aca_close_editor_window) -- used to hide plugin editors while the app window is minimized and
+    // bring them back on restore, so the user's editor layout and the plugin's own open-only state
+    // survive a minimize round-trip. Safe no-op if no editor is open. Must be called on the same
+    // thread as aca_initialize().
+    __declspec(dllexport) void aca_set_editor_visible(void* handle, int visible)
+    {
+        if (handle == nullptr) return;
+        auto* h = static_cast<AcaPluginInstance*>(handle);
+        if (h->editorWindow != nullptr)
+            h->editorWindow->setVisible(visible != 0);
+    }
+
     // Task 10: release. Safe to call with nullptr (no-op).
     __declspec(dllexport) void aca_release_instance(void* handle)
     {

@@ -410,6 +410,44 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Closes every hosted-plugin editor window this row has ever opened, plus this
+    /// layer's Melodyne/ARA editor if any -- called when the layer this row belonged to disappears
+    /// (an Undo/Redo that drops it; MainWindow.ApplyRestore). Only closes the editor windows, it does
+    /// not release the underlying live instances -- those stay alive and keep processing audio (the
+    /// same deliberately-deferred decision as leaving them open across an undo that keeps the
+    /// layer), so this is safe to call regardless of what the audio thread or an export is doing.
+    /// Safe to call on a row with nothing open.</summary>
+    internal void CloseAllOpenedEditors()
+    {
+        if (_layer is null || SharedHostedService is null) return;
+
+        foreach (var slot in _openedHostedSlots)
+        {
+            var instance = SharedHostedService.TryGetLiveInstance(_layer.LayerId, slot.Stage);
+            if (instance is not null)
+                SharedHostedService.CloseEditor(instance);
+        }
+        SharedHostedService.CloseAraEditor(_layer.LayerId);
+        _openedHostedSlots.Clear();
+    }
+
+    /// <summary>Hides or shows every hosted-plugin editor window this row has ever opened, plus this
+    /// layer's Melodyne/ARA editor if any -- used while the main window is minimized/restored. A
+    /// slot whose editor was never opened, or has since been closed by the user, is a safe no-op
+    /// (the native call checks whether a window actually exists).</summary>
+    internal void SetOpenedEditorsVisible(bool visible)
+    {
+        if (_layer is null || SharedHostedService is null) return;
+
+        foreach (var slot in _openedHostedSlots)
+        {
+            var instance = SharedHostedService.TryGetLiveInstance(_layer.LayerId, slot.Stage);
+            if (instance is not null)
+                SharedHostedService.SetEditorVisible(instance, visible);
+        }
+        SharedHostedService.SetAraEditorVisible(_layer.LayerId, visible);
+    }
+
     // ----- Melodyne slot (v8 redesign: styled the same as the FX slots above -- a plain enable
     // checkbox + name, no separate mode picker). PitchBackendSelection.NativeAutomatic stays a
     // valid enum value and MixEngine still handles it -- it's just never reachable from this UI,

@@ -66,6 +66,8 @@ public sealed class FakeHostedPlugin : IHostedPlugin
 
     public void CloseEditorWindow() { }
 
+    public void SetEditorVisible(bool visible) { }
+
     public void Dispose() => Disposed = true;
 
     private void FillDelay()
