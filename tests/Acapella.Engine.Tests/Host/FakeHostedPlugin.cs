@@ -20,7 +20,12 @@ public sealed class FakeHostedPlugin : IHostedPlugin
 
     public string Label { get; }
     public int LatencySamples { get; }
-    public double TailSeconds { get; }
+
+    /// <summary>Mutable (unlike a real plugin's tail, which is driven by its own internal decay
+    /// parameter rather than SetState) so tests can simulate a user changing Pro-R's tail-length
+    /// knob in its own editor and assert that a caller re-queries it live rather than caching the
+    /// value from when the chain was first built.</summary>
+    public double TailSeconds { get; set; }
     public byte[] State { get; private set; } = Array.Empty<byte>();
     public int ResetCount { get; private set; }
     public int ShowEditorCount { get; private set; }

@@ -1,6 +1,8 @@
+using System.Linq;
 using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
+using Acapella.Engine.Tests.Host;
 using Acapella.Engine.Timeline;
 
 namespace Acapella.Engine.Tests.Timeline;
@@ -67,6 +69,30 @@ public class LayerTimelineTests
 
         Assert.Equal(0, timeline.DurationMs(Array.Empty<LayerModel>(), 44100));
         Assert.Equal(2500, timeline.DurationMs(new[] { Layer(0, cellIndex: 0), Layer(500, cellIndex: 1) }, 44100), 6);
+    }
+
+    /// <summary>Q1 task 5 (bug audit B11): a Pro-R tail-length change made in its own editor must be
+    /// picked up by the next DurationMs call (what every preview-rebuild path uses, directly or via
+    /// PreviewPlaybackEngine.RefreshAsync's SetLayersCore) -- not frozen at whatever the tail was
+    /// when the chain/instance was first created. FxSlot.TailSeconds queries the live instance's
+    /// TailSeconds property fresh on every call rather than caching it, so this passes already; the
+    /// test pins that contract down rather than leaving it implicit.</summary>
+    [Fact]
+    public void DurationMs_ReQueriesTheLiveReverbTail_NotTheValueFromWhenTheChainWasBuilt()
+    {
+        var factory = new FakeHostedPluginFactory().With("FabFilter Pro-R 2", tailSeconds: 1.0);
+        using var mixEngine = new MixEngine(factory.CreateService());
+        var timeline = TimelineWithProbe(mixEngine, durationSeconds: 10);
+        var layer = Layer(cellIndex: 0);
+        layer.MixParameters.ReverbEnabled = true;
+
+        Assert.Equal(11_000, timeline.DurationMs(layer, 44100), 6);   // 10s source + 1s tail
+
+        // Simulate the user dragging Pro-R 2's decay knob in its own still-open editor window --
+        // the live instance's TailSeconds changes immediately, with no SetState/poll involved.
+        factory.Created.Single().TailSeconds = 3.0;
+
+        Assert.Equal(13_000, timeline.DurationMs(layer, 44100), 6);   // picked up without rebuilding the chain
     }
 
     [Fact]
