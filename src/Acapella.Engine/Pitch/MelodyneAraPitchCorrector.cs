@@ -36,16 +36,20 @@ public sealed class MelodyneAraPitchCorrector : IPitchCorrectionBackend
         _layerId = layerId;
     }
 
-    public float[] Correct(float[] samples, int sampleRate)
-    {
-        // Bug audit A5: the audio source's own persistentID inside the ARA document is derived from
-        // layerId (stable across calls for the same layer) rather than a random GUID -- combined
-        // with a content hash so a genuinely new recording/trim re-registers the source instead of
-        // silently reusing stale content under the same layer's persistent session.
-        string contentKey = ContentHash(samples, sampleRate);
+    public float[] Correct(float[] samples, int sampleRate) =>
+        CorrectTrimmedSpan(samples, sampleRate, trimStartSamples: 0, trimLengthSamples: samples.Length, ContentHash(samples, sampleRate));
 
+    /// <summary>Renders [trimStartSamples, trimStartSamples + trimLengthSamples) of rawSamples
+    /// through Melodyne. rawSamples/rawContentKey must stay the untrimmed source and a
+    /// trim-independent key respectively -- MixEngine passes LayerTimeline's full decode and
+    /// (sourcePath, mtime) here, specifically so a trim-only edit never changes what's registered
+    /// with the persistent ARA session (previously the registered content -- and therefore
+    /// contentKey -- was the already-trimmed samples, so every trim nudge released and re-created
+    /// the audio source, discarding whatever edits existed in Melodyne for that layer).</summary>
+    public float[] CorrectTrimmedSpan(float[] rawSamples, int sampleRate, int trimStartSamples, int trimLengthSamples, string rawContentKey)
+    {
         var (session, source) = _hostedService.GetOrCreateAraLayerSource(
-            _layerId, _pluginPath, sampleRate, RenderBlockSize, samples, contentKey);
+            _layerId, _pluginPath, sampleRate, RenderBlockSize, rawSamples, rawContentKey);
 
         // Bug audit A2: rendering before analysis completes returns whatever Melodyne's playback
         // renderer does pre-analysis (implementation-defined) -- wait for it first. A timeout
@@ -66,11 +70,11 @@ public sealed class MelodyneAraPitchCorrector : IPitchCorrectionBackend
             Thread.Sleep(20);
         }
 
-        var output = new float[samples.Length];
-        for (int pos = 0; pos < samples.Length; pos += RenderBlockSize)
+        var output = new float[trimLengthSamples];
+        for (int pos = 0; pos < trimLengthSamples; pos += RenderBlockSize)
         {
-            int n = Math.Min(RenderBlockSize, samples.Length - pos);
-            var (left, right) = session.RenderBlock(source, startSampleInRegion: pos, numSamples: n);
+            int n = Math.Min(RenderBlockSize, trimLengthSamples - pos);
+            var (left, right) = session.RenderBlock(source, startSampleInRegion: trimStartSamples + pos, numSamples: n);
             // Melodyne's mono-source-forced-to-stereo-bus output duplicates the mono signal to both
             // channels; averaging is a safe general downmix if that ever isn't exactly true.
             for (int i = 0; i < n; i++)

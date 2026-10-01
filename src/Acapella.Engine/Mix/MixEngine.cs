@@ -7,8 +7,17 @@ namespace Acapella.Engine.Mix;
 
 /// <summary>SourceKey, if provided, must uniquely determine Samples' exact content (e.g. source
 /// path + mtime + trim + shift) -- it's used to cache automatic pitch correction across rebuilds
-/// (audit B3). Null disables that cache (correction always runs fresh).</summary>
-public record MixLayerInput(int LayerId, float[] Samples, int SampleRate, LayerMixParameters Parameters, string? SourceKey = null);
+/// (audit B3). Null disables that cache (correction always runs fresh).
+///
+/// RawSamples/TrimStartSamples/TrimLengthSamples/ShiftMs/RawContentKey exist only for the Manual2A
+/// (Melodyne ARA) pitch path: its persistent per-layer ARA session must keep registering the same
+/// (untrimmed) audio under the same content key across a trim change, or the trim edit tears down
+/// and rebuilds the session, discarding whatever Melodyne edits were made against the old one. The
+/// automatic backend and the rest of the chain keep using the already-trimmed/shifted Samples.</summary>
+public record MixLayerInput(
+    int LayerId, float[] Samples, int SampleRate, LayerMixParameters Parameters, string? SourceKey = null,
+    float[]? RawSamples = null, int TrimStartSamples = 0, int TrimLengthSamples = 0, double ShiftMs = 0,
+    string? RawContentKey = null);
 
 /// <summary>
 /// Builds the live mixed preview: for each layer, applies the fixed chain (pitch correction ->
@@ -28,7 +37,7 @@ public class MixEngine : IDisposable
     // Bug audit A1: one MelodyneAraPitchCorrector per layer (each captures its own layerId, needed
     // to key HostedPluginService's persistent per-layer ARA session) rather than one shared
     // instance -- a single shared corrector couldn't route different layers to different sessions.
-    private readonly Dictionary<int, IPitchCorrectionBackend> _melodyneBackends = new();
+    private readonly Dictionary<int, MelodyneAraPitchCorrector> _melodyneBackends = new();
 
     /// <summary>Master brick-wall ceiling (audit B10): applied identically to preview and export
     /// so exports sound like the preview, replacing export's old content-dependent PeakNormalizer.</summary>
@@ -197,11 +206,30 @@ public class MixEngine : IDisposable
             // a fresh Correct() call on the next rebuild instead of replaying PitchCorrectionCache's
             // pre-edit output -- the layer's own SourceKey alone never changes just because the
             // user tweaked pitch inside Melodyne's own editor.
+            //
+            // Trim/Melodyne-edit-survival fix: renders through the layer's persistent ARA session
+            // using the untrimmed RawSamples/RawContentKey (so a trim change alone never changes
+            // what's registered with Melodyne) and only slices out the trimmed span, shifting it
+            // afterward -- see MelodyneAraPitchCorrector.CorrectTrimmedSpan.
             PitchBackendSelection.Manual2A when _hostedService.IsAraAvailable(MelodynePluginLabel) =>
                 PitchCorrectionCache.GetOrCorrect(
-                    GetOrCreateMelodyneBackend(layer.LayerId), layer.LayerId,
+                    layer.LayerId,
                     layer.SourceKey is null ? null : $"{layer.SourceKey}-araEdit{_hostedService.GetAraEditGeneration(layer.LayerId)}",
-                    layer.Samples, layer.SampleRate),
+                    nameof(MelodyneAraPitchCorrector),
+                    () =>
+                    {
+                        // Callers that don't populate RawSamples (tests, and anyone building a
+                        // MixLayerInput directly rather than via LayerTimeline.AudioInput) have no
+                        // separate trim window -- treat the whole given buffer as the span.
+                        bool hasRaw = layer.RawSamples is not null;
+                        var rawSamples = layer.RawSamples ?? layer.Samples;
+                        int trimStart = hasRaw ? layer.TrimStartSamples : 0;
+                        int trimLength = hasRaw ? layer.TrimLengthSamples : layer.Samples.Length;
+                        var corrected = GetOrCreateMelodyneBackend(layer.LayerId).CorrectTrimmedSpan(
+                            rawSamples, layer.SampleRate, trimStart, trimLength,
+                            layer.RawContentKey ?? layer.SourceKey ?? string.Empty);
+                        return AudioShiftHelper.ApplyShift(corrected, layer.ShiftMs, layer.SampleRate);
+                    }),
             _ => layer.Samples,
         };
 
@@ -239,7 +267,7 @@ public class MixEngine : IDisposable
         return source;
     }
 
-    private IPitchCorrectionBackend GetOrCreateMelodyneBackend(int layerId)
+    private MelodyneAraPitchCorrector GetOrCreateMelodyneBackend(int layerId)
     {
         if (!_melodyneBackends.TryGetValue(layerId, out var backend))
         {

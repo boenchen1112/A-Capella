@@ -57,13 +57,24 @@ public sealed class LayerTimeline
     }
 
     /// <summary>The layer's trimmed, shifted audio, ready for MixEngine, keyed so automatic pitch
-    /// correction is cached across rebuilds (audit B3).</summary>
+    /// correction is cached across rebuilds (audit B3). Also carries the untrimmed decode plus the
+    /// trim window in samples and a trim-independent content key, so the Manual2A (Melodyne ARA)
+    /// pitch path can keep registering the same persistent-session content across a trim change
+    /// instead of tearing it down (see MixLayerInput's RawSamples doc).</summary>
     public MixLayerInput AudioInput(LayerModel layer, int sampleRate)
     {
         var raw = AudioDecodeCache.GetOrDecode(layer.SourcePath, sampleRate, _ffmpegPath);
         var trimmed = TrimHelper.ApplyTrim(raw, layer.TrimStartMs, layer.TrimEndMs, sampleRate);
         var shifted = AudioShiftHelper.ApplyShift(trimmed, layer.GetShiftMs(), sampleRate);
-        return new MixLayerInput(layer.LayerId, shifted, sampleRate, layer.MixParameters, layer.SourceCacheKey());
+
+        int trimStartSamples = Math.Clamp((int)Math.Round(layer.TrimStartMs / 1000.0 * sampleRate), 0, raw.Length);
+        long mtimeTicks = File.Exists(layer.SourcePath) ? File.GetLastWriteTimeUtc(layer.SourcePath).Ticks : 0;
+        string rawContentKey = $"{layer.SourcePath}|{mtimeTicks}";
+
+        return new MixLayerInput(
+            layer.LayerId, shifted, sampleRate, layer.MixParameters, layer.SourceCacheKey(),
+            RawSamples: raw, TrimStartSamples: trimStartSamples, TrimLengthSamples: trimmed.Length,
+            ShiftMs: layer.GetShiftMs(), RawContentKey: rawContentKey);
     }
 
     /// <summary>A frame source showing this layer's video from project position positionMs onward,

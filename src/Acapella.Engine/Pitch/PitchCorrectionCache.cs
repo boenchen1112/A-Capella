@@ -28,15 +28,21 @@ public static class PitchCorrectionCache
     /// <summary>sourceKey should uniquely determine the exact input samples (e.g. source path +
     /// mtime + trim + shift). If null, the caller has no stable key to cache against and
     /// correction always runs fresh.</summary>
-    public static float[] GetOrCorrect(IPitchCorrectionBackend backend, int layerId, string? sourceKey, float[] samples, int sampleRate)
+    public static float[] GetOrCorrect(IPitchCorrectionBackend backend, int layerId, string? sourceKey, float[] samples, int sampleRate) =>
+        GetOrCorrect(layerId, sourceKey, backend.GetType().Name, () => backend.Correct(samples, sampleRate));
+
+    /// <summary>Same caching shape as the overload above, but for callers (the Manual2A/Melodyne
+    /// path) whose correction doesn't fit IPitchCorrectionBackend.Correct's single
+    /// (samples, sampleRate) signature -- e.g. it needs the untrimmed source plus a trim window, or
+    /// post-processing (shift) applied after the correction itself.</summary>
+    public static float[] GetOrCorrect(int layerId, string? sourceKey, string backendType, Func<float[]> correct)
     {
         if (sourceKey is null)
-            return backend.Correct(samples, sampleRate);
+            return correct();
 
-        string backendType = backend.GetType().Name;
         var key = new CacheKey(layerId, sourceKey, backendType);
         bool isNewKey = !Cache.ContainsKey(key);
-        var result = Cache.GetOrAdd(key, _ => backend.Correct(samples, sampleRate));
+        var result = Cache.GetOrAdd(key, _ => correct());
 
         if (isNewKey)
             TrackAndEvictOldest(new GroupKey(layerId, backendType), sourceKey);

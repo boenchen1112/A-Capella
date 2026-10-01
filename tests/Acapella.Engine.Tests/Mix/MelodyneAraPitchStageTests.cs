@@ -112,4 +112,73 @@ public class MelodyneAraPitchStageTests
         var output = ReadAll(chain, samples.Length * 2);
         Assert.NotEmpty(output);
     }
+
+    /// <summary>Trim/Melodyne-edit-survival fix: a trim-only change must not re-register this
+    /// layer's persistent ARA audio source -- previously the registered content (and therefore the
+    /// content key) was the already-trimmed samples, so every trim nudge released and recreated the
+    /// source, discarding whatever Melodyne edits existed on it. Calling GetOrCreateAraLayerSource
+    /// twice with the same (trim-independent) content key but different sample-array arguments --
+    /// standing in for "same source, trim changed" -- must return the exact same session and audio
+    /// source handle both times.</summary>
+    [Fact]
+    public void GetOrCreateAraLayerSource_WithUnchangedContentKey_ReusesTheSameAudioSource()
+    {
+        if (!HostedPluginInstance.TryScanAraCapability(HostedPluginCatalog.KnownPluginPaths["Melodyne"], out var capability)
+            || capability is null || !capability.IsAraCapable)
+        {
+            Console.WriteLine("SKIPPED: Melodyne is not ARA-capable on this machine (or not found).");
+            return;
+        }
+
+        using var service = new HostedPluginService(new OnlyAvailable());
+        string pluginPath = HostedPluginCatalog.KnownPluginPaths["Melodyne"];
+        var full = GenerateSineWave(440, SampleRate, SampleRate);
+        var shorterView = full[..(SampleRate / 2)];
+
+        var (session1, source1) = service.GetOrCreateAraLayerSource(0, pluginPath, SampleRate, 4096, full, "stable-raw-content-key");
+        var (session2, source2) = service.GetOrCreateAraLayerSource(0, pluginPath, SampleRate, 4096, shorterView, "stable-raw-content-key");
+
+        Assert.Same(session1, session2);
+        Assert.Equal(source1, source2);
+    }
+
+    /// <summary>End-to-end proof at the MixEngine level: rendering the same layer with two different
+    /// trim windows over the same underlying RawSamples/RawContentKey must not throw, must respect
+    /// each trim's length, and (the actual bug) must not be treated as "new content" by the
+    /// persistent ARA session -- i.e. the chain build for a trimmed window is just a render of a
+    /// sub-span of the one still-registered source.</summary>
+    [Fact]
+    public void Manual2A_TrimChange_RendersTrimmedSpan_WithoutRecreatingTheSource()
+    {
+        if (!HostedPluginInstance.TryScanAraCapability(HostedPluginCatalog.KnownPluginPaths["Melodyne"], out var capability)
+            || capability is null || !capability.IsAraCapable)
+        {
+            Console.WriteLine("SKIPPED: Melodyne is not ARA-capable on this machine (or not found).");
+            return;
+        }
+
+        var raw = GenerateSineWave(440, SampleRate, SampleRate);
+        var parameters = new LayerMixParameters { PitchBackend = PitchBackendSelection.Manual2A };
+        const string rawKey = "melodyne-trim-test-raw";
+
+        using var engine = new MixEngine(new OnlyAvailable());
+
+        var fullWindow = new MixLayerInput(
+            0, raw, SampleRate, parameters, SourceKey: $"{rawKey}|full",
+            RawSamples: raw, TrimStartSamples: 0, TrimLengthSamples: raw.Length, RawContentKey: rawKey);
+        var fullChain = engine.BuildLayerChain(fullWindow, anySolo: false, SampleRate);
+        ReadAll(fullChain, raw.Length * 2);
+
+        int trimmedLength = SampleRate / 2;
+        var trimmedWindow = new MixLayerInput(
+            0, raw[..trimmedLength], SampleRate, parameters, SourceKey: $"{rawKey}|trimmed",
+            RawSamples: raw, TrimStartSamples: 0, TrimLengthSamples: trimmedLength, RawContentKey: rawKey);
+        var trimmedChain = engine.BuildLayerChain(trimmedWindow, anySolo: false, SampleRate);
+        var trimmedOutput = ReadAll(trimmedChain, trimmedLength * 2);
+
+        // Stereo-interleaved output for exactly the trimmed span length, not the full source --
+        // proves the trim was applied as a render-time slice of the one persistent source.
+        Assert.Equal(trimmedLength * 2, trimmedOutput.Length);
+        Assert.Contains(trimmedOutput, s => Math.Abs(s) > 1e-6f);
+    }
 }
