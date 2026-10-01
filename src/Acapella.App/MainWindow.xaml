@@ -263,8 +263,13 @@
                 <!-- Spans the full remaining width (next to the hint panel through to under the
                      close button), matching the reference image's plain full-width progress bar;
                      dropped the old scrollable/zoomable timeline in favor of always filling the row. -->
+                <!-- IsMoveToPointEnabled: a click anywhere on the track jumps the thumb straight to
+                     that point and updates Value immediately, not just by one LargeChange step.
+                     Without it, TimelineSlider_PreviewMouseUp below seeks to wherever the thumb
+                     already was, not to where the user clicked. -->
                 <Slider x:Name="TimelineSlider" Grid.Column="1" Minimum="0" Maximum="1000" Value="0" Height="22" VerticalAlignment="Center"
-                        MouseEnter="Hint_MouseEnter" Tag="Song position -- drag to seek."
+                        IsMoveToPointEnabled="True"
+                        MouseEnter="Hint_MouseEnter" Tag="Song position -- click or drag to seek."
                         PreviewMouseDown="TimelineSlider_PreviewMouseDown"
                         PreviewMouseUp="TimelineSlider_PreviewMouseUp"
                         ValueChanged="TimelineSlider_ValueChanged"/>
