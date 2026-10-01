@@ -69,7 +69,6 @@ public partial class MainWindow : Window
     private SKBitmap? _pendingFrame;
     private bool _framePumpQueued;
     private bool _monitorMuted;
-    private bool _syncingMasterVolume;
     private bool _isScrubbing;
 
     // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
@@ -299,8 +298,6 @@ public partial class MainWindow : Window
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
-    private void LayerNameTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
-
     // ----- Keyboard transport shortcuts (v5 P1 task 6) -----
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -345,11 +342,9 @@ public partial class MainWindow : Window
     private void SeekRelative(double deltaMs) => RunPreviewCommand(_previewEngine.SeekByAsync(deltaMs));
 
     /// <summary>v8 redesign: MasterVolumeSlider is the single master-volume control (the old
-    /// mixer-strip's separate fader is gone) -- _syncingMasterVolume stays only to guard against a
-    /// re-entrant ValueChanged if this is ever set programmatically (e.g. ApplyRestore).</summary>
+    /// mixer-strip's separate fader is gone).</summary>
     private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_syncingMasterVolume) return;
         _session.MasterVolumeDb = (float)e.NewValue;
         ApplyMasterVolume();
     }
