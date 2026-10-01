@@ -2,6 +2,8 @@ using Acapella.Engine.Mix;
 
 namespace Acapella.Engine.Project;
 
+
+
 public enum LayerKind
 {
     RecordedAV,
@@ -78,6 +80,14 @@ public class LayerCollection
 
     private readonly List<LayerModel> _layers = new();
 
+    // Monotonic, never reused within a session -- NOT _layers.Count, because deleting a layer
+    // (LayerCollection.Remove) shrinks the list, and a Count-based id would then hand a freshly
+    // recorded/uploaded layer the same LayerId as a just-deleted one. Hosted-plugin instances are
+    // cached by (LayerId, Stage) and a deleted layer's instances are deliberately never released
+    // (closing an FX editor must not risk a use-after-free in a live audio graph), so an id collision
+    // would hand the new layer a stale instance still carrying the old layer's FX state.
+    private int _nextLayerId;
+
     public IReadOnlyList<LayerModel> Layers => _layers;
 
     public LayerModel Add(LayerKind kind, string sourcePath)
@@ -87,7 +97,7 @@ public class LayerCollection
 
         var layer = new LayerModel
         {
-            LayerId = _layers.Count,
+            LayerId = _nextLayerId++,
             Kind = kind,
             SourcePath = sourcePath,
             CellIndex = _layers.Count,
@@ -96,7 +106,9 @@ public class LayerCollection
         return layer;
     }
 
-    /// <summary>Replaces the collection's contents wholesale -- used by project load.</summary>
+    /// <summary>Replaces the collection's contents wholesale -- used by project load/undo-redo
+    /// restore. Advances the id counter past whatever the restored layers already used, so a layer
+    /// added afterward can't collide with one of them either.</summary>
     public void Restore(IEnumerable<LayerModel> layers)
     {
         var list = layers.ToList();
@@ -105,7 +117,14 @@ public class LayerCollection
 
         _layers.Clear();
         _layers.AddRange(list);
+        _nextLayerId = list.Count > 0 ? list.Max(l => l.LayerId) + 1 : 0;
     }
+
+    /// <summary>Removes one layer (delete-layer): the slot becomes empty and every other layer keeps
+    /// its own CellIndex -- this deliberately does not compact remaining layers into lower cells
+    /// (see the grid-gap-compaction fix: Layout2x2Provider already renders a non-contiguous CellIndex
+    /// correctly). Safe to call with a layer no longer in the collection.</summary>
+    public void Remove(LayerModel layer) => _layers.Remove(layer);
 
     /// <summary>Removes the most recently added layer. Currently unused: M6 probes before Add
     /// (RecordSetupWindow.StopRecording), so no zombie layer is ever added.</summary>

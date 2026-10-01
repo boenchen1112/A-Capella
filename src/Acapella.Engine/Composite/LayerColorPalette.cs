@@ -9,10 +9,10 @@ public static class LayerColorPalette
 {
     private static readonly SKColor[] Colors =
     {
-        new(0xE0, 0x57, 0x57), // red
-        new(0x57, 0xA0, 0xE0), // blue
-        new(0x57, 0xC0, 0x7A), // green
-        new(0xE0, 0xB0, 0x40), // amber
+        new(0xE2, 0x6D, 0x6D), // red
+        new(0x5E, 0xA2, 0xE6), // blue
+        new(0x5C, 0xC4, 0x89), // green
+        new(0xE2, 0xB5, 0x4A), // amber
     };
 
     public static SKColor GetColor(int cellIndex) => Colors[((cellIndex % Colors.Length) + Colors.Length) % Colors.Length];
