@@ -1193,12 +1193,23 @@ public partial class MainWindow : Window
 
         var (snapshotLayers, snapshotMasterVolumeDb) = _session.SnapshotForExport();
 
+        // Built on the UI thread (candidate 3 / Improvement_Proposal_2026-09-24): Progress<T>
+        // captures the current SynchronizationContext at construction, so every Report() call from
+        // the background export thread below marshals back here with no explicit Dispatcher.Invoke.
+        ExportProgressBar.Value = 0;
+        ExportProgressBar.Visibility = Visibility.Visible;
+        var progress = new Progress<double>(fraction =>
+        {
+            ExportProgressBar.Value = fraction;
+            StatusText.Text = $"Exporting... {fraction:P0}";
+        });
+
         Task.Run(() =>
         {
             try
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
-                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb);
+                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)
@@ -1207,7 +1218,11 @@ public partial class MainWindow : Window
             }
             finally
             {
-                Dispatcher.Invoke(() => ExportMenuItem.IsEnabled = true);
+                Dispatcher.Invoke(() =>
+                {
+                    ExportMenuItem.IsEnabled = true;
+                    ExportProgressBar.Visibility = Visibility.Collapsed;
+                });
             }
         });
     }

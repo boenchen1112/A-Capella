@@ -33,10 +33,17 @@ public class ExportEngine : IDisposable
         _timeline = new LayerTimeline(_mixEngine, ffmpegPath, ffprobePath);
     }
 
-    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f)
+    /// <summary>progress, when given, reports 0.0 once mixdown starts, 0.0..1.0 across the
+    /// frame-compositing loop (about once per second of output, not per frame, so the UI thread
+    /// isn't flooded), and exactly 1.0 once the encode process has exited successfully -- callers
+    /// building a Progress&lt;double&gt; on the UI thread get every callback marshaled back there
+    /// automatically with no extra Dispatcher.Invoke.</summary>
+    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null)
     {
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
+
+        progress?.Report(0.0);
 
         var orderedLayers = LayerTimeline.InCellOrder(layers.Layers);
 
@@ -87,6 +94,9 @@ public class ExportEngine : IDisposable
                     var frames = frameSources.Select(s => s.GetNextFrame()).ToList();
                     using var composite = Compositor.Composite(width, height, frames, cellRects);
                     WriteBitmapPixels(stdin, composite, pixelBuffer);
+
+                    if (frameIndex % fps == 0 || frameIndex == totalFrames - 1)
+                        progress?.Report((frameIndex + 1) / (double)totalFrames);
                 }
 
                 stdin.Close();
@@ -94,6 +104,8 @@ public class ExportEngine : IDisposable
 
                 if (encodeProcess.ExitCode != 0)
                     throw new InvalidOperationException($"ffmpeg export failed (exit {encodeProcess.ExitCode}):\n{string.Join('\n', stderrTail.GetLines())}");
+
+                progress?.Report(1.0);
             }
             finally
             {

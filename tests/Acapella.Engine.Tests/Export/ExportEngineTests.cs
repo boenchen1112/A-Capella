@@ -105,6 +105,46 @@ public class ExportEngineTests
         }
     }
 
+    /// <summary>Synchronous IProgress&lt;double&gt; (unlike System.Progress&lt;T&gt;, which posts
+    /// through a SynchronizationContext and so wouldn't have finished recording by the time a
+    /// synchronous Export() call returns) -- records every reported value in call order.</summary>
+    private sealed class SyncProgress : IProgress<double>
+    {
+        public readonly List<double> Values = new();
+        public void Report(double value) => Values.Add(value);
+    }
+
+    /// <summary>Export progress (candidate 3, Improvement_Proposal_2026-09-24): reported values
+    /// must be monotonically non-decreasing and end exactly at 1.0, so a status-bar progress bar
+    /// never jumps backwards or stalls short of full.</summary>
+    [Fact]
+    public void Export_ReportsMonotonicProgress_EndingAtOne()
+    {
+        var (video1, video2, tempDir) = CreateFixtureClips();
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video1);
+            layers.Add(LayerKind.RecordedAV, video2);
+
+            var progress = new SyncProgress();
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            exportEngine.Export(layers, outputPath, width: 128, height: 128, fps: 10, sampleRate: 44100, progress: progress);
+
+            Assert.NotEmpty(progress.Values);
+            for (int i = 1; i < progress.Values.Count; i++)
+                Assert.True(progress.Values[i] >= progress.Values[i - 1], "Progress must never go backwards.");
+            Assert.Equal(1.0, progress.Values[^1]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Regression test for a real color-channel-swap bug: Compositor created its output bitmap
     /// with the platform default color type (Bgra8888 on Windows), then ExportEngine piped those
