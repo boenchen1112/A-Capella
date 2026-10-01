@@ -117,7 +117,12 @@ public class LayerCollection
 
         _layers.Clear();
         _layers.AddRange(list);
-        _nextLayerId = list.Count > 0 ? list.Max(l => l.LayerId) + 1 : 0;
+        // Math.Max against the current counter, not a flat assignment: an undo/redo that restores
+        // an older snapshot (fewer/lower-id layers than have existed this session) must not walk the
+        // counter backwards, or a layer added after the restore could reclaim an id whose hosted-FX
+        // instances are still cached from a layer deleted *after* that snapshot was taken.
+        int restoredMax = list.Count > 0 ? list.Max(l => l.LayerId) + 1 : 0;
+        _nextLayerId = Math.Max(_nextLayerId, restoredMax);
     }
 
     /// <summary>Removes one layer (delete-layer): the slot becomes empty and every other layer keeps

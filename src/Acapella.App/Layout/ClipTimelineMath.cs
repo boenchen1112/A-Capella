@@ -35,7 +35,15 @@ public static class ClipTimelineMath
         Math.Clamp(candidateMs, 0, Math.Max(0, trimEndMs - MinTrimGapMs));
 
     /// <summary>Clamps a candidate new trim-out value: never past the source's own duration, and
-    /// never within MinTrimGapMs of the current trim-in.</summary>
-    public static double ClampTrimEnd(double candidateMs, double trimStartMs, double sourceDurationMs) =>
-        Math.Clamp(candidateMs, trimStartMs + MinTrimGapMs, Math.Max(trimStartMs + MinTrimGapMs, sourceDurationMs));
+    /// never within MinTrimGapMs of the current trim-in. If sourceDurationMs isn't known yet (&lt;= 0,
+    /// e.g. MediaProbe hasn't returned), the upper bound is the candidate itself rather than
+    /// collapsing every drag down to trimStartMs + MinTrimGapMs -- callers should disable the
+    /// out-handle until a real duration is available, but this keeps the math itself non-destructive
+    /// if it's ever called before that.</summary>
+    public static double ClampTrimEnd(double candidateMs, double trimStartMs, double sourceDurationMs)
+    {
+        double lower = trimStartMs + MinTrimGapMs;
+        double upper = sourceDurationMs > 0 ? Math.Max(lower, sourceDurationMs) : Math.Max(lower, candidateMs);
+        return Math.Clamp(candidateMs, lower, upper);
+    }
 }
