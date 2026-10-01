@@ -218,12 +218,14 @@ public class ProjectSessionTests : IDisposable
         layer.MixParameters.GainDb = -1f;
         session.MasterVolumeDb = -5f;
 
-        var (layers, masterVolumeDb) = session.SnapshotForExport();
+        var (layers, masterVolumeDb, songInMs, songOutMs) = session.SnapshotForExport();
         layer.MixParameters.GainDb = -20f;
         session.MasterVolumeDb = 0f;
 
         Assert.Equal(-1f, layers.Layers.Single().MixParameters.GainDb);
         Assert.Equal(-5f, masterVolumeDb);
+        Assert.Null(songInMs);
+        Assert.Null(songOutMs);
     }
 
     // ----- Save affordances (Ctrl+S / Save vs Save As / dirty marker / discard prompts) -----
@@ -595,6 +597,104 @@ public class ProjectSessionTests : IDisposable
         Assert.Empty(session.Layers.Layers);
         Assert.Equal(path, session.CurrentFilePath);
         Assert.False(session.IsDirty);
+    }
+
+    // ----- Song in/out (project-wide export range) -----
+
+    [Fact]
+    public void SongInOut_MarkDirtyOnlyOnARealChange_AndUndoRedoStepThroughThem()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        session.Save(TempProjectPath());
+        Assert.False(session.IsDirty);   // clean baseline, mirrors a just-saved project
+
+        session.SongInMs = null;   // no-op: already null
+        Assert.False(session.IsDirty);
+
+        session.SongInMs = 1000;
+        session.SongOutMs = 9000;
+        Assert.True(session.IsDirty);
+        session.CommitEdit();
+
+        Assert.True(session.Undo());
+        Assert.Null(session.SongInMs);
+        Assert.Null(session.SongOutMs);
+
+        Assert.True(session.Redo());
+        Assert.Equal(1000, session.SongInMs);
+        Assert.Equal(9000, session.SongOutMs);
+    }
+
+    [Fact]
+    public void ClearSongRange_ReturnsFalse_WhenNothingWasSet_AndTrueOtherwise()
+    {
+        var session = new ProjectSession(_mixEngine);
+
+        Assert.False(session.ClearSongRange());
+
+        session.SongInMs = 500;
+        Assert.True(session.ClearSongRange());
+        Assert.Null(session.SongInMs);
+        Assert.Null(session.SongOutMs);
+    }
+
+    [Fact]
+    public void SaveThenOpen_RoundTripsSongInOut()
+    {
+        var saved = new ProjectSession(_mixEngine);
+        saved.Layers.Add(LayerKind.UploadedVideo, "clip.mp4");
+        saved.SongInMs = 1200;
+        saved.SongOutMs = 8800;
+        string path = TempProjectPath();
+        saved.Save(path);
+
+        var opened = new ProjectSession(_mixEngine);
+        opened.Open(path);
+
+        Assert.Equal(1200, opened.SongInMs);
+        Assert.Equal(8800, opened.SongOutMs);
+    }
+
+    [Fact]
+    public void Open_AFileSavedBeforeSongInOutExisted_LoadsWithANullRange()
+    {
+        var session = new ProjectSession(_mixEngine);
+        string path = TempProjectPath();
+        File.WriteAllText(path, """{"LayoutId":"2x2","MetronomeBpm":120,"Layers":[]}""");
+
+        session.Open(path);
+
+        Assert.Null(session.SongInMs);
+        Assert.Null(session.SongOutMs);
+    }
+
+    [Fact]
+    public void New_ClearsSongInOut()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.SongInMs = 1000;
+        session.SongOutMs = 5000;
+        session.CommitEdit();
+
+        session.New();
+
+        Assert.Null(session.SongInMs);
+        Assert.Null(session.SongOutMs);
+    }
+
+    [Fact]
+    public void SnapshotForExport_CarriesSongInOut()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
+        session.SongInMs = 2000;
+        session.SongOutMs = 6000;
+
+        var (_, _, songInMs, songOutMs) = session.SnapshotForExport();
+
+        Assert.Equal(2000, songInMs);
+        Assert.Equal(6000, songOutMs);
     }
 
     /// <summary>Bug audit #13: grounds the consequence half of the bug, independent of WPF -- this

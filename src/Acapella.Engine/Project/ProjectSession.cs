@@ -48,6 +48,33 @@ public sealed class ProjectSession
         set { if (_masterVolumeDb == value) return; _masterVolumeDb = value; MarkDirty(); }
     }
 
+    private double? _songInMs;
+    private double? _songOutMs;
+
+    /// <summary>Project-wide export range (Set Song In/Out), applied only at export -- see
+    /// ProjectFileDto.SongInMs's doc comment. Null means "whole song".</summary>
+    public double? SongInMs
+    {
+        get => _songInMs;
+        set { if (_songInMs == value) return; _songInMs = value; MarkDirty(); }
+    }
+
+    public double? SongOutMs
+    {
+        get => _songOutMs;
+        set { if (_songOutMs == value) return; _songOutMs = value; MarkDirty(); }
+    }
+
+    /// <summary>Resets both markers to "whole song". Returns false (no-op) if neither was set, so a
+    /// caller can skip recording an undo step for a Clear that had nothing to clear.</summary>
+    public bool ClearSongRange()
+    {
+        if (SongInMs is null && SongOutMs is null) return false;
+        SongInMs = null;
+        SongOutMs = null;
+        return true;
+    }
+
     /// <summary>The file this project was last successfully saved to or opened from; null for a
     /// project that has never been saved (fresh app, File > New).</summary>
     public string? CurrentFilePath { get; private set; }
@@ -82,15 +109,16 @@ public sealed class ProjectSession
     {
         foreach (var layer in Layers.Layers)
             _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
-        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb);
+        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, SongInMs, SongOutMs);
     }
 
-    /// <summary>A deep copy of the layers and master volume, unaffected by later edits -- for a
-    /// background export racing the user (M7).</summary>
-    public (LayerCollection Layers, float MasterVolumeDb) SnapshotForExport()
+    /// <summary>A deep copy of the layers, master volume and song in/out range, unaffected by later
+    /// edits -- for a background export racing the user (M7).</summary>
+    public (LayerCollection Layers, float MasterVolumeDb, double? SongInMs, double? SongOutMs) SnapshotForExport()
     {
-        var (layers, _, _, masterVolumeDb) = _persistence.FromDto(Snapshot());
-        return (layers, masterVolumeDb);
+        var dto = Snapshot();
+        var (layers, _, _, masterVolumeDb) = _persistence.FromDto(dto);
+        return (layers, masterVolumeDb, dto.SongInMs, dto.SongOutMs);
     }
 
     /// <summary>Records one completed user-visible edit as an undo step.</summary>
@@ -137,9 +165,10 @@ public sealed class ProjectSession
     {
         // Bug audit #16: read AND convert before releasing -- a file that fails either step must
         // leave the current project, including its live plugin instances, untouched.
-        var loaded = _persistence.FromDto(_persistence.LoadFromFile(filePath));
+        var dto = _persistence.LoadFromFile(filePath);
+        var loaded = _persistence.FromDto(dto);
         _mixEngine.ReleaseAllHostedInstances();          // still before any layer is replaced (bug audit #5)
-        Apply(loaded);
+        Apply(loaded, dto.SongInMs, dto.SongOutMs);
         _undoStack.Reset(Snapshot());
         SetSaveState(filePath, dirty: false);            // LAST: Apply() assigns MetronomeBpm/MasterVolumeDb through their dirty-marking setters
     }
@@ -154,6 +183,8 @@ public sealed class ProjectSession
         Layers.Restore(Enumerable.Empty<LayerModel>());
         LatencyOffsetMsUsed = null;
         MasterVolumeDb = 0f;
+        SongInMs = null;
+        SongOutMs = null;
         _undoStack.Reset(Snapshot());
         SetSaveState(null, dirty: false);                // LAST, same reason
     }
@@ -161,16 +192,18 @@ public sealed class ProjectSession
     private bool Restore(ProjectFileDto? dto)
     {
         if (dto is null) return false;
-        Apply(_persistence.FromDto(dto));
+        Apply(_persistence.FromDto(dto), dto.SongInMs, dto.SongOutMs);
         return true;
     }
 
-    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) loaded)
+    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) loaded, double? songInMs, double? songOutMs)
     {
         Layers.Restore(loaded.Layers.Layers);
         MetronomeBpm = loaded.MetronomeBpm;
         LatencyOffsetMsUsed = loaded.LatencyOffsetMsUsed;
         MasterVolumeDb = loaded.MasterVolumeDb;
+        SongInMs = songInMs;
+        SongOutMs = songOutMs;
 
         foreach (var layer in Layers.Layers)
             _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);

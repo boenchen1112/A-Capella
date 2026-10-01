@@ -37,8 +37,14 @@ public class ExportEngine : IDisposable
     /// frame-compositing loop (about once per second of output, not per frame, so the UI thread
     /// isn't flooded), and exactly 1.0 once the encode process has exited successfully -- callers
     /// building a Progress&lt;double&gt; on the UI thread get every callback marshaled back there
-    /// automatically with no extra Dispatcher.Invoke.</summary>
-    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null)
+    /// automatically with no extra Dispatcher.Invoke.
+    ///
+    /// rangeStartMs/rangeOutMs (project-wide song in/out): when given, only that span of the
+    /// finished mix and grid is rendered -- the cut is made in project time, after the mix, so every
+    /// layer is cut at the same instant regardless of its own trim/shift. Null (the default) exports
+    /// the whole song, exactly as before either parameter existed. Both are clamped to
+    /// [0, full duration]; an empty resulting span throws.</summary>
+    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, double? rangeStartMs = null, double? rangeOutMs = null)
     {
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
@@ -47,13 +53,34 @@ public class ExportEngine : IDisposable
 
         var orderedLayers = LayerTimeline.InCellOrder(layers.Layers);
 
-        double durationSeconds = _timeline.DurationMs(layers.Layers, sampleRate) / 1000.0;
+        double fullDurationMs = _timeline.DurationMs(layers.Layers, sampleRate);
+        double rangeStartMsClamped = Math.Clamp(rangeStartMs ?? 0, 0, fullDurationMs);
+        double rangeOutMsClamped = Math.Clamp(rangeOutMs ?? fullDurationMs, rangeStartMsClamped, fullDurationMs);
+        double durationSeconds = (rangeOutMsClamped - rangeStartMsClamped) / 1000.0;
+        if (durationSeconds <= 0)
+            throw new InvalidOperationException("Export range is empty.");
+
         int maxSamples = (int)Math.Round(durationSeconds * sampleRate);
         if (maxSamples == 0)
             throw new InvalidOperationException("No decodable media found in any layer.");
 
         var mixInputs = layers.Layers.Select(l => _timeline.AudioInput(l, sampleRate)).ToList();
         var mix = _mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb);
+
+        // Render the mix from its own start, discarding samples before rangeStartMs -- simplest
+        // correct way to slice an ISampleProvider, which has no seek.
+        int rangeStartSamples = (int)Math.Round(rangeStartMsClamped / 1000.0 * sampleRate);
+        int floatsToSkip = rangeStartSamples * 2;
+        if (floatsToSkip > 0)
+        {
+            var scratch = new float[Math.Min(floatsToSkip, 65536)];
+            while (floatsToSkip > 0)
+            {
+                int n = mix.Read(scratch, 0, Math.Min(scratch.Length, floatsToSkip));
+                if (n == 0) break;
+                floatsToSkip -= n;
+            }
+        }
 
         var mixedSamples = new float[maxSamples * 2]; // interleaved stereo
         int totalRead = 0;
@@ -73,7 +100,7 @@ public class ExportEngine : IDisposable
             int cellHeight = height / 2;
 
             var frameSources = orderedLayers
-                .Select(l => _timeline.FrameSource(l, cellWidth, cellHeight, fps))
+                .Select(l => _timeline.FrameSource(l, cellWidth, cellHeight, fps, positionMs: rangeStartMsClamped))
                 .ToList();
 
             try

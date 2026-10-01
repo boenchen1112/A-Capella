@@ -14,7 +14,7 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, double? songInMs = null, double? songOutMs = null)
     {
         return new ProjectFileDto
         {
@@ -22,6 +22,8 @@ public class ProjectPersistenceService
             MetronomeBpm = metronomeBpm,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
+            SongInMs = songInMs,
+            SongOutMs = songOutMs,
             Layers = layers.Layers.Select(ToLayerDto).ToList(),
         };
     }

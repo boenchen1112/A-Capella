@@ -24,6 +24,13 @@ public class ProjectFileDto
     /// about recalibrating future sessions, not remembering what a saved project used.</summary>
     public double? LatencyOffsetMsUsed { get; set; }
 
+    /// <summary>Project-wide export range, set from the playhead (Set Song In/Out) and applied only
+    /// at export -- the preview still plays the whole song. Null means "whole song"; absent entirely
+    /// in a file saved before this existed, so an old file loads with both null (no initializer, so
+    /// deserializing that absence just leaves the default).</summary>
+    public double? SongInMs { get; set; }
+    public double? SongOutMs { get; set; }
+
     public List<LayerDto> Layers { get; set; } = new();
 }
 

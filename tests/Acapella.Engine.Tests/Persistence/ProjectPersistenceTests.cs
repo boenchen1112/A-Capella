@@ -86,6 +86,50 @@ public class ProjectPersistenceTests
     }
 
     [Fact]
+    public void SaveAndReload_RoundTripsSongInOut()
+    {
+        var service = new ProjectPersistenceService();
+        var layers = new LayerCollection();
+        layers.Add(LayerKind.RecordedAV, "layer0.mkv");
+        string tempPath = Path.Combine(Path.GetTempPath(), $"acapella-test-{Guid.NewGuid()}.json");
+
+        try
+        {
+            var dto = service.ToDto(layers, 120, null, songInMs: 1500, songOutMs: 9000);
+            service.SaveToFile(dto, tempPath);
+
+            var loaded = service.LoadFromFile(tempPath);
+
+            Assert.Equal(1500, loaded.SongInMs);
+            Assert.Equal(9000, loaded.SongOutMs);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void LoadFromFile_AFileSavedBeforeSongInOutExisted_LoadsWithANullRange()
+    {
+        var service = new ProjectPersistenceService();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"acapella-test-{Guid.NewGuid()}.json");
+        File.WriteAllText(tempPath, """{"LayoutId":"2x2","MetronomeBpm":120,"MasterVolumeDb":0,"Layers":[]}""");
+
+        try
+        {
+            var loaded = service.LoadFromFile(tempPath);
+
+            Assert.Null(loaded.SongInMs);
+            Assert.Null(loaded.SongOutMs);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
     public void SaveAndReload_EmptyProject_RoundTrips()
     {
         var service = new ProjectPersistenceService();

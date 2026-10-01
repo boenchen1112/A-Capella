@@ -341,6 +341,145 @@ public class ExportEngineTests
         }
     }
 
+    // ----- Song in/out (project-wide export range) -----
+
+    /// <summary>Red for the first second, then blue -- used to prove the exported video actually
+    /// starts decoding AT the range's In point, not at the source's own start (a duration-only
+    /// assertion can't tell the two apart).</summary>
+    private static (string video, string tempDir) CreateRedThenBlueFixture()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"acapella-export-range-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        string video = Path.Combine(tempDir, "redblue.mp4");
+
+        RunFfmpeg("-y",
+            "-f", "lavfi", "-i", "color=c=red:s=64x64:r=10:d=1",
+            "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=10:d=1",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=2",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-map", "2:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", video);
+
+        return (video, tempDir);
+    }
+
+    [Fact]
+    public void Export_WithRange_StartsVideoAtInNotAtSourceStart()
+    {
+        var (video, tempDir) = CreateRedThenBlueFixture();
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video);
+
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            // In = 1.2s: past the red half (0-1s) and into the blue half.
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100,
+                rangeStartMs: 1200, rangeOutMs: 1800);
+
+            byte[] frameBytes = DecodeFirstRawFrame(outputPath, 64, 64);
+            // The single layer occupies only the top-left quadrant (2x2 grid layout with 1
+            // layer); sample a pixel inside that cell rather than the frame center.
+            int pixelIndex = (16 * 64 + 16) * 4;
+            byte r = frameBytes[pixelIndex];
+            byte b = frameBytes[pixelIndex + 2];
+            Assert.True(b > r + 50, $"Expected the exported video to open on the blue half (In=1.2s), got r={r}, b={b}");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Export_WithRange_OutputDurationMatchesOutMinusIn()
+    {
+        var (video, tempDir) = CreateRedThenBlueFixture();
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video);
+
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100,
+                rangeStartMs: 500, rangeOutMs: 1500);
+
+            string raw = ProbeStreamInfo(outputPath);
+            var durationLine = raw.Split('\n').FirstOrDefault(l => l.StartsWith("duration="));
+            Assert.NotNull(durationLine);
+            double duration = double.Parse(durationLine!.Split('=')[1]);
+            // Tight range so a 1s cut can't be mistaken for a full 2s export.
+            Assert.InRange(duration, 0.8, 1.2);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>Regression guard: a layer that has already ended before the range's In point must
+    /// not hang or throw -- its frame source just holds its last/placeholder frame.</summary>
+    [Fact]
+    public void Export_WithRange_PastAShortLayersEnd_DoesNotHangOrThrow()
+    {
+        var (video1, video2, tempDir) = CreateFixtureClips(); // video1=red 2s, video2=blue 1s
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video1);
+            layers.Add(LayerKind.RecordedAV, video2);
+
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            // Range starts after the shorter (1s) layer has already ended.
+            exportEngine.Export(layers, outputPath, width: 64, height: 64, fps: 10, sampleRate: 44100,
+                rangeStartMs: 1500, rangeOutMs: 2000);
+
+            Assert.True(File.Exists(outputPath));
+            Assert.True(new FileInfo(outputPath).Length > 0);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Export_NoRangeGiven_StillExportsTheWholeSong()
+    {
+        var (video1, video2, tempDir) = CreateFixtureClips();
+        string outputPath = Path.Combine(tempDir, "export.mp4");
+
+        try
+        {
+            var layers = new LayerCollection();
+            layers.Add(LayerKind.RecordedAV, video1);
+            layers.Add(LayerKind.RecordedAV, video2);
+
+            var exportEngine = new ExportEngine(hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+            exportEngine.Export(layers, outputPath, width: 128, height: 128, fps: 10, sampleRate: 44100);
+
+            string raw = ProbeStreamInfo(outputPath);
+            var durationLine = raw.Split('\n').FirstOrDefault(l => l.StartsWith("duration="));
+            Assert.NotNull(durationLine);
+            double duration = double.Parse(durationLine!.Split('=')[1]);
+            Assert.InRange(duration, 1.5, 2.5);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static float ComputeRms(float[] samples)
     {
         double sumSquares = samples.Sum(s => (double)s * s);
