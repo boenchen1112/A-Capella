@@ -1,0 +1,61 @@
+using System.Collections.Concurrent;
+
+namespace Acapella.Engine.Host;
+
+/// <summary>
+/// Owns one HostedPluginInstance per (layerId, stage) -- lazily created on first chain build,
+/// reused across debounced preview rebuilds so a live plugin editor (deferred task 7) and any
+/// internal processing state survive a re-render (mirrors PitchCorrectionCache's reuse pattern
+/// from P0, but this cache owns real unmanaged handles so it must be disposed, unlike that one).
+/// </summary>
+public sealed class HostedPluginInstanceCache : IDisposable
+{
+    private readonly record struct Key(int LayerId, string Stage);
+
+    private readonly ConcurrentDictionary<Key, IHostedPlugin> _instances = new();
+    private readonly IHostedPluginFactory _factory;
+
+    public HostedPluginInstanceCache(IHostedPluginFactory factory) => _factory = factory;
+
+    /// <summary>Creates the instance on first call for this (layerId, stage) pair, applying
+    /// initialState if given; subsequent calls for the same pair return the same live instance
+    /// regardless of initialState (state is only ever applied once, at creation -- a caller that
+    /// wants to push a state update to an already-live instance should call SetState on the
+    /// returned instance directly).</summary>
+    public IHostedPlugin GetOrCreate(int layerId, string stage, string pluginLabel, double sampleRate, int maxBlockSize, byte[]? initialState)
+    {
+        return _instances.GetOrAdd(new Key(layerId, stage), _ =>
+        {
+            var instance = _factory.Create(pluginLabel, sampleRate, maxBlockSize);
+            if (initialState is { Length: > 0 })
+                instance.SetState(initialState);
+            return instance;
+        });
+    }
+
+    /// <summary>Non-creating lookup (v7 Q0 task 3, audit B7): true if a live instance already
+    /// exists for (layerId, stage) -- used to push a loaded/restored state into an already-live
+    /// instance without accidentally instantiating a plugin the user never opened.</summary>
+    public bool TryGet(int layerId, string stage, out IHostedPlugin? instance) =>
+        _instances.TryGetValue(new Key(layerId, stage), out instance);
+
+    /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>
+    public void Release(int layerId, string stage)
+    {
+        if (_instances.TryRemove(new Key(layerId, stage), out var instance))
+            instance.Dispose();
+    }
+
+    /// <summary>Disposes and forgets every cached instance, leaving the cache itself usable for the
+    /// next project (bug audit #5: layer ids are positional and restart at 0 per project, so this
+    /// must run whenever the whole layer set is replaced -- File > New, File > Open -- or the new
+    /// project's layer 0 inherits the previous project's live plugin instances).</summary>
+    public void ReleaseAll()
+    {
+        foreach (var instance in _instances.Values)
+            instance.Dispose();
+        _instances.Clear();
+    }
+
+    public void Dispose() => ReleaseAll();
+}

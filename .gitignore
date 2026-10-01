@@ -1,0 +1,14 @@
+bin/
+obj/
+media/
+recordings/
+*.user
+.vs/
+src/Acapella.Host.Native/build/
+src/Acapella.Host.Native/JUCE/
+src/Acapella.Host.Native/ARA_SDK/
+
+# Private working notes and local agent config (kept on disk, not published)
+notes/
+CLAUDE.md
+.claude/settings.local.json

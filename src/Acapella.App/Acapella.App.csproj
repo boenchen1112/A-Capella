@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Acapella.Engine\Acapella.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Acapella.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <!-- v6 P3a task 0: the native VST3 hosting module (src/Acapella.Host.Native) is built
+       separately; run its build.ps1 (or, once the VS install's toolset version props file is
+       repaired, cmake build directly) whenever native code changes, and its DLL is copied into
+       this project's output here on every dotnet build, per the documented two-step workflow. -->
+  <Target Name="CopyAcapellaHostNative" AfterTargets="Build">
+    <ItemGroup>
+      <AcapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\Acapella.Host.Native\build\bin\$(Configuration)\AcapellaHostNative.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AcapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(AcapellaHostNativeDll.Identity)')" />
+  </Target>
+
+</Project>
