@@ -288,7 +288,10 @@ public class PreviewPlaybackEngine : IDisposable
 
     private void RenderComposite(IReadOnlyList<SKBitmap> frames)
     {
-        var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, frames.Count);
+        // Grid-gap compaction fix: key rects by each layer's actual CellIndex, not by position in
+        // frames -- a lone layer at CellIndex 1 (cell 0 empty) must still land in the top-right
+        // cell, not get compacted into top-left.
+        var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, _layers.Take(frames.Count).Select(l => l.CellIndex).ToList());
         List<CellLabel?>? labels = null;
         if (ShowLayerLabels)
         {

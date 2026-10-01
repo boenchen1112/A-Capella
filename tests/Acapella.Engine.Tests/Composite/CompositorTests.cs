@@ -113,6 +113,25 @@ public class CompositorTests
         AssertPixelNear(output, (int)cellRects[0].Left + 1, (int)cellRects[0].Top + 1, SKColors.White);
     }
 
+    /// <summary>Grid-gap compaction regression: a lone layer at CellIndex 1 (cell 0 empty) must
+    /// composite into the top-right cell, not get compacted into top-left just because it's the
+    /// only frame being drawn.</summary>
+    [Fact]
+    public void GetCellRects_ByExplicitCellIndices_DoesNotCompactAGapToTheFront()
+    {
+        const int canvasWidth = 640;
+        const int canvasHeight = 480;
+
+        var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.Red) };
+        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, new[] { 1 });
+        var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
+
+        AssertPixelNear(output, canvasWidth * 3 / 4, canvasHeight / 4, SKColors.Red);
+        // Top-left (where the old count-based GetCellRects would have wrongly placed this frame)
+        // must stay the cleared background.
+        AssertPixelNear(output, canvasWidth / 4, canvasHeight / 4, SKColors.Black);
+    }
+
     private static void AssertPixelNear(SKBitmap bitmap, int x, int y, SKColor expected)
     {
         var actual = bitmap.GetPixel(x, y);

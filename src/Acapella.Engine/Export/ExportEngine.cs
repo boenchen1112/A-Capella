@@ -78,7 +78,10 @@ public class ExportEngine : IDisposable
 
             try
             {
-                var cellRects = Layout2x2Provider.GetCellRects(width, height, orderedLayers.Count);
+                // Grid-gap compaction fix: key rects by each layer's actual CellIndex, not by
+                // position in orderedLayers -- a lone layer at CellIndex 1 (cell 0 empty) must
+                // still land in the top-right cell, not get compacted into top-left.
+                var cellRects = Layout2x2Provider.GetCellRects(width, height, orderedLayers.Select(l => l.CellIndex).ToList());
                 int totalFrames = (int)Math.Ceiling(durationSeconds * fps);
 
                 using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath);
