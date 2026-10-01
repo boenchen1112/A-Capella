@@ -221,6 +221,10 @@ public class PreviewPlaybackEngine : IDisposable
     private void PlayCore()
     {
         if (IsPlaying || _layers.Count == 0) return;
+        // A loop that reached the end on its own may still be finishing its cleanup; wait for it so
+        // its trailing PlaybackStopped can't land after this new playback has started.
+        _frameLoopThread?.Join();
+        _frameLoopThread = null;
         StartFrameSources(PositionMs);
 
         var sources = _frameSources!;

@@ -167,7 +167,9 @@ public partial class MainWindow : Window
             overwritten?.Dispose();
             if (!alreadyQueued) Dispatcher.InvokeAsync(DrainFrameMailbox);
         };
-        _previewEngine.PlaybackStopped += () => Dispatcher.Invoke(() => SetPlayStopContent(false));
+        // Queued, never blocking: this fires from the frame-loop thread as it exits, and closing the
+        // window waits on that thread from the UI thread -- a blocking Invoke here would deadlock.
+        _previewEngine.PlaybackStopped += () => Dispatcher.InvokeAsync(() => SetPlayStopContent(false));
 
         Closing += (s, e) =>
         {
