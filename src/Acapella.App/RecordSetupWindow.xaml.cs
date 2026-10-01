@@ -42,6 +42,7 @@ public partial class RecordSetupWindow : Window
     private GuideTrackPlayer? _guideTrackPlayer;
     private WasapiOut? _metronomeOutput;
     private bool _isRecording;
+    private bool _closing;
 
     public LayerModel? CreatedLayer { get; private set; }
 
@@ -141,7 +142,7 @@ public partial class RecordSetupWindow : Window
             _metronome.Bpm = bpm;
     }
 
-    private void RecordButton_Click(object sender, RoutedEventArgs e)
+    private async void RecordButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isRecording)
         {
@@ -194,8 +195,41 @@ public partial class RecordSetupWindow : Window
 
             const int sampleRate = 44100;
             var timeline = new LayerTimeline(_mixEngine);
-            var mixInputs = guideLayers.Select(l => timeline.AudioInput(l, sampleRate)).ToList();
-            var guideMix = _mixEngine.BuildMix(mixInputs, sampleRate);
+
+            // Built off the UI thread: a layer's chain build can wait on a pitch render that itself
+            // needs the UI thread (hosted plugin calls are marshaled onto it), so blocking here
+            // would deadlock. Awaiting keeps the UI thread pumping meanwhile.
+            ISampleProvider guideMix;
+            float[] guideReference;
+            RecordButton.IsEnabled = false;
+            StatusText.Text = "Preparing guide track...";
+            try
+            {
+                (guideMix, guideReference) = await Task.Run(() =>
+                {
+                    var mixInputs = guideLayers.Select(l => timeline.AudioInput(l, sampleRate)).ToList();
+                    return (_mixEngine.BuildMix(mixInputs, sampleRate), RenderMonoReference(_mixEngine.BuildMix(mixInputs, sampleRate)));
+                });
+            }
+            catch (Exception ex)
+            {
+                _activeCapture.Dispose();
+                _activeCapture = null;
+                StatusText.Text = $"Couldn't prepare the guide track: {ex.Message}";
+                return;
+            }
+            finally
+            {
+                RecordButton.IsEnabled = true;
+            }
+
+            // The dialog may have been closed while the guide was being prepared.
+            if (_closing)
+            {
+                _activeCapture.Dispose();
+                _activeCapture = null;
+                return;
+            }
 
             // A second, independent provider graph built from the same mixInputs (BuildMix's
             // ArraySampleProvider reads don't mutate the underlying float[] arrays, so this is
@@ -203,7 +237,7 @@ public partial class RecordSetupWindow : Window
             // StopRecording can cross-correlate the just-recorded mic audio against exactly what
             // the singer heard, without consuming the live playback stream (audit B4's post-take
             // fallback).
-            _pendingGuideReferenceMono = RenderMonoReference(_mixEngine.BuildMix(mixInputs, sampleRate));
+            _pendingGuideReferenceMono = guideReference;
 
             // C4: capture starts first so the guide is never delayed by it; but the guide must
             // not start until dshow capture is actually producing frames (audit B4) -- otherwise
@@ -421,6 +455,7 @@ public partial class RecordSetupWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        _closing = true;
         // Don't leave an orphaned ffmpeg process running if the user closes the dialog mid-record.
         if (_isRecording)
         {
