@@ -336,6 +336,28 @@ public class LayerRowViewModel : INotifyPropertyChanged
         set { if (Params is null) return; Params.Solo = value; OnPropertyChanged(nameof(Solo)); LiveParamChanged?.Invoke(); }
     }
 
+    /// <summary>Plays a pre-rendered buffer of this layer's whole chain instead of running it live
+    /// (see MixEngine's frozen-layer path) -- everything except Mute/Solo stays baked. Plain
+    /// state flip: MainWindow's FreezeToggle_Click does the surrounding sync-state/close-editors
+    /// work before flipping this on, since that has to happen before the flag changes, not after.</summary>
+    public bool Frozen
+    {
+        get => Params?.Frozen ?? false;
+        set
+        {
+            if (Params is null) return;
+            Params.Frozen = value;
+            OnPropertyChanged(nameof(Frozen));
+            OnPropertyChanged(nameof(IsNotFrozen));
+            OnPropertyChanged(nameof(SourceLabel));
+            LiveParamChanged?.Invoke();
+        }
+    }
+
+    /// <summary>For the channel panel's FX/pan/gain/pitch controls' IsEnabled bindings -- a frozen
+    /// layer's baked chain can't be edited live without unfreezing first.</summary>
+    public bool IsNotFrozen => !Frozen;
+
     // ----- EQ subtab -----
 
     public bool EqEnabled
@@ -687,6 +709,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsEqHosted)); OnPropertyChanged(nameof(IsNoiseGateHosted));
         OnPropertyChanged(nameof(IsCompressorHosted)); OnPropertyChanged(nameof(IsLimiterHosted));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
+        OnPropertyChanged(nameof(Frozen)); OnPropertyChanged(nameof(IsNotFrozen));
         OnPropertyChanged(nameof(MelodyneEnabled)); OnPropertyChanged(nameof(PitchMode));
     }
 

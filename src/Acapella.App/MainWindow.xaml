@@ -102,9 +102,13 @@
                             </Grid>
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center">
-                            <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=Explicit}" Style="{StaticResource InlineTextBox}"
-                                     FontFamily="{StaticResource PlexSansMedium}" FontSize="13"
-                                     GotFocus="LaneNameTextBox_GotFocus" LostFocus="LaneNameTextBox_LostFocus" KeyDown="LaneNameTextBox_KeyDown"/>
+                            <DockPanel LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Right" Text="❄ FROZEN" FontSize="10" Foreground="{StaticResource SoloAmberBrush}"
+                                           Visibility="{Binding Frozen, Converter={StaticResource BoolToVis}}" Margin="6,0,0,0"/>
+                                <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=Explicit}" Style="{StaticResource InlineTextBox}"
+                                         FontFamily="{StaticResource PlexSansMedium}" FontSize="13"
+                                         GotFocus="LaneNameTextBox_GotFocus" LostFocus="LaneNameTextBox_LostFocus" KeyDown="LaneNameTextBox_KeyDown"/>
+                            </DockPanel>
                             <TextBlock Text="{Binding SourceLabel}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,0"/>
                         </StackPanel>
                     </DockPanel>
@@ -402,6 +406,11 @@
                         <DockPanel LastChildFill="True">
                             <Button DockPanel.Dock="Right" x:Name="ChannelMoreButton" Content="⋯" Click="ChannelMoreButton_Click" Style="{StaticResource FlatIconButton}" Width="30" Height="30"/>
                             <Button DockPanel.Dock="Right" Content="↻" Click="RetakeButton_Click" Style="{StaticResource AccentButton}" Padding="10,5" Margin="0,0,6,0"/>
+                            <!-- OneWay: FreezeToggle_Click must run its sync-state/close-editors work
+                                 BEFORE Frozen flips, so this can't use the usual TwoWay+Click pattern
+                                 (see the handler's doc comment). -->
+                            <ToggleButton DockPanel.Dock="Right" Content="Freeze" Style="{StaticResource SegmentButton}"
+                                          IsChecked="{Binding Frozen, Mode=OneWay}" Click="FreezeToggle_Click" Padding="10,5" Margin="0,0,6,0"/>
                             <Border DockPanel.Dock="Left" Width="10" Height="10" CornerRadius="2" Background="{Binding CellColor}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBlock x:Name="FxHeaderText" Text="FX — Master" FontFamily="{StaticResource PlexSansSemiBold}" FontSize="14" VerticalAlignment="Center"/>
                         </DockPanel>
@@ -416,11 +425,11 @@
                             <RowDefinition/>
                             <RowDefinition/>
                         </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" IsEnabled="{Binding IsNotFrozen}">
                             <TextBlock Text="Volume" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
                             <Slider Style="{StaticResource CommitSlider}" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}"/>
                         </StackPanel>
-                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8">
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8" IsEnabled="{Binding IsNotFrozen}">
                             <TextBlock Text="Pan" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
                             <Slider Style="{StaticResource CommitSlider}" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}"/>
                         </StackPanel>
@@ -444,7 +453,7 @@
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <!-- Scoped to just these six rows (MixingScreenTests.FxPanel_HasNoSliderBoundToGainDb):
                              the Volume slider above (bound to GainDb) must stay outside this element. -->
-                        <StackPanel x:Name="FxPanel" Margin="16,8">
+                        <StackPanel x:Name="FxPanel" Margin="16,8" IsEnabled="{Binding IsNotFrozen}">
                             <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
                                 <DockPanel LastChildFill="True">
                                     <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>

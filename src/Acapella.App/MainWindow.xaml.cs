@@ -195,6 +195,19 @@ public partial class MainWindow : Window
             StatusText.Text = $"Pitch correction failed: {message}";
         });
 
+        // Freeze: BuildLayerChain blocks the command/export thread for the whole render, so unlike
+        // the pitch events above these just bracket a status message -- there's no "stillCurrent"
+        // refresh to do, the chain just built already reflects it.
+        _previewEngine.FreezeRenderStarted += layerId => Dispatcher.InvokeAsync(() =>
+        {
+            var row = _tracks.FirstOrDefault(t => t.Layer?.LayerId == layerId);
+            StatusText.Text = row is not null ? $"Freezing {row.DisplayName}..." : "Freezing layer...";
+        });
+        _previewEngine.FreezeRenderCompleted += _ => Dispatcher.InvokeAsync(() =>
+        {
+            StatusText.Text = "Layer frozen.";
+        });
+
         Closing += (s, e) =>
         {
             // Refuse close mid-export: the teardown below would dispose the hosted service under the
@@ -1017,6 +1030,27 @@ public partial class MainWindow : Window
     {
         if (row.Layer is null || !_previewEngine.TrySetSlotEnabled(row.Layer.LayerId, slot.Stage, enabled))
             DebounceRefreshPreview();
+    }
+
+    /// <summary>Freeze toggle: bound OneWay (not TwoWay) specifically so this handler runs before
+    /// row.Frozen flips, not after -- turning freeze on has to sync live editor tweaks into
+    /// parameters and close any open editor for this layer BEFORE the chain gets baked, which a
+    /// TwoWay binding's "property already updated when Click fires" ordering (the pattern every
+    /// other FX toggle uses) can't guarantee. Always a full refresh (never TrySetSlotEnabled's
+    /// in-place path): freezing/unfreezing replaces the layer's whole chain shape, not one slot.</summary>
+    private void FreezeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.Layer is null) return;
+
+        bool turningOn = !row.Frozen;
+        if (turningOn)
+        {
+            _mixEngine.SyncLiveStateIntoParameters(row.Layer.LayerId, row.Layer.MixParameters);
+            row.CloseAllOpenedEditors();
+        }
+        row.Frozen = turningOn;
+        DebounceRefreshPreview();
+        PushUndoSnapshot();
     }
 
     /// <summary>Awaits a preview command without blocking the UI thread, then refreshes the
