@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Acapella.Engine.Host;
 
 namespace Acapella.Engine.Pitch;
@@ -29,6 +30,15 @@ public sealed class MelodyneAraPitchCorrector : IPitchCorrectionBackend
     private readonly string _pluginPath;
     private readonly int _layerId;
 
+    // Background pitch rendering lets a preview rebuild and an export run CorrectTrimmedSpan at
+    // the same time, and each builds its own MelodyneAraPitchCorrector -- but both share one
+    // layer's persistent ARA session (HostedPluginService.GetOrCreateAraLayerSource), and
+    // RenderBlock/PumpModelUpdates are deliberately unmarshaled, calling straight into the native
+    // session. Without this, two renders on the same layer could call into it at once. Keyed by
+    // layerId and shared across every corrector instance (static) so it serializes renders
+    // regardless of which MixEngine built the corrector that's holding it.
+    private static readonly ConcurrentDictionary<int, object> SessionLocks = new();
+
     public MelodyneAraPitchCorrector(HostedPluginService hostedService, string pluginPath, int layerId)
     {
         _hostedService = hostedService;
@@ -47,6 +57,12 @@ public sealed class MelodyneAraPitchCorrector : IPitchCorrectionBackend
     /// contentKey -- was the already-trimmed samples, so every trim nudge released and re-created
     /// the audio source, discarding whatever edits existed in Melodyne for that layer).</summary>
     public float[] CorrectTrimmedSpan(float[] rawSamples, int sampleRate, int trimStartSamples, int trimLengthSamples, string rawContentKey)
+    {
+        lock (SessionLocks.GetOrAdd(_layerId, static _ => new object()))
+            return CorrectTrimmedSpanLocked(rawSamples, sampleRate, trimStartSamples, trimLengthSamples, rawContentKey);
+    }
+
+    private float[] CorrectTrimmedSpanLocked(float[] rawSamples, int sampleRate, int trimStartSamples, int trimLengthSamples, string rawContentKey)
     {
         var (session, source) = _hostedService.GetOrCreateAraLayerSource(
             _layerId, _pluginPath, sampleRate, RenderBlockSize, rawSamples, rawContentKey);

@@ -133,6 +133,14 @@ public class PreviewPlaybackEngine : IDisposable
     public event Action<SKBitmap>? FrameReady;
     public event Action? PlaybackStopped;
 
+    /// <summary>Forwarded from MixEngine -- see its own PitchRenderStarted/Completed/Failed docs.
+    /// A completed render also triggers a refresh at the current position here (see the
+    /// constructor) so the corrected audio actually replaces the placeholder the next time this
+    /// engine's chain is rebuilt; callers only need these for UI feedback (status bar).</summary>
+    public event Action<int>? PitchRenderStarted;
+    public event Action<int>? PitchRenderCompleted;
+    public event Action<int, string>? PitchRenderFailed;
+
     public bool IsPlaying { get; private set; }
     public double PositionMs { get; private set; }
     public double DurationMs { get; private set; }
@@ -156,6 +164,25 @@ public class PreviewPlaybackEngine : IDisposable
         _mixEngine = hostedService is not null ? new MixEngine(hostedService) : new MixEngine(hostedPluginAvailability);
         _timeline = new LayerTimeline(_mixEngine, ffmpegPath, ffprobePath);
 
+        // Only the preview opts into background pitch rendering (see MixEngine.
+        // NonBlockingPitchCorrection's doc) -- a chosen pitch mode, a trim, or closing Melodyne's
+        // editor used to re-render the whole layer synchronously on the command thread, freezing
+        // Play/Seek/Refresh for however long that took. Export keeps the blocking default.
+        _mixEngine.NonBlockingPitchCorrection = true;
+        _mixEngine.PitchRenderStarted += layerId => PitchRenderStarted?.Invoke(layerId);
+        _mixEngine.PitchRenderCompleted += layerId =>
+        {
+            PitchRenderCompleted?.Invoke(layerId);
+            // Re-run the existing refresh path at the current position: BuildLayerChain looks the
+            // layer's pitch cache up again from scratch, so this just needs to happen, not to know
+            // whether the key that just finished is still the layer's current one -- if it isn't,
+            // the rebuild below will simply find a different (possibly still-pending) cache entry
+            // and nothing changes. Enqueue is a no-op (returns a cancelled task) once Dispose has
+            // completed adding, so this can't deadlock on close.
+            Enqueue(() => SeekCore(PositionMs));
+        };
+        _mixEngine.PitchRenderFailed += (layerId, message) => PitchRenderFailed?.Invoke(layerId, message);
+
         _commandThread = new Thread(RunCommandLoop) { IsBackground = true };
         _commandThread.Start();
     }
@@ -174,18 +201,28 @@ public class PreviewPlaybackEngine : IDisposable
     private Task Enqueue(Action action)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _commandQueue.Add(() =>
+        try
         {
-            try
+            _commandQueue.Add(() =>
             {
-                action();
-                done.SetResult();
-            }
-            catch (Exception ex)
-            {
-                done.SetException(ex);
-            }
-        });
+                try
+                {
+                    action();
+                    done.SetResult();
+                }
+                catch (Exception ex)
+                {
+                    done.SetException(ex);
+                }
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // CompleteAdding() has already run (Dispose in progress/done) -- a pitch-render
+            // completion landing after that would otherwise throw on whatever thread raised it
+            // (a background Task continuation, not the UI thread), instead of just being a no-op.
+            done.SetCanceled();
+        }
         return done.Task;
     }
 

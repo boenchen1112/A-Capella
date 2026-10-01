@@ -81,6 +81,11 @@ public partial class MainWindow : Window
     // itself is mutating bound view models.
     private bool _applyingHistory;
 
+    // Background pitch rendering (PreviewPlaybackEngine.PitchRenderStarted/Completed/Failed):
+    // counts renders currently in flight across all layers so the status bar reads "Processing
+    // pitch..." for as long as any of them are still running, and only then.
+    private int _pendingPitchRenderCount;
+
     public MainWindow()
     {
         // Must happen before any other bridge call, on this (the WPF UI) thread -- all hosted
@@ -170,6 +175,25 @@ public partial class MainWindow : Window
         // Queued, never blocking: this fires from the frame-loop thread as it exits, and closing the
         // window waits on that thread from the UI thread -- a blocking Invoke here would deadlock.
         _previewEngine.PlaybackStopped += () => Dispatcher.InvokeAsync(() => SetPlayStopContent(false));
+
+        // Background pitch rendering: these fire from a worker thread/thread-pool continuation, so
+        // always InvokeAsync, never a blocking Invoke -- same deadlock hazard as PlaybackStopped
+        // above if this ever landed while the UI thread is waiting inside Dispose/Closing.
+        _previewEngine.PitchRenderStarted += _ => Dispatcher.InvokeAsync(() =>
+        {
+            _pendingPitchRenderCount++;
+            StatusText.Text = "Processing pitch...";
+        });
+        _previewEngine.PitchRenderCompleted += _ => Dispatcher.InvokeAsync(() =>
+        {
+            _pendingPitchRenderCount = Math.Max(0, _pendingPitchRenderCount - 1);
+            if (_pendingPitchRenderCount == 0) StatusText.Text = "Pitch correction updated.";
+        });
+        _previewEngine.PitchRenderFailed += (_, message) => Dispatcher.InvokeAsync(() =>
+        {
+            _pendingPitchRenderCount = Math.Max(0, _pendingPitchRenderCount - 1);
+            StatusText.Text = $"Pitch correction failed: {message}";
+        });
 
         Closing += (s, e) =>
         {
@@ -1064,7 +1088,10 @@ public partial class MainWindow : Window
 
         PlayButton.IsEnabled = true;
         SetPlayStopContent(started);
-        if (started) StatusText.Text = "Playing preview.";
+        // Don't stomp "Processing pitch..." if a background render's Started handler (queued via
+        // InvokeAsync, same as this continuation) already landed first -- SetLayersThenPlay's own
+        // BuildLayerChain call is exactly what can kick one off.
+        if (started && _pendingPitchRenderCount == 0) StatusText.Text = "Playing preview.";
 
         async Task SetLayersThenPlay()
         {

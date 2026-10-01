@@ -59,6 +59,50 @@ public class MixEngine : IDisposable
     // stage that didn't get built this time (disabled and never used) just isn't in the dictionary,
     // and TrySetSlotEnabled below correctly reports "no live node" for it.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, IReadOnlyDictionary<string, ISlotBypassNode>> _slotNodes = new();
+
+    // Background pitch rendering: when NonBlockingPitchCorrection is on (PreviewPlaybackEngine
+    // only -- see GetPitchCorrectedSamples), a layer whose pitch correction isn't cached yet plays
+    // uncorrected while the render runs on a worker thread. This tracks, per layerId, the task
+    // behind the layer's *current* request: cleared the moment that request is satisfied from
+    // cache (even by a different, already-cached key -- e.g. the user trimmed back to one that was
+    // rendered earlier), and overwritten whenever a new key starts its own render. A render's own
+    // completion only still owns this entry if nothing has superseded it, which TryRemove's
+    // (key, task) overload reports atomically -- that's what decides whether this render is still
+    // the one the layer is waiting on (and so worth a refresh) or stale (superseded, ignored).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, Task<float[]>> _pendingPitchRenders = new();
+
+    /// <summary>Only PreviewPlaybackEngine sets this. Export and every other caller leave it false,
+    /// so BuildLayerChain's pitch correction stays fully synchronous for them -- a cache miss
+    /// renders in place and the chain is built from the finished result, exactly as before this
+    /// existed. With it on, a cache miss builds the chain from the layer's uncorrected samples and
+    /// kicks off the render in the background instead of stalling the caller.</summary>
+    public bool NonBlockingPitchCorrection { get; set; }
+
+    /// <summary>Test seam: substituted for AutomaticBackend (the static, shared AutoPitchCorrector)
+    /// when set, so a test can exercise the Automatic2B path against a fake/gated
+    /// IPitchCorrectionBackend without waiting on real YIN detection + Rubber Band. Null in
+    /// production.</summary>
+    internal IPitchCorrectionBackend? AutomaticBackendOverride { get; set; }
+
+    /// <summary>True while any layer has a pitch render in flight (BuildLayerChain hasn't yet seen
+    /// its cached result) -- for a status-bar "Processing pitch..." indicator.</summary>
+    public bool HasPendingPitchRender => !_pendingPitchRenders.IsEmpty;
+
+    /// <summary>Fires once a background pitch render starts for a layer (NonBlockingPitchCorrection
+    /// only). Not fired again for the same in-flight render just because BuildLayerChain is called
+    /// again before it finishes.</summary>
+    public event Action<int>? PitchRenderStarted;
+
+    /// <summary>Fires once a background pitch render finishes successfully and is still the render
+    /// the layer is waiting on (see _pendingPitchRenders doc above) -- a render superseded by a
+    /// newer request before it finished doesn't raise this, since that newer request has already
+    /// taken over the layer's "pending" state.</summary>
+    public event Action<int>? PitchRenderCompleted;
+
+    /// <summary>Fires whenever a background pitch render throws, current or not -- the failure is
+    /// still worth surfacing even if the user has since moved on to a different key.</summary>
+    public event Action<int, string>? PitchRenderFailed;
+
     // True only when this MixEngine created its own private HostedPluginService (the
     // availability-only constructor, kept for callers/tests that don't need to share one service
     // across the whole app session) -- only then does Dispose() also dispose the service. A
@@ -148,6 +192,9 @@ public class MixEngine : IDisposable
         _melodyneBackends.Clear();
         _layerTaps.Clear();
         _slotNodes.Clear();
+        // Doesn't cancel a render already running on a worker thread -- nothing here can -- but
+        // stops this instance from treating it as something a future layer should still wait on.
+        _pendingPitchRenders.Clear();
         _hostedService.ReleaseAll();
     }
 
@@ -224,37 +271,14 @@ public class MixEngine : IDisposable
         // other hosted stage already uses when its matching plugin isn't detected.
         float[] processedSamples = parameters.PitchBackend switch
         {
-            PitchBackendSelection.Automatic2B =>
-                PitchCorrectionCache.GetOrCorrect(AutomaticBackend, layer.LayerId, layer.SourceKey, layer.Samples, layer.SampleRate),
+            PitchBackendSelection.Automatic2B => BuildAutomaticCorrectedSamples(layer),
             // Bug audit A5 ("stale correction cache"): the edit generation is folded into the cache
             // key so closing Melodyne's editor (HostedPluginService.CloseAraEditor bumps it) forces
             // a fresh Correct() call on the next rebuild instead of replaying PitchCorrectionCache's
             // pre-edit output -- the layer's own SourceKey alone never changes just because the
             // user tweaked pitch inside Melodyne's own editor.
-            //
-            // Trim/Melodyne-edit-survival fix: renders through the layer's persistent ARA session
-            // using the untrimmed RawSamples/RawContentKey (so a trim change alone never changes
-            // what's registered with Melodyne) and only slices out the trimmed span, shifting it
-            // afterward -- see MelodyneAraPitchCorrector.CorrectTrimmedSpan.
             PitchBackendSelection.Manual2A when _hostedService.IsAraAvailable(MelodynePluginLabel) =>
-                PitchCorrectionCache.GetOrCorrect(
-                    layer.LayerId,
-                    layer.SourceKey is null ? null : $"{layer.SourceKey}-araEdit{_hostedService.GetAraEditGeneration(layer.LayerId)}",
-                    nameof(MelodyneAraPitchCorrector),
-                    () =>
-                    {
-                        // Callers that don't populate RawSamples (tests, and anyone building a
-                        // MixLayerInput directly rather than via LayerTimeline.AudioInput) have no
-                        // separate trim window -- treat the whole given buffer as the span.
-                        bool hasRaw = layer.RawSamples is not null;
-                        var rawSamples = layer.RawSamples ?? layer.Samples;
-                        int trimStart = hasRaw ? layer.TrimStartSamples : 0;
-                        int trimLength = hasRaw ? layer.TrimLengthSamples : layer.Samples.Length;
-                        var corrected = GetOrCreateMelodyneBackend(layer.LayerId).CorrectTrimmedSpan(
-                            rawSamples, layer.SampleRate, trimStart, trimLength,
-                            layer.RawContentKey ?? layer.SourceKey ?? string.Empty);
-                        return AudioShiftHelper.ApplyShift(corrected, layer.ShiftMs, layer.SampleRate);
-                    }),
+                BuildMelodyneCorrectedSamples(layer),
             _ => layer.Samples,
         };
 
@@ -313,6 +337,99 @@ public class MixEngine : IDisposable
             _melodyneBackends[layerId] = backend;
         }
         return backend;
+    }
+
+    private float[] BuildAutomaticCorrectedSamples(MixLayerInput layer)
+    {
+        var backend = AutomaticBackendOverride ?? AutomaticBackend;
+        return GetPitchCorrectedSamples(layer.LayerId, layer.SourceKey, backend.GetType().Name, layer.Samples,
+            () => backend.Correct(layer.Samples, layer.SampleRate));
+    }
+
+    /// <summary>Trim/Melodyne-edit-survival fix: renders through the layer's persistent ARA session
+    /// using the untrimmed RawSamples/RawContentKey (so a trim change alone never changes what's
+    /// registered with Melodyne) and only slices out the trimmed span, shifting it afterward -- see
+    /// MelodyneAraPitchCorrector.CorrectTrimmedSpan.
+    ///
+    /// Resolves the layer's MelodyneAraPitchCorrector up front, on whichever thread calls
+    /// BuildLayerChain, rather than inside the correction closure below: with
+    /// NonBlockingPitchCorrection on, that closure runs on a worker thread, and _melodyneBackends is
+    /// a plain Dictionary -- looking it up (and possibly inserting into it) from both that worker
+    /// thread and a later BuildLayerChain call on the calling thread at the same time would race.</summary>
+    private float[] BuildMelodyneCorrectedSamples(MixLayerInput layer)
+    {
+        var melodyneBackend = GetOrCreateMelodyneBackend(layer.LayerId);
+        string? sourceKey = layer.SourceKey is null
+            ? null
+            : $"{layer.SourceKey}-araEdit{_hostedService.GetAraEditGeneration(layer.LayerId)}";
+
+        return GetPitchCorrectedSamples(layer.LayerId, sourceKey, nameof(MelodyneAraPitchCorrector), layer.Samples, () =>
+        {
+            // Callers that don't populate RawSamples (tests, and anyone building a MixLayerInput
+            // directly rather than via LayerTimeline.AudioInput) have no separate trim window --
+            // treat the whole given buffer as the span.
+            bool hasRaw = layer.RawSamples is not null;
+            var rawSamples = layer.RawSamples ?? layer.Samples;
+            int trimStart = hasRaw ? layer.TrimStartSamples : 0;
+            int trimLength = hasRaw ? layer.TrimLengthSamples : layer.Samples.Length;
+            var corrected = melodyneBackend.CorrectTrimmedSpan(
+                rawSamples, layer.SampleRate, trimStart, trimLength,
+                layer.RawContentKey ?? layer.SourceKey ?? string.Empty);
+            return AudioShiftHelper.ApplyShift(corrected, layer.ShiftMs, layer.SampleRate);
+        });
+    }
+
+    /// <summary>Blocking by default (NonBlockingPitchCorrection off -- export, tests, and anyone
+    /// else): a cache miss renders correct() in place and returns the finished result, same as
+    /// before this seam existed.
+    ///
+    /// With NonBlockingPitchCorrection on (PreviewPlaybackEngine only): a cache hit returns
+    /// immediately. A miss starts (or joins) the render in the background via
+    /// PitchCorrectionCache.GetOrStartCorrect and returns fallbackSamples -- the layer's
+    /// uncorrected audio -- so BuildLayerChain never blocks on it. PitchRenderStarted/Completed/
+    /// Failed track that render for a status-bar indicator and so the caller (PreviewPlaybackEngine)
+    /// knows when to rebuild the chain again and pick up the finished result.</summary>
+    private float[] GetPitchCorrectedSamples(int layerId, string? sourceKey, string backendType, float[] fallbackSamples, Func<float[]> correct)
+    {
+        if (!NonBlockingPitchCorrection || sourceKey is null)
+            return PitchCorrectionCache.GetOrCorrect(layerId, sourceKey, backendType, correct);
+
+        if (PitchCorrectionCache.TryGetCached(layerId, sourceKey, backendType, out var cached))
+        {
+            // This layer's current request is already resolved -- drop any render still running
+            // for a key it's since moved away from (e.g. trimmed back to one rendered earlier);
+            // it's no longer what this layer is waiting on.
+            _pendingPitchRenders.TryRemove(layerId, out _);
+            return cached;
+        }
+
+        var task = PitchCorrectionCache.GetOrStartCorrect(layerId, sourceKey, backendType, correct);
+        bool isNewRender = !_pendingPitchRenders.TryGetValue(layerId, out var tracked) || tracked != task;
+        _pendingPitchRenders[layerId] = task;
+
+        if (isNewRender)
+        {
+            PitchRenderStarted?.Invoke(layerId);
+            task.ContinueWith(t =>
+            {
+                // Only true if nothing has superseded this render as the layer's current one --
+                // see _pendingPitchRenders' doc. A superseded render's own completion is simply
+                // ignored: the newer request owns the layer's pending state and will raise its own
+                // PitchRenderStarted/Completed when it finishes.
+                bool stillCurrent = _pendingPitchRenders.TryRemove(new KeyValuePair<int, Task<float[]>>(layerId, task));
+                if (t.IsCompletedSuccessfully)
+                {
+                    if (stillCurrent) PitchRenderCompleted?.Invoke(layerId);
+                }
+                else if (t.IsFaulted)
+                {
+                    var ex = t.Exception!.InnerException ?? t.Exception;
+                    PitchRenderFailed?.Invoke(layerId, ex.Message);
+                }
+            }, TaskScheduler.Default);
+        }
+
+        return fallbackSamples;
     }
 
     private static float DbToLinear(float db) => (float)Math.Pow(10, db / 20.0);
