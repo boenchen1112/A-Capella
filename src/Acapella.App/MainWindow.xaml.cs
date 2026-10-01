@@ -246,6 +246,7 @@ public partial class MainWindow : Window
                 : null;
             SelectLane(stillPresent ?? _tracks[0]);
             RefreshPreviewLive();
+            RedrawRulerCanvas();   // song in/out markers and the readout can change across undo/redo/open/new
             return true;
         }
         finally
