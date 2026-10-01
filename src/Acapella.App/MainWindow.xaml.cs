@@ -92,7 +92,11 @@ public partial class MainWindow : Window
         HostedPluginInstance.Initialize();
         _mixEngine = new MixEngine(_hostedService);
         _session = new ProjectSession(_mixEngine);
-        _previewEngine = new PreviewPlaybackEngine(canvasWidth: 640, canvasHeight: 480, fps: 30, hostedService: _hostedService);
+        // 16:9 to match ExportEngine's 1280x720 default (half-scale, so cell math stays exact
+        // integers): a 4:3 preview canvas letterboxed a 16:9 webcam in the preview even though it
+        // fills its cell in the exported MP4, so what you saw while editing didn't match what you
+        // got.
+        _previewEngine = new PreviewPlaybackEngine(canvasWidth: 640, canvasHeight: 360, fps: 30, hostedService: _hostedService);
         LayerRowViewModel.SharedHostedService = _hostedService;
 
         // Scan for installed FabFilter plugins off the critical Play path (audit B2) -- the first

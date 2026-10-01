@@ -313,7 +313,7 @@
                 </StackPanel>
                 <Viewbox Stretch="Uniform" StretchDirection="DownOnly">
                     <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                        <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="480" PaintSurface="CompositeCanvas_PaintSurface"/>
+                        <skia:SKElement x:Name="CompositeCanvas" Width="640" Height="360" PaintSurface="CompositeCanvas_PaintSurface"/>
                     </Border>
                 </Viewbox>
             </DockPanel>
