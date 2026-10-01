@@ -645,13 +645,4 @@
         </Setter>
     </Style>
 
-    <!-- LEGACY ALIASES: remove in the redesign's cleanup step, once MainWindow.xaml and
-         RecordSetupWindow.xaml no longer reference the pre-redesign brush names. These exist only so
-         the not-yet-rewritten windows keep rendering correctly under the new palette in the meantime
-         (old name maps to the closest new token). -->
-    <SolidColorBrush x:Key="WindowBrush" Color="#131518"/>
-    <SolidColorBrush x:Key="RowBrush" Color="#23272C"/>
-    <SolidColorBrush x:Key="BorderBrush" Color="#30353C"/>
-    <SolidColorBrush x:Key="AccentBrush" Color="#5EA2E6"/>
-
 </ResourceDictionary>

@@ -4,43 +4,59 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Recording setup" Height="360" Width="420"
+        Title="Recording setup" Height="600" Width="480"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="False"
+        Background="{StaticResource PanelBrush}"
         Closing="Window_Closing">
-    <StackPanel Margin="16">
-        <TextBlock Text="Recording setup" FontWeight="Bold" FontSize="16" Margin="0,0,0,12"/>
+    <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+        <DockPanel LastChildFill="True">
+            <Border DockPanel.Dock="Top" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="24,20,24,16">
+                <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Content="✕" Click="CancelButton_Click" Style="{StaticResource FlatIconButton}" Width="32" Height="32"/>
+                    <Border Width="12" Height="12" CornerRadius="3" Background="{StaticResource SoloAmberBrush}" VerticalAlignment="Top" Margin="0,6,12,0"/>
+                    <StackPanel>
+                        <TextBlock x:Name="HeaderText" Text="Record layer" FontFamily="{StaticResource PlexSansSemiBold}" FontSize="18"/>
+                        <TextBlock x:Name="SubHeaderText" Text="Other layers play in your headphones while you record." Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
 
-        <Grid Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition/>
-                <RowDefinition/>
-            </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="Camera:" VerticalAlignment="Center" Margin="0,4"/>
-            <ComboBox Grid.Row="0" Grid.Column="1" x:Name="CameraCombo" Margin="8,4"/>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="Microphone:" VerticalAlignment="Center" Margin="0,4"/>
-            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="MicCombo" Margin="8,4"/>
-        </Grid>
+            <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="24,16">
+                <DockPanel LastChildFill="True">
+                    <Button x:Name="CancelButton" DockPanel.Dock="Left" Content="Cancel" Click="CancelButton_Click" Style="{StaticResource AccentButton}" Height="40" Padding="16,0" HorizontalAlignment="Left"/>
+                    <Button x:Name="RecordButton" DockPanel.Dock="Right" Content="● Start recording" Click="RecordButton_Click" Style="{StaticResource SolidRecordButtonStyle}" Height="40" Padding="14,0" HorizontalAlignment="Right"/>
+                </DockPanel>
+            </Border>
 
-        <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
-            <Button x:Name="CalibrateButton" Content="Calibrate Latency" Click="CalibrateButton_Click" HorizontalAlignment="Left"/>
-            <TextBlock x:Name="CalibrationResultText" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource MutedTextBrush}"/>
-        </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="24,20" >
+                    <Border Height="150" CornerRadius="8" Background="{StaticResource GroundBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Margin="0,0,0,18">
+                        <TextBlock Text="Camera preview not shown here" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                    </Border>
 
-        <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
-            <CheckBox x:Name="MetronomeToggle" Content="Metronome" VerticalAlignment="Center" Checked="MetronomeToggle_Changed" Unchecked="MetronomeToggle_Changed"/>
-            <TextBlock Text="BPM:" Margin="16,0,4,0" VerticalAlignment="Center"/>
-            <TextBox x:Name="BpmTextBox" Width="50" Text="120" TextChanged="BpmTextBox_TextChanged"/>
-        </StackPanel>
+                    <TextBlock Text="Camera" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
+                    <ComboBox x:Name="CameraCombo" Height="36" Margin="0,0,0,14"/>
 
-        <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,16,0,12"/>
+                    <TextBlock Text="Microphone" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
+                    <ComboBox x:Name="MicCombo" Height="36" Margin="0,0,0,18"/>
 
-        <Button x:Name="RecordButton" Content="Record" Style="{StaticResource AccentButton}" Click="RecordButton_Click" HorizontalAlignment="Left" Padding="20,8"/>
-        <TextBlock x:Name="StatusText" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,18">
+                        <DockPanel LastChildFill="True">
+                            <Button x:Name="CalibrateButton" DockPanel.Dock="Right" Content="Calibrate" Click="CalibrateButton_Click" Style="{StaticResource AccentButton}" Padding="10,6"/>
+                            <TextBlock x:Name="CalibrationResultText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Text="Latency not calibrated yet."/>
+                        </DockPanel>
+                    </Border>
 
-        <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" HorizontalAlignment="Right" Margin="0,16,0,0"/>
-    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox x:Name="MetronomeToggle" Content="Click track while recording" VerticalAlignment="Center" Checked="MetronomeToggle_Changed" Unchecked="MetronomeToggle_Changed"/>
+                        <TextBlock Text="BPM" Foreground="{StaticResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="16,0,6,0"/>
+                        <TextBox x:Name="BpmTextBox" Width="64" Text="120" TextChanged="BpmTextBox_TextChanged" FontFamily="{StaticResource PlexMonoRegular}" TextAlignment="Right"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="StatusText" Margin="0,14,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Border>
 </Window>
