@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\A-Capella.Engine\A-Capella.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="A-Capella.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0" />
+  </ItemGroup>
+
+  <!-- Bundled IBM Plex fonts (SIL OFL license, see Fonts/OFL.txt) used by the redesigned UI: Plex
+       Sans for body text, Plex Mono for times/dB readouts. Built as Resource so they're embedded in
+       the assembly and reachable via the pack://application:,,,/ family-name syntax without needing
+       to be installed on the machine. -->
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>A_Capella.App</RootNamespace>
+  </PropertyGroup>
+
+  <!-- v6 P3a task 0: the native VST3 hosting module (src/A-Capella.Host.Native) is built
+       separately; run its build.ps1 (or, once the VS install's toolset version props file is
+       repaired, cmake build directly) whenever native code changes, and its DLL is copied into
+       this project's output here on every dotnet build, per the documented two-step workflow. -->
+  <Target Name="CopyA_CapellaHostNative" AfterTargets="Build">
+    <ItemGroup>
+      <A_CapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\A-Capella.Host.Native\build\bin\$(Configuration)\A-CapellaHostNative.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(A_CapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(A_CapellaHostNativeDll.Identity)')" />
+  </Target>
+
+</Project>

@@ -1,8 +1,8 @@
-using Acapella.Engine.Devices;
-using Acapella.Engine.GuideTrack;
-using Acapella.Engine.Metronome;
-using Acapella.Engine.Settings;
-using Acapella.Engine.Sync;
+using A_Capella.Engine.Devices;
+using A_Capella.Engine.GuideTrack;
+using A_Capella.Engine.Metronome;
+using A_Capella.Engine.Settings;
+using A_Capella.Engine.Sync;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -32,7 +32,7 @@ if (outputDevice is null || loopbackDevice is null)
 Console.WriteLine($"\nUsing output: {outputDevice.Name}");
 Console.WriteLine($"Using loopback input: {loopbackDevice.Name}\n");
 
-var settingsPath = Path.Combine(Path.GetTempPath(), "acapella-hwcheck-settings.json");
+var settingsPath = Path.Combine(Path.GetTempPath(), "a-capella-hwcheck-settings.json");
 if (File.Exists(settingsPath)) File.Delete(settingsPath);
 var settingsService = new SettingsService(settingsPath);
 var calibrator = new LatencyCalibrator(settingsService);
@@ -118,7 +118,7 @@ Console.WriteLine("\n--- Check 5: Metronome isolation from recording pipeline (s
     // metronome or its output device anywhere in the call chain. There is therefore no code
     // path by which metronome samples can reach a recorded layer's audio -- verified here by
     // confirming FfmpegCaptureSession never touches an ISampleProvider/MetronomeEngine type.
-    bool metronomeTypeReferencedByCaptureSession = typeof(Acapella.Engine.Capture.FfmpegCaptureSession)
+    bool metronomeTypeReferencedByCaptureSession = typeof(A_Capella.Engine.Capture.FfmpegCaptureSession)
         .GetMethods()
         .Any(m => m.GetParameters().Any(p => p.ParameterType == typeof(MetronomeEngine) || p.ParameterType == typeof(ISampleProvider)));
     Console.WriteLine($"FfmpegCaptureSession references metronome/audio-sample types: {metronomeTypeReferencedByCaptureSession} -> {(!metronomeTypeReferencedByCaptureSession ? "PASS" : "FAIL")}");

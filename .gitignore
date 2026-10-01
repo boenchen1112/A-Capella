@@ -4,9 +4,9 @@ media/
 recordings/
 *.user
 .vs/
-src/Acapella.Host.Native/build/
-src/Acapella.Host.Native/JUCE/
-src/Acapella.Host.Native/ARA_SDK/
+src/A-Capella.Host.Native/build/
+src/A-Capella.Host.Native/JUCE/
+src/A-Capella.Host.Native/ARA_SDK/
 
 # Private working notes and local agent config (kept on disk, not published)
 notes/

@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Acapella.Engine\Acapella.Engine.csproj" />
+    <ProjectReference Include="..\..\src\A-Capella.Engine\A-Capella.Engine.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
