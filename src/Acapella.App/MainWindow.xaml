@@ -12,7 +12,7 @@
         Title="Acapella" Height="900" Width="1440" MinWidth="960" MinHeight="600"
         WindowStyle="None" ResizeMode="CanResizeWithGrip" StateChanged="MainWindow_StateChanged"
         Background="{StaticResource GroundBrush}">
-    <!-- Custom chrome (v8 redesign): WindowChrome is a stock WPF class (System.Windows.Shell), not
+    <!-- Custom chrome: WindowChrome is a stock WPF class (System.Windows.Shell), not
          a new dependency; lets the title bar itself act as the caption (drag-to-move,
          double-click-to-maximize) while still exposing the OS resize border. Every interactive
          control inside the CaptionHeight band needs IsHitTestVisibleInChrome="True" or it would

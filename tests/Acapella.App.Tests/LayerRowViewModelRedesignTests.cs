@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Acapella.App.Tests;
 
-/// <summary>Redesign additions to LayerRowViewModel: rename-only-if-changed, the pitch engine
+/// <summary>LayerRowViewModel's rename-only-if-changed, the pitch engine
 /// mode switch, and the lane sub-label/trim helper properties.</summary>
 public class LayerRowViewModelRedesignTests
 {

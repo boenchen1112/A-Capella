@@ -59,7 +59,7 @@ public partial class MainWindow : Window
     // since meters need to feel live even when nothing else is happening.
     private readonly DispatcherTimer _meterPollTimer;
 
-    // v8 redesign: 1Hz CPU/memory readout in the toolbar. Separate from the 33ms meter timer since
+    // 1Hz CPU/memory readout in the toolbar. Separate from the 33ms meter timer since
     // TotalProcessorTime deltas need a slower, coarser sampling interval to read as a stable percent.
     private readonly DispatcherTimer _perfPollTimer;
     private TimeSpan _lastCpuTime;
@@ -72,8 +72,8 @@ public partial class MainWindow : Window
     private bool _monitorMuted;
     private bool _isScrubbing;
 
-    // v8 redesign: replaces the old two-screen Editor/Mixing split's _mixingLayer -- exactly one
-    // of the fixed 4 lane rows is selected at a time, driving the channel panel's DataContext.
+    // Exactly one of the fixed 4 lane rows is selected at a time, driving the channel panel's
+    // DataContext.
     private LayerRowViewModel? _selectedLayer;
 
     // Undo/redo (v5 P1 task 2): one undo step per discrete edit (slider release/focus-loss, not
@@ -104,7 +104,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
         EmptyCellOverlay.ItemsSource = _tracks;
-        RestoreTracksFromLayers();   // v8 redesign: fixed 4-lane model -- rows exist from app start, not grown on demand
+        RestoreTracksFromLayers();   // Fixed 4-lane model: rows exist from app start, not grown on demand
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
         SelectLane(_tracks[0]);
 
@@ -373,7 +373,7 @@ public partial class MainWindow : Window
                 // controls (root cause fact 3's table lists none) -- see Ordering subtleties for
                 // why broadening the exclusion is a regression, not a simplification.
                 if (Keyboard.FocusedElement is ButtonBase) return;
-                // v8 redesign: PlayButton is now a single Play/Stop toggle (PlayButton_Click
+                // PlayButton is a single Play/Stop toggle (PlayButton_Click
                 // itself branches on _previewEngine.IsPlaying), so Space just clicks it once.
                 PlayButton_Click(this, new RoutedEventArgs());
                 e.Handled = true;
@@ -406,8 +406,8 @@ public partial class MainWindow : Window
 
     private void SeekRelative(double deltaMs) => RunPreviewCommand(_previewEngine.SeekByAsync(deltaMs));
 
-    /// <summary>v8 redesign: MasterVolumeSlider is the single master-volume control (the old
-    /// mixer-strip's separate fader is gone).</summary>
+    /// <summary>MasterVolumeSlider is the single master-volume control (there is no separate
+    /// mixer-strip fader).</summary>
     private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         _session.MasterVolumeDb = (float)e.NewValue;
@@ -435,7 +435,7 @@ public partial class MainWindow : Window
             MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
     }
 
-    /// <summary>v8 redesign: 1Hz CPU/memory readout. CPU% derived from the process's own
+    /// <summary>1Hz CPU/memory readout. CPU% derived from the process's own
     /// TotalProcessorTime delta over the wall-clock delta, normalized by core count (matches Task
     /// Manager's per-process convention, not a single-core-pegged 100%-per-core reading).</summary>
     private void UpdatePerfCounters()
@@ -478,11 +478,10 @@ public partial class MainWindow : Window
         SetTimeReadout(_previewEngine.PositionMs, _previewEngine.DurationMs);
     }
 
-    /// <summary>v8 redesign: Current timing and Total Duration are now two separate toolbar
-    /// fields (image shows them apart), each h:mm:ss -- replaces the old single "0:00 / 0:00"
-    /// combined readout.</summary>
-    /// <summary>v8 redesign: PlayButton is a single toggling circle (mock's 48px Play control) --
-    /// swap its glyph between play/stop rather than driving two separate buttons.</summary>
+    /// <summary>Current timing and Total Duration are two separate toolbar fields, each h:mm:ss,
+    /// rather than a single combined "0:00 / 0:00" readout.</summary>
+    /// <summary>PlayButton is a single toggling 48px circle; swap its glyph between play/stop
+    /// rather than driving two separate buttons.</summary>
     private void SetPlayStopContent(bool isPlaying)
     {
         PlayButton.Content = isPlaying ? "■" : "▶";
@@ -494,7 +493,7 @@ public partial class MainWindow : Window
         TotalDurationText.Text = FormatTime(durationMs);
     }
 
-    // ----- Custom window chrome (v8 redesign): minimize/restore/close glyphs in the toolbar,
+    // ----- Custom window chrome: minimize/restore/close glyphs in the toolbar,
     // wired through the standard SystemCommands so they behave exactly like OS titlebar buttons. -----
 
     private void MinimizeButton_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
@@ -549,8 +548,8 @@ public partial class MainWindow : Window
         ToolbarPeakMeter.Value = ToUnit(masterPeakDb);
     }
 
-    // ----- Track sidebar: record / upload (v8 redesign: fixed 4-lane model -- no Add/remove-row
-    // machinery; UpdateLaneHeaderCount replaces the old UpdateAddLayerButtonState). -----
+    // ----- Track sidebar: record / upload. Fixed 4-lane model: no Add/remove-row
+    // machinery; UpdateLaneHeaderCount tracks how many of the 4 lanes are filled. -----
 
     /// <summary>Refreshes the lanes panel's "Layers · n of 4" header and the transport Record
     /// button's "Record layer N" label/enabled state.</summary>
@@ -733,7 +732,7 @@ public partial class MainWindow : Window
         return free.Count > 0 ? free[0] : null;
     }
 
-    /// <summary>v8 redesign: the row for a grid cell -- rows are a fixed set of exactly
+    /// <summary>The row for a grid cell. Rows are a fixed set of exactly
     /// LayerCollection.MaxLayers, always present from app start, so this is just an index now
     /// (no growth/append).</summary>
     private LayerRowViewModel RowForCell(int cellIndex) => _tracks[cellIndex];
@@ -818,8 +817,8 @@ public partial class MainWindow : Window
         ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
         ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>v8 redesign: rebuilds the fixed 4 lane rows keyed by CellIndex, not LayerCollection's
-    /// internal list order (audit B8/B9) -- a project saved with gaps (e.g. only cells 0 and 2
+    /// <summary>Rebuilds the fixed 4 lane rows keyed by CellIndex, not LayerCollection's
+    /// internal list order: a project saved with gaps (e.g. only cells 0 and 2
     /// populated) recreates rows 1 and 3 with their layers and rows 2/4 empty, never compacting
     /// layers into the first N rows or reassigning their grid cells. Always exactly MaxLayers rows,
     /// present even for a brand-new project, since the lanes panel no longer grows on demand.</summary>
@@ -839,7 +838,7 @@ public partial class MainWindow : Window
         UpdateLaneHeaderCount();
     }
 
-    // ----- Lane selection (v8 redesign, replaces the old Editor/Mixing screen switch) -----
+    // ----- Lane selection -----
     // Clicking a lane row switches which layer's FX chain the channel panel shows.
 
     private void LaneRow_MouseDown(object sender, MouseButtonEventArgs e)
@@ -873,10 +872,10 @@ public partial class MainWindow : Window
             StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
     }
 
-    // ----- v6 P3 (v8 redesign: name-click, not a separate button): each slot's own checkbox is
-    // its enable/disable, and clicking the FX name opens the live hosted plugin instance's own
-    // editor window (never embedded -- P3a task 7); no-ops when that stage isn't hosted, since
-    // there's no plugin editor to open (the native fallback sliders are what's shown instead). -----
+    // ----- Each slot's own checkbox is its enable/disable (not a separate button); clicking the
+    // FX name opens the live hosted plugin instance's own editor window (never embedded);
+    // no-ops when that stage isn't hosted, since there's no plugin editor to open
+    // (the native fallback sliders are what's shown instead). -----
     private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Eq);
     private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.NoiseGate);
     private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Compressor);
@@ -897,8 +896,8 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
     }
 
-    // ----- Lane name rename-in-place (v8 redesign: inline TextBox in the lane row, committed only
-    // on a real change via CommitNameIfChanged, matching the CommitSlider/CommitCheckBox pattern). -----
+    // ----- Lane name rename-in-place: inline TextBox in the lane row, committed only
+    // on a real change via CommitNameIfChanged, matching the CommitSlider/CommitCheckBox pattern. -----
 
     private void LaneNameTextBox_GotFocus(object sender, RoutedEventArgs e) => ((TextBox)sender).SelectAll();
 
@@ -919,7 +918,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // ----- Delete layer (v8 redesign, new feature): undoable, no cell compaction -- the row stays
+    // ----- Delete layer: undoable, no cell compaction -- the row stays
     // in its slot, now empty, exactly like a row that was never recorded/uploaded into. -----
 
     private void ChannelMoreButton_Click(object sender, RoutedEventArgs e)
@@ -1020,7 +1019,7 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.RefreshAsync(_layers.Layers));
     }
 
-    /// <summary>v8 redesign: PlayButton is a single toggling 48px circle (mock), not separate
+    /// <summary>PlayButton is a single toggling 48px circle, not separate
     /// Play/Stop buttons -- branches on IsPlaying first so Space (which just clicks this once, see
     /// MainWindow_PreviewKeyDown) toggles correctly either way.</summary>
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
@@ -1103,9 +1102,8 @@ public partial class MainWindow : Window
         RunPreviewCommand(_previewEngine.SeekByAsync(0));
     }
 
-    /// <summary>v8 redesign: the song-position bar now always spans the full row width (dropped
-    /// the old scrollable/zoomable timeline, which structurally conflicted with "span from the
-    /// hint panel to under the close button") -- this only ever touches TimelineSlider.Maximum/
+    /// <summary>The song-position bar always spans the full row width (there is no
+    /// scrollable/zoomable timeline) -- this only ever touches TimelineSlider.Maximum/
     /// Value, never its Width, and never CompositeCanvas.</summary>
     private void UpdateTimelineRangeUi()
     {
@@ -1208,8 +1206,8 @@ public partial class MainWindow : Window
         StatusText.Text = "Song in/out cleared.";
     }
 
-    /// <summary>v8 redesign: short "m:ss.t" (mock's "0:07.2 / 2:15.0"), one decisecond of
-    /// precision -- replaces the old h:mm:ss format now that current/total share one readout.</summary>
+    /// <summary>Short "m:ss.t" format (e.g. "0:07.2"), one decisecond of
+    /// precision, used now that current/total share one readout.</summary>
     private static string FormatTime(double ms)
     {
         var ts = TimeSpan.FromMilliseconds(Math.Max(0, ms));

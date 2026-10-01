@@ -108,7 +108,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }
     }
 
-    // ----- Source duration (redesign: lane clip-bar geometry + the "Recorded · 2:15" label) -----
+    // ----- Source duration: drives the lane clip-bar geometry and the "Recorded · 2:15" label -----
 
     private double _sourceDurationMs;
 
@@ -157,10 +157,10 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }, TaskScheduler.Default);
     }
 
-    /// <summary>Retake spec D5: the wrapped LayerModel's source was replaced IN PLACE (same object,
+    /// <summary>Call after the wrapped LayerModel's source was replaced IN PLACE (same object,
     /// same LayerId, same MixParameters). Raises only the source- and trim-derived properties.
-    /// Deliberately NOT `Layer = Layer`: the setter clears _openedHostedSlots/_lastPolledHostedState
-    /// (bug audit #5), which would silently stop polling a FabFilter editor still open on this layer.</summary>
+    /// Deliberately NOT `Layer = Layer`: that setter clears _openedHostedSlots/_lastPolledHostedState,
+    /// which would silently stop polling a FabFilter editor still open on this layer.</summary>
     public void NotifySourceReplaced()
     {
         OnPropertyChanged(nameof(TrimStartMs));        // visible: the strip's In box
@@ -217,7 +217,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         _ => "empty",
     };
 
-    /// <summary>The lane row's sub-label (redesign: "Recorded · 2:15", "Uploaded · 2:00 · 3
+    /// <summary>The lane row's sub-label ("Recorded · 2:15", "Uploaded · 2:00 · 3
     /// effects", or "Empty"). Duration is blank while the probe hasn't returned yet rather than
     /// showing a misleading "0:00".</summary>
     public string SourceLabel
@@ -578,7 +578,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         SharedHostedService.SetAraEditorVisible(_layer.LayerId, visible);
     }
 
-    // ----- Melodyne slot (v8 redesign: styled the same as the FX slots above -- a plain enable
+    // ----- Melodyne slot (styled the same as the FX slots above -- a plain enable
     // checkbox + name, no separate mode picker). PitchBackendSelection.Automatic2B stays a
     // valid enum value and MixEngine still handles it -- it's just never reachable from this UI,
     // per explicit user direction to keep the native fallback in code but not show it. -----
@@ -596,7 +596,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Pitch-correction engine choice (redesign's Melodyne | Auto segmented switch),
+    /// <summary>Pitch-correction engine choice (the Melodyne | Auto segmented switch),
     /// independent of the power toggle above: remembered even while the slot is off (PitchBackend ==
     /// None), so switching the power back on restores whichever engine was last selected instead of
     /// always defaulting back to Melodyne.</summary>

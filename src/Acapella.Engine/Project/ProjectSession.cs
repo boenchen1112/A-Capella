@@ -167,7 +167,7 @@ public sealed class ProjectSession
         // leave the current project, including its live plugin instances, untouched.
         var dto = _persistence.LoadFromFile(filePath);
         var loaded = _persistence.FromDto(dto);
-        _mixEngine.ReleaseAllHostedInstances();          // still before any layer is replaced (bug audit #5)
+        _mixEngine.ReleaseAllHostedInstances();          // still before any layer is replaced
         Apply(loaded, dto.SongInMs, dto.SongOutMs);
         _undoStack.Reset(Snapshot());
         SetSaveState(filePath, dirty: false);            // LAST: Apply() assigns MetronomeBpm/MasterVolumeDb through their dirty-marking setters

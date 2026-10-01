@@ -244,8 +244,8 @@
 
     <!-- A TextBox styled to read as inline label text (the toolbar's BPM field) — borderless until
          focused, so it visually matches the mock's plain-text "120 BPM" while staying a real,
-         editable control (the toolbar and the record dialog edit the one session BPM value; see the
-         redesign ticket for why this stays an editable field instead of static text). -->
+         editable control: the toolbar and the record dialog both edit the one session BPM value,
+         and it needs to stay an editable field rather than static text so either place can change it. -->
     <Style x:Key="InlineTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
