@@ -94,6 +94,11 @@ public class PreviewPlaybackEngine : IDisposable
     private Thread? _frameLoopThread;
     private volatile bool _stopRequested;
 
+    /// <summary>Test seam only: when set, used instead of _timeline.FrameSource to create each
+    /// layer's frame source, so a test can inject a fake (e.g. one that blocks GetNextFrame on a
+    /// gate) without a real media file. Null in production.</summary>
+    internal Func<LayerModel, int, int, int, double, ILayerFrameSource>? FrameSourceFactoryOverride;
+
     private volatile float _masterVolumeDb;
     // Live handle onto the currently-playing graph's master-volume node (audit: master volume
     // slider had no audible effect during active playback -- BuildMix only bakes masterVolumeDb
@@ -254,36 +259,58 @@ public class PreviewPlaybackEngine : IDisposable
     /// pulled that pass and its last-known frame is reused.</summary>
     private void FrameLoop(System.Diagnostics.Stopwatch clock, PositionTrackingSampleProvider? positionTracker, bool useAudioClock, double startPositionMs, IReadOnlyList<ILayerFrameSource> sources, SKBitmap[] lastFrames, int[] consumedFrames, PadToLengthSampleProvider? padded)
     {
-        while (!_stopRequested)
+        try
         {
-            // Read the end flag before the position (subtlety 2): if the stream ended, the tracker
-            // has counted every padded sample, so the project end has been reached.
-            bool audioEnded = useAudioClock && padded is not null && padded.Ended;
-            double elapsedMs = useAudioClock && positionTracker is not null
-                ? positionTracker.PositionMs
-                : clock.Elapsed.TotalMilliseconds;
-            PositionMs = audioEnded ? DurationMs : Math.Min(startPositionMs + elapsedMs, DurationMs);
-            int targetFrameIndex = (int)(elapsedMs / 1000.0 * _fps);
-
-            for (int i = 0; i < sources.Count; i++)
+            while (!_stopRequested)
             {
-                while (consumedFrames[i] <= targetFrameIndex)
+                // Read the end flag before the position (subtlety 2): if the stream ended, the tracker
+                // has counted every padded sample, so the project end has been reached.
+                bool audioEnded = useAudioClock && padded is not null && padded.Ended;
+                double elapsedMs = useAudioClock && positionTracker is not null
+                    ? positionTracker.PositionMs
+                    : clock.Elapsed.TotalMilliseconds;
+                PositionMs = audioEnded ? DurationMs : Math.Min(startPositionMs + elapsedMs, DurationMs);
+                int targetFrameIndex = (int)(elapsedMs / 1000.0 * _fps);
+
+                for (int i = 0; i < sources.Count; i++)
                 {
-                    lastFrames[i] = sources[i].GetNextFrame();
-                    consumedFrames[i]++;
+                    while (consumedFrames[i] <= targetFrameIndex)
+                    {
+                        lastFrames[i] = sources[i].GetNextFrame();
+                        consumedFrames[i]++;
+                    }
                 }
+
+                RenderComposite(lastFrames);
+
+                if (PositionMs >= DurationMs) break;
+
+                // Pacing comes from the clock-derived target frame index above, not sleep precision --
+                // this tick just bounds CPU spin while waiting for the next frame boundary.
+                Thread.Sleep(5);
             }
-
-            RenderComposite(lastFrames);
-
-            if (PositionMs >= DurationMs) break;
-
-            // Pacing comes from the clock-derived target frame index above, not sleep precision --
-            // this tick just bounds CPU spin while waiting for the next frame boundary.
-            Thread.Sleep(5);
         }
-
-        StopInternal(raiseStoppedEvent: true);
+        finally
+        {
+            // Single, explicit owner (crash fix): this loop thread -- and only this thread -- disposes
+            // the sources it was handed, and only once it will never touch them again (loop body is
+            // over, including the final RenderComposite pass). Previously StopCore disposed
+            // _frameSources after a 2-second Join *regardless of whether the join timed out*, so under
+            // a slow frame loop (heavy FX/plugin rebuild, slow GetNextFrame) this thread could still be
+            // mid-RenderComposite on a bitmap StopCore had just freed from another thread --
+            // SkiaSharp's native DrawBitmap then AccessViolationException'd on the freed handle.
+            // Disposing here instead, unconditionally and exactly once, makes Stop/Seek/rebuild safe
+            // to call no matter how slow this loop currently is: they only ever signal and wait.
+            foreach (var s in sources) s.Dispose();
+            _audioSink.Stop();
+            _liveMasterVolumeStage = null;
+            _frameSources = null;
+            IsPlaying = false;
+            // Unconditional, matching prior behavior: FrameLoop has always raised this on every exit
+            // (natural end or a Stop/Seek-requested exit) -- SeekCore's internal restart relies on
+            // that for its own bookkeeping elsewhere, and existing tests assert it.
+            PlaybackStopped?.Invoke();
+        }
     }
 
     private void RenderComposite(IReadOnlyList<SKBitmap> frames)
@@ -315,7 +342,9 @@ public class PreviewPlaybackEngine : IDisposable
     }
 
     private List<ILayerFrameSource> CreateFrameSources(double positionMs) =>
-        _layers.Select(layer => _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
+        _layers.Select(layer => FrameSourceFactoryOverride is not null
+            ? FrameSourceFactoryOverride(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)
+            : _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
 
     private (PositionTrackingSampleProvider Tracker, PadToLengthSampleProvider Padded) StartAudio(double positionMs)
     {
@@ -346,23 +375,27 @@ public class PreviewPlaybackEngine : IDisposable
     private void StopCore()
     {
         _stopRequested = true;
-        _frameLoopThread?.Join(2000);
-        StopInternal(raiseStoppedEvent: false);
-    }
+        // Wait for the loop to actually exit instead of a short timeout: the loop's own finally
+        // block (see FrameLoop) is the sole owner of _frameSources/_lastFrame disposal, so this
+        // must never return (and let a caller rebuild/replace layers) while that thread could
+        // still be touching them. Safe to wait unboundedly here: this runs on the dedicated
+        // command thread, never the UI thread, and FrameLoop never blocks on the command thread
+        // or the UI thread (FrameReady is dispatched async -- see MainWindow), so there is no
+        // cycle to deadlock on.
+        _frameLoopThread?.Join();
+        _frameLoopThread = null;
 
-    private void StopInternal(bool raiseStoppedEvent)
-    {
+        // If nothing was ever playing (no frame loop thread existed), there's nothing for the
+        // loop's finally to have cleaned up -- do it here so Stop is a no-op-safe idempotent call.
+        if (!IsPlaying && _frameSources is null) return;
         _audioSink.Stop();
         _liveMasterVolumeStage = null;
-
         if (_frameSources is not null)
         {
             foreach (var s in _frameSources) s.Dispose();
             _frameSources = null;
         }
-
         IsPlaying = false;
-        if (raiseStoppedEvent) PlaybackStopped?.Invoke();
     }
 
     public Task RestartAsync() => SeekAsync(0);

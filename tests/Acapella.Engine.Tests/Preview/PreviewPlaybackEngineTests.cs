@@ -110,6 +110,46 @@ public class GatedAudioSink : IPreviewAudioSink
     public void Dispose() => Release.Set();
 }
 
+/// <summary>Deterministic stand-in for a slow decode/rebuild (heavy FX chain, plugin-heavy
+/// rebuild) that AccessViolationException can't be caught in-process: a real use-after-dispose
+/// touches freed native memory and can crash the test host outright, so instead this fake tracks
+/// its own disposed state and flags any GetNextFrame call that happens after Dispose() --
+/// reproducing the crash as an observable assertion instead of a process crash.</summary>
+public class GatedFakeFrameSource : ILayerFrameSource
+{
+    // The first call is PlayCore's synchronous priming call (made on the command thread, before
+    // the frame-loop thread even starts) -- it must return immediately or PlayAsync() itself would
+    // never complete. The second call is the frame-loop thread's own first steady-state call, which
+    // is where the test wants it deterministically blocked (no sleep/timing race).
+    public readonly ManualResetEventSlim Gate;
+    public readonly ManualResetEventSlim BlockedInSecondCall = new(false);
+    private int _callCount;
+    private volatile bool _disposed;
+    public volatile bool UsedAfterDispose;
+    public int DisposeCount;
+
+    /// <summary>startOpen: true makes this instance never block (used for a restart's fresh
+    /// source in a test where only the original instance is under test).</summary>
+    public GatedFakeFrameSource(bool startOpen = false) => Gate = new ManualResetEventSlim(startOpen);
+
+    public SKBitmap GetNextFrame()
+    {
+        if (Interlocked.Increment(ref _callCount) == 2)
+        {
+            BlockedInSecondCall.Set();
+            Gate.Wait(TimeSpan.FromSeconds(10));
+        }
+        if (_disposed) UsedAfterDispose = true;
+        return new SKBitmap(4, 4, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        Interlocked.Increment(ref DisposeCount);
+    }
+}
+
 public class PreviewPlaybackEngineTests
 {
     // VideoFrameStreamSource.Dispose() kills the ffmpeg process, but the OS can take a moment to
@@ -475,6 +515,107 @@ public class PreviewPlaybackEngineTests
             sink.Release.Set();
             await Task.WhenAll(play, stop).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(engine.IsPlaying);
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Crash regression: StopAsync used to Join the frame-loop thread with a 2-second
+    /// timeout and then dispose the frame sources regardless of whether the join actually
+    /// succeeded -- under a slow GetNextFrame (heavy FX chain, plugin-heavy rebuild) the loop
+    /// thread was still mid-render on a bitmap that had just been freed from another thread,
+    /// which is what crashed with an AccessViolationException in SkiaSharp. This test blocks the
+    /// frame-loop thread's own GetNextFrame call (not the priming call PlayCore makes
+    /// synchronously) and proves StopAsync does not return -- and therefore does not let the
+    /// source be disposed -- until that call actually finishes.</summary>
+    [Fact]
+    public async Task StopWhileFrameLoopBlockedInGetNextFrame_WaitsInsteadOfDisposingUnderIt()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            var fake = new GatedFakeFrameSource();
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: new FakeAudioSink(), hostedPluginAvailability: NoHostedPluginsAvailable.Instance)
+            {
+                FrameSourceFactoryOverride = (_, _, _, _, _) => fake,
+            };
+            engine.FrameReady += bmp => bmp.Dispose();
+            await engine.SetLayersAsync(layers.Layers);
+
+            await engine.PlayAsync();
+            Assert.True(fake.BlockedInSecondCall.Wait(TimeSpan.FromSeconds(10)), "Frame loop never reached its first steady-state GetNextFrame call.");
+
+            var stopTask = engine.StopAsync();
+
+            // Give StopCore's Join a moment to actually be waiting, then confirm it really is
+            // still waiting and has not disposed the source out from under the blocked call.
+            await Task.Delay(200);
+            Assert.False(stopTask.IsCompleted, "StopAsync returned while the frame loop was still inside GetNextFrame.");
+            Assert.Equal(0, fake.DisposeCount);
+            Assert.False(fake.UsedAfterDispose);
+
+            fake.Gate.Set();
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.False(fake.UsedAfterDispose, "GetNextFrame observed itself being called after Dispose() -- the crash this test guards against.");
+            Assert.Equal(1, fake.DisposeCount);
+            Assert.False(engine.IsPlaying);
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
+    /// <summary>Same hazard as above, via SeekAsync (which internally calls StopCore before
+    /// restarting playback): seeking while the frame loop is mid-GetNextFrame must wait for that
+    /// call to finish before the old source is disposed and a new one created.</summary>
+    [Fact]
+    public async Task SeekWhileFrameLoopBlockedInGetNextFrame_WaitsInsteadOfDisposingUnderIt()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path };
+            var layers = new LayerCollection();
+            layers.Restore(new[] { layer });
+
+            // SeekCore internally restarts playback (PlayCore creates a fresh frame source) once
+            // the old one has stopped -- only the first-created fake is the one under test here;
+            // later ones must be allowed to run free (not gated) so the restart completes.
+            var fake = new GatedFakeFrameSource();
+            bool firstCreated = false;
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: new FakeAudioSink(), hostedPluginAvailability: NoHostedPluginsAvailable.Instance)
+            {
+                FrameSourceFactoryOverride = (_, _, _, _, _) => firstCreated ? new GatedFakeFrameSource(startOpen: true) : fake,
+            };
+            engine.FrameReady += bmp => bmp.Dispose();
+            await engine.SetLayersAsync(layers.Layers);
+
+            await engine.PlayAsync();
+            firstCreated = true;
+            Assert.True(fake.BlockedInSecondCall.Wait(TimeSpan.FromSeconds(10)), "Frame loop never reached its first steady-state GetNextFrame call.");
+
+            var seekTask = engine.SeekAsync(500);
+
+            await Task.Delay(200);
+            Assert.False(seekTask.IsCompleted, "SeekAsync returned while the frame loop was still inside GetNextFrame.");
+            Assert.Equal(0, fake.DisposeCount);
+            Assert.False(fake.UsedAfterDispose);
+
+            fake.Gate.Set();
+            await seekTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.False(fake.UsedAfterDispose, "GetNextFrame observed itself being called after Dispose() -- the crash this test guards against.");
+            Assert.Equal(1, fake.DisposeCount);
+
+            await engine.StopAsync();
         }
         finally
         {
