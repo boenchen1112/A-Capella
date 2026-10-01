@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Acapella.Engine.Ffmpeg;
 using Acapella.Engine.Host;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
@@ -91,7 +92,57 @@ public class LayerRowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SourceStateLabel));
             OnPropertyChanged(nameof(CellColor));
             RefreshMixDisplayProperties();
+            RefreshSourceDurationAsync();
         }
+    }
+
+    // ----- Source duration (redesign: lane clip-bar geometry + the "Recorded · 2:15" label) -----
+
+    private double _sourceDurationMs;
+
+    /// <summary>Full source-file duration in ms, via ffprobe (MediaProbe.GetDurationSeconds), or 0
+    /// while unknown (no layer, probe still running, or ffprobe failed) -- 0 means "not known yet",
+    /// not "zero-length clip"; callers (lane clip-bar drag handles) must treat 0 as "disable the
+    /// handle" rather than a real duration (see ClipTimelineMath.ClampTrimEnd's doc comment).</summary>
+    public double SourceDurationMs
+    {
+        get => _sourceDurationMs;
+        private set { _sourceDurationMs = value; OnPropertyChanged(nameof(SourceDurationMs)); OnPropertyChanged(nameof(EffectiveTrimEndMs)); OnPropertyChanged(nameof(SourceLabel)); }
+    }
+
+    /// <summary>MediaProbe shells out to ffprobe (blocking I/O) -- never called on the UI thread.
+    /// Guarded by a per-row generation token so a stale probe for a since-replaced/removed source
+    /// can't overwrite a newer one's result.</summary>
+    private int _durationProbeGeneration;
+
+    private void RefreshSourceDurationAsync()
+    {
+        SourceDurationMs = 0;
+        var layer = _layer;
+        if (layer is null) return;
+
+        int generation = ++_durationProbeGeneration;
+        string path = layer.SourcePath;
+        // Marshals back onto the UI thread via the app's Dispatcher when one exists (the running
+        // app); runs the continuation inline otherwise (headless unit tests have no WPF Dispatcher
+        // and don't need thread affinity for a plain property set). Deliberately not
+        // TaskScheduler.FromCurrentSynchronizationContext(): that throws outside a WPF message loop,
+        // which a plain [StaFact] test (no Window shown/pumped) doesn't install.
+        Task.Run(() => MediaProbe.GetDurationSeconds(path)).ContinueWith(t =>
+        {
+            void Apply()
+            {
+                if (generation != _durationProbeGeneration) return;   // superseded (Layer changed again, or row reused)
+                if (t.IsCompletedSuccessfully && ReferenceEquals(_layer, layer))
+                    SourceDurationMs = t.Result * 1000.0;
+            }
+
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher is not null && !dispatcher.CheckAccess())
+                dispatcher.Invoke(Apply);
+            else
+                Apply();
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Retake spec D5: the wrapped LayerModel's source was replaced IN PLACE (same object,
@@ -154,6 +205,48 @@ public class LayerRowViewModel : INotifyPropertyChanged
         _ => "empty",
     };
 
+    /// <summary>The lane row's sub-label (redesign: "Recorded · 2:15", "Uploaded · 2:00 · 3
+    /// effects", or "Empty"). Duration is blank while the probe hasn't returned yet rather than
+    /// showing a misleading "0:00".</summary>
+    public string SourceLabel
+    {
+        get
+        {
+            if (_layer is null) return "Empty";
+            string kind = _layer.Kind == LayerKind.RecordedAV ? "Recorded" : "Uploaded";
+            string duration = SourceDurationMs > 0 ? FormatMinutesSeconds(SourceDurationMs) : "";
+            int effects = EnabledEffectsCount;
+            var parts = new List<string> { kind };
+            if (duration.Length > 0) parts.Add(duration);
+            if (effects > 0) parts.Add(effects == 1 ? "1 effect" : $"{effects} effects");
+            return string.Join(" · ", parts);
+        }
+    }
+
+    private static string FormatMinutesSeconds(double ms)
+    {
+        var ts = TimeSpan.FromMilliseconds(Math.Max(0, ms));
+        return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+    }
+
+    /// <summary>How many of the layer's FX slots (noise gate, compressor, EQ, reverb, limiter --
+    /// NOT pitch correction, which the mock labels and counts separately) are switched on, for the
+    /// lane sub-label's "· N effects" suffix.</summary>
+    private int EnabledEffectsCount
+    {
+        get
+        {
+            if (Params is null) return 0;
+            int count = 0;
+            if (Params.NoiseGateEnabled) count++;
+            if (Params.CompressorEnabled) count++;
+            if (Params.EqEnabled) count++;
+            if (Params.ReverbEnabled) count++;
+            if (Params.LimiterEnabled) count++;
+            return count;
+        }
+    }
+
     private LayerMixParameters? Params => _layer?.MixParameters;
 
     // ----- Trim (Editor screen) -----
@@ -174,9 +267,34 @@ public class LayerRowViewModel : INotifyPropertyChanged
             if (_layer is null) return;
             _layer.TrimEndMs = double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms) ? ms : null;
             OnPropertyChanged(nameof(TrimEndText));
+            OnPropertyChanged(nameof(TrimEndMs));
+            OnPropertyChanged(nameof(EffectiveTrimEndMs));
             LiveParamChanged?.Invoke();
         }
     }
+
+    /// <summary>Numeric trim-out, for the lane clip-bar's drag-handle math (ClipTimelineMath) --
+    /// TrimEndText exists separately for the channel panel's free-text field. Setting it writes
+    /// through the same LayerModel field as TrimEndText.</summary>
+    public double? TrimEndMs
+    {
+        get => _layer?.TrimEndMs;
+        set
+        {
+            if (_layer is null) return;
+            _layer.TrimEndMs = value;
+            OnPropertyChanged(nameof(TrimEndMs));
+            OnPropertyChanged(nameof(TrimEndText));
+            OnPropertyChanged(nameof(EffectiveTrimEndMs));
+            LiveParamChanged?.Invoke();
+        }
+    }
+
+    /// <summary>TrimEndMs if the user has set one, else the source's own duration -- "to the end of
+    /// the source" resolved to an actual millisecond value for clip-bar geometry. 0 while the
+    /// duration probe hasn't returned yet AND no explicit trim-out is set (see
+    /// ClipTimelineMath.ClampTrimEnd's doc comment on why 0 means "not known", not "zero-length").</summary>
+    public double EffectiveTrimEndMs => TrimEndMs ?? SourceDurationMs;
 
     // ----- Pan / mute / solo (Mixing screen top strip) -----
 
@@ -204,7 +322,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool EqEnabled
     {
         get => Params?.EqEnabled ?? false;
-        set { if (Params is null) return; Params.EqEnabled = value; OnPropertyChanged(nameof(EqEnabled)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.EqEnabled = value; OnPropertyChanged(nameof(EqEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
     }
 
     public float LowShelfGainDb
@@ -236,7 +354,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool NoiseGateEnabled
     {
         get => Params?.NoiseGateEnabled ?? false;
-        set { if (Params is null) return; Params.NoiseGateEnabled = value; OnPropertyChanged(nameof(NoiseGateEnabled)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.NoiseGateEnabled = value; OnPropertyChanged(nameof(NoiseGateEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
     }
 
     public float NoiseGateThresholdDb
@@ -258,7 +376,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool CompressorEnabled
     {
         get => Params?.CompressorEnabled ?? false;
-        set { if (Params is null) return; Params.CompressorEnabled = value; OnPropertyChanged(nameof(CompressorEnabled)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.CompressorEnabled = value; OnPropertyChanged(nameof(CompressorEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
     }
 
     public float CompressorThresholdDb
@@ -280,7 +398,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool LimiterEnabled
     {
         get => Params?.LimiterEnabled ?? false;
-        set { if (Params is null) return; Params.LimiterEnabled = value; OnPropertyChanged(nameof(LimiterEnabled)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.LimiterEnabled = value; OnPropertyChanged(nameof(LimiterEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
     }
 
     public float LimiterCeilingDb
@@ -302,7 +420,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     public bool ReverbEnabled
     {
         get => Params?.ReverbEnabled ?? false;
-        set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); LiveParamChanged?.Invoke(); }
+        set { if (Params is null) return; Params.ReverbEnabled = value; OnPropertyChanged(nameof(ReverbEnabled)); OnPropertyChanged(nameof(SourceLabel)); LiveParamChanged?.Invoke(); }
     }
 
     // ----- Hosted-backend auto-selection (v6 P3 task 1): each stage below shows a native slider
@@ -449,21 +567,49 @@ public class LayerRowViewModel : INotifyPropertyChanged
     }
 
     // ----- Melodyne slot (v8 redesign: styled the same as the FX slots above -- a plain enable
-    // checkbox + name, no separate mode picker). PitchBackendSelection.NativeAutomatic stays a
+    // checkbox + name, no separate mode picker). PitchBackendSelection.Automatic2B stays a
     // valid enum value and MixEngine still handles it -- it's just never reachable from this UI,
     // per explicit user direction to keep the native fallback in code but not show it. -----
 
     public bool MelodyneEnabled
     {
-        get => Params?.PitchBackend == PitchBackendSelection.Manual2A;
+        get => Params?.PitchBackend is PitchBackendSelection.Manual2A or PitchBackendSelection.Automatic2B;
         set
         {
             if (Params is null) return;
-            Params.PitchBackend = value ? PitchBackendSelection.Manual2A : PitchBackendSelection.None;
+            Params.PitchBackend = value ? BackendForMode(_pitchMode) : PitchBackendSelection.None;
             OnPropertyChanged(nameof(MelodyneEnabled));
+            OnPropertyChanged(nameof(SourceLabel));
             LiveParamChanged?.Invoke();
         }
     }
+
+    /// <summary>Pitch-correction engine choice (redesign's Melodyne | Auto segmented switch),
+    /// independent of the power toggle above: remembered even while the slot is off (PitchBackend ==
+    /// None), so switching the power back on restores whichever engine was last selected instead of
+    /// always defaulting back to Melodyne.</summary>
+    public enum PitchEngineMode { Melodyne, Auto }
+
+    private PitchEngineMode _pitchMode = PitchEngineMode.Melodyne;
+
+    public PitchEngineMode PitchMode
+    {
+        get => Params?.PitchBackend == PitchBackendSelection.Automatic2B ? PitchEngineMode.Auto : _pitchMode;
+        set
+        {
+            _pitchMode = value;
+            OnPropertyChanged(nameof(PitchMode));
+            if (MelodyneEnabled && Params is not null)
+            {
+                Params.PitchBackend = BackendForMode(value);
+                OnPropertyChanged(nameof(MelodyneEnabled));
+                LiveParamChanged?.Invoke();
+            }
+        }
+    }
+
+    private static PitchBackendSelection BackendForMode(PitchEngineMode mode) =>
+        mode == PitchEngineMode.Auto ? PitchBackendSelection.Automatic2B : PitchBackendSelection.Manual2A;
 
     /// <summary>Bug audit A1: opens Melodyne's own editor GUI for this layer's persistent ARA
     /// session (the same live, already-analyzed session MixEngine's pitch stage renders through --
@@ -501,8 +647,8 @@ public class LayerRowViewModel : INotifyPropertyChanged
     private void RefreshMixDisplayProperties()
     {
         OnPropertyChanged(nameof(Name)); OnPropertyChanged(nameof(DisplayName)); OnPropertyChanged(nameof(MixingHeaderLabel));
-        OnPropertyChanged(nameof(CellColor));
-        OnPropertyChanged(nameof(TrimStartMs)); OnPropertyChanged(nameof(TrimEndText));
+        OnPropertyChanged(nameof(CellColor)); OnPropertyChanged(nameof(SourceLabel));
+        OnPropertyChanged(nameof(TrimStartMs)); OnPropertyChanged(nameof(TrimEndText)); OnPropertyChanged(nameof(TrimEndMs)); OnPropertyChanged(nameof(EffectiveTrimEndMs));
         OnPropertyChanged(nameof(GainDb)); OnPropertyChanged(nameof(GainDisplay));
         OnPropertyChanged(nameof(Pan)); OnPropertyChanged(nameof(PanDisplay));
         OnPropertyChanged(nameof(LowShelfGainDb)); OnPropertyChanged(nameof(LowEqDisplay));
@@ -522,7 +668,20 @@ public class LayerRowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsEqHosted)); OnPropertyChanged(nameof(IsNoiseGateHosted));
         OnPropertyChanged(nameof(IsCompressorHosted)); OnPropertyChanged(nameof(IsLimiterHosted));
         OnPropertyChanged(nameof(Mute)); OnPropertyChanged(nameof(Solo));
-        OnPropertyChanged(nameof(MelodyneEnabled));
+        OnPropertyChanged(nameof(MelodyneEnabled)); OnPropertyChanged(nameof(PitchMode));
+    }
+
+    /// <summary>Renames the layer, but only pushes a dirty/undo-worthy change if the trimmed value
+    /// actually differs from the current name (MainWindow's lane name TextBox calls this on
+    /// LostFocus/Enter instead of setting Name directly) -- so clicking into the field and tabbing
+    /// back out without typing anything doesn't record a no-op undo step. Returns true if the name
+    /// actually changed.</summary>
+    public bool CommitNameIfChanged(string newValue)
+    {
+        string normalized = string.IsNullOrWhiteSpace(newValue) ? "" : newValue.Trim();
+        if (normalized == Name) return false;
+        Name = normalized;
+        return true;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
