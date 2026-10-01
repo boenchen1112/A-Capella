@@ -48,6 +48,31 @@ public class TrimmedBarGeometryConverter : IMultiValueConverter
         throw new NotSupportedException();
 }
 
+/// <summary>Positions a lane's trim-handle Thumb (Canvas.Left) at the left or right edge of the
+/// trimmed-span bar, centered on that edge -- same four bindings as TrimmedBarGeometryConverter
+/// ([0]=TrimStartMs, [1]=EffectiveTrimEndMs, [2]=TimelineDurationMs, [3]=trackWidthPx).
+/// ConverterParameter picks which edge: "In" (left) or "Out" (right).</summary>
+public class TrimHandleXConverter : IMultiValueConverter
+{
+    public const double HandleWidth = 10;
+
+    public object Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (values.Length < 4 || values.Any(v => v is not double)) return 0.0;
+        double startMs = (double)values[0];
+        double endMs = (double)values[1];
+        double timelineDurationMs = (double)values[2];
+        double trackWidthPx = (double)values[3];
+
+        var (x, width) = ClipTimelineMath.ToPixelRange(startMs, endMs, timelineDurationMs, trackWidthPx);
+        double edgeX = parameter as string == "Out" ? x + width : x;
+        return edgeX - HandleWidth / 2;
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 /// <summary>One-way: is LayerRowViewModel.PitchMode equal to the mode named by ConverterParameter
 /// ("Melodyne" or "Auto")? Drives the channel panel's two-button segmented switch; the switch's
 /// own Click handlers (not a TwoWay binding) are what actually change PitchMode.</summary>

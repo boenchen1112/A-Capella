@@ -46,4 +46,85 @@ public static class ClipTimelineMath
         double upper = sourceDurationMs > 0 ? Math.Max(lower, sourceDurationMs) : Math.Max(lower, candidateMs);
         return Math.Clamp(candidateMs, lower, upper);
     }
+
+    /// <summary>The ruler's tick spacing: the smallest "nice" interval (in seconds) whose pixel
+    /// spacing at the track's current scale is at least minPxBetweenTicks, so ticks never crowd
+    /// together on a short or heavily zoomed-out timeline. Empty for a degenerate scale.</summary>
+    private static readonly double[] NiceTickIntervalsSeconds = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600 };
+
+    public static IReadOnlyList<double> ComputeTickTimesMs(double durationMs, double trackWidthPx, double minPxBetweenTicks = 60)
+    {
+        if (durationMs <= 0 || trackWidthPx <= 0) return Array.Empty<double>();
+
+        double pxPerMs = trackWidthPx / durationMs;
+        double intervalSeconds = NiceTickIntervalsSeconds[^1];
+        foreach (double candidate in NiceTickIntervalsSeconds)
+        {
+            if (candidate * 1000 * pxPerMs >= minPxBetweenTicks)
+            {
+                intervalSeconds = candidate;
+                break;
+            }
+        }
+
+        double intervalMs = intervalSeconds * 1000;
+        var ticks = new List<double>();
+        for (double t = 0; t <= durationMs + 0.001; t += intervalMs)
+            ticks.Add(t);
+        return ticks;
+    }
+
+    /// <summary>Ruler tick label: "m:ss" (the mock's "0:00", "0:30", "1:00").</summary>
+    public static string FormatTickLabel(double ms)
+    {
+        var ts = TimeSpan.FromMilliseconds(Math.Max(0, ms));
+        return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+    }
+}
+
+/// <summary>Tracks one in-progress trim-handle drag on a lane's clip bar: converts the total mouse
+/// movement since the drag started into a clamped trim value, and reports whether the value
+/// actually changed so the caller commits at most one undo step per completed drag (and none for a
+/// click with no movement). Deliberately stateless beyond its constructor snapshot -- the caller
+/// (MainWindow) owns the live LayerRowViewModel and applies ValueAt's result to it on every
+/// DragDelta for live visual feedback, matching the CommitSlider pattern (apply live, commit once on
+/// release).</summary>
+public sealed class ClipTrimDrag
+{
+    public enum Handle { In, Out }
+
+    private readonly Handle _handle;
+    private readonly double _startValueMs;
+    private readonly double _otherBoundMs;
+    private readonly double _sourceDurationMs;
+    private readonly double _timelineDurationMs;
+    private readonly double _trackWidthPx;
+
+    /// <summary>startValueMs is the handle's own value when the drag began (TrimStartMs for an In
+    /// drag, EffectiveTrimEndMs for an Out drag). otherBoundMs is the OTHER end, fixed for the
+    /// duration of the drag (EffectiveTrimEndMs for an In drag, TrimStartMs for an Out drag).</summary>
+    public ClipTrimDrag(Handle handle, double startValueMs, double otherBoundMs, double sourceDurationMs, double timelineDurationMs, double trackWidthPx)
+    {
+        _handle = handle;
+        _startValueMs = startValueMs;
+        _otherBoundMs = otherBoundMs;
+        _sourceDurationMs = sourceDurationMs;
+        _timelineDurationMs = timelineDurationMs;
+        _trackWidthPx = trackWidthPx;
+    }
+
+    /// <summary>cumulativeDeltaPx is the total horizontal mouse movement since the drag started
+    /// (not a per-event delta -- summing per-event deltas can double-count against a handle whose
+    /// own on-screen position is also bound to the value being dragged). Rounded to whole
+    /// milliseconds so the channel panel's In/Out text fields show clean numbers.</summary>
+    public double ValueAt(double cumulativeDeltaPx)
+    {
+        double deltaMs = ClipTimelineMath.PixelDeltaToMs(cumulativeDeltaPx, _timelineDurationMs, _trackWidthPx);
+        double candidateMs = _startValueMs + deltaMs;
+        return Math.Round(_handle == Handle.In
+            ? ClipTimelineMath.ClampTrimStart(candidateMs, _otherBoundMs)
+            : ClipTimelineMath.ClampTrimEnd(candidateMs, _otherBoundMs, _sourceDurationMs));
+    }
+
+    public bool HasChangedFrom(double currentValueMs) => currentValueMs != _startValueMs;
 }
