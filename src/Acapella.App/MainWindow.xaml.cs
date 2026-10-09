@@ -12,6 +12,7 @@ using Acapella.App.ViewModels;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
 using Acapella.Engine.Host;
+using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Preview;
 using Acapella.Engine.Project;
@@ -107,6 +108,8 @@ public partial class MainWindow : Window
         TrackList.ItemsSource = _tracks;
         UpdateAddLayerButtonState();
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
+        foreach (var signature in TimeSignature.Presets) TimeSignatureCombo.Items.Add(signature);
+        ShowTimeSignature();
         SelectMasterStrip();
 
         _session.SaveStateChanged += UpdateWindowTitle;
@@ -227,6 +230,7 @@ public partial class MainWindow : Window
             if (!restore()) return false;
 
             MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
+            ShowTimeSignature();
             MasterVolumeSlider.Value = _session.MasterVolumeDb;
             RestoreTracksFromLayers();
             // Bug audit #9: keep polling any FabFilter editor still open across the undo. AFTER
@@ -408,6 +412,30 @@ public partial class MainWindow : Window
     }
 
     private void MasterVolumeSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+
+    private bool _syncingTimeSignature;
+
+    /// <summary>Reflects the session's meter in the toolbar combo without it echoing back as an edit.</summary>
+    private void ShowTimeSignature()
+    {
+        _syncingTimeSignature = true;
+        try
+        {
+            var current = _session.MetronomeTimeSignature;
+            if (!TimeSignatureCombo.Items.Contains(current)) TimeSignatureCombo.Items.Add(current);   // a meter from a hand-edited file
+            TimeSignatureCombo.SelectedItem = current;
+        }
+        finally { _syncingTimeSignature = false; }
+    }
+
+    private void TimeSignatureCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingTimeSignature || _applyingHistory || TimeSignatureCombo.SelectedItem is not TimeSignature chosen) return;
+        if (chosen == _session.MetronomeTimeSignature) return;
+        _session.MetronomeTimeSignature = chosen;
+        StatusText.Text = $"Metronome: {chosen}.";
+        PushUndoSnapshot();
+    }
 
     private void MetronomeBpmTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
@@ -653,10 +681,12 @@ public partial class MainWindow : Window
         }
 
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm,
-                                           retakeLayerId: retakeRow?.Layer?.LayerId) { Owner = this };
+                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature) { Owner = this };
         if (retakeRow is not null) dialog.Title = $"Re-record {retakeRow.DisplayName}";
         bool recorded = dialog.ShowDialog() == true;
         _session.MetronomeBpm = dialog.Bpm;
+        _session.MetronomeTimeSignature = dialog.TimeSignature;
+        ShowTimeSignature();
         return (dialog, recorded);
     }
 

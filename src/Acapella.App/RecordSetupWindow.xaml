@@ -34,6 +34,8 @@
             <CheckBox x:Name="MetronomeToggle" Content="Metronome" VerticalAlignment="Center" Checked="MetronomeToggle_Changed" Unchecked="MetronomeToggle_Changed"/>
             <TextBlock Text="BPM:" Margin="16,0,4,0" VerticalAlignment="Center"/>
             <TextBox x:Name="BpmTextBox" Width="50" Text="120" TextChanged="BpmTextBox_TextChanged"/>
+            <ComboBox x:Name="TimeSignatureCombo" Width="56" Margin="8,0,0,0" SelectionChanged="TimeSignatureCombo_SelectionChanged"
+                      ToolTip="Time signature: the first beat of each bar is accented."/>
         </StackPanel>
 
         <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,16,0,12"/>

@@ -3,15 +3,17 @@ using NAudio.Wave;
 namespace Acapella.Engine.Metronome;
 
 /// <summary>
-/// Click-generating sample provider. Intended to be mixed only into the local monitoring/guide
+/// Click-generating sample provider (accented downbeat per the TimeSignature). Intended to be mixed only into the local monitoring/guide
 /// output path, never into the signal path being recorded from the mic.
 /// </summary>
 public class MetronomeEngine : ISampleProvider
 {
     private const double ClickFrequencyHz = 1000.0;
+    private const double AccentFrequencyHz = 1500.0;
     private const double ClickDurationSeconds = 0.03;
 
     private double _bpm = 120;
+    private TimeSignature _timeSignature = TimeSignature.FourFour;
     private bool _enabled;
     private long _sampleIndex;
 
@@ -25,22 +27,37 @@ public class MetronomeEngine : ISampleProvider
     public double Bpm
     {
         get => _bpm;
-        set
+        set => Retime(Math.Clamp(value, 20, 300), _timeSignature);
+    }
+
+    /// <summary>The meter: how many clicks make a bar and how often they come. The first click of
+    /// each bar is higher-pitched. Changing it mid-take keeps the position within the current beat.</summary>
+    public TimeSignature TimeSignature
+    {
+        get => _timeSignature;
+        set => Retime(_bpm, value.Sanitized());
+    }
+
+    private double SamplesPerClick(double bpm, TimeSignature signature) =>
+        WaveFormat.SampleRate * 60.0 / (bpm * signature.ClicksPerQuarter);
+
+    /// <summary>L5: _sampleIndex % samplesPerClick is recomputed with the new tempo on the very next
+    /// Read() call, which jumps the beat's phase discontinuously (a click could fire immediately, or
+    /// the current beat could be skipped/doubled). Rescale _sampleIndex to preserve the current
+    /// fractional position within the click interval across the change.</summary>
+    private void Retime(double newBpm, TimeSignature newSignature)
+    {
+        if (newBpm != _bpm || newSignature != _timeSignature)
         {
-            // L5: _sampleIndex % samplesPerBeat is recomputed with the new BPM on the very next
-            // Read() call, which jumps the beat's phase discontinuously (a click could fire
-            // immediately, or the current beat could be skipped/doubled). Rescale _sampleIndex to
-            // preserve the current fractional position within the beat across the change.
-            double newBpm = Math.Clamp(value, 20, 300);
-            if (newBpm != _bpm)
-            {
-                double oldSamplesPerBeat = WaveFormat.SampleRate * 60.0 / _bpm;
-                double newSamplesPerBeat = WaveFormat.SampleRate * 60.0 / newBpm;
-                double phaseFraction = (_sampleIndex % oldSamplesPerBeat) / oldSamplesPerBeat;
-                _sampleIndex = (long)(phaseFraction * newSamplesPerBeat);
-            }
-            _bpm = newBpm;
+            double oldSamplesPerClick = SamplesPerClick(_bpm, _timeSignature);
+            double newSamplesPerClick = SamplesPerClick(newBpm, newSignature);
+            double phaseFraction = (_sampleIndex % oldSamplesPerClick) / oldSamplesPerClick;
+            // Stay on the same beat of the bar so a tempo tweak doesn't move the downbeat.
+            long beatInBar = (long)(_sampleIndex / oldSamplesPerClick) % newSignature.BeatsPerBar;
+            _sampleIndex = (long)((beatInBar + phaseFraction) * newSamplesPerClick);
         }
+        _bpm = newBpm;
+        _timeSignature = newSignature;
     }
 
     public bool Enabled
@@ -60,7 +77,8 @@ public class MetronomeEngine : ISampleProvider
     public int Read(float[] buffer, int offset, int count)
     {
         int sampleRate = WaveFormat.SampleRate;
-        double samplesPerBeat = sampleRate * 60.0 / _bpm;
+        double samplesPerClick = SamplesPerClick(_bpm, _timeSignature);
+        int beatsPerBar = _timeSignature.BeatsPerBar;
         int clickLengthSamples = (int)(sampleRate * ClickDurationSeconds);
 
         for (int i = 0; i < count; i++)
@@ -68,12 +86,14 @@ public class MetronomeEngine : ISampleProvider
             float value = 0f;
             if (_enabled)
             {
-                double posInBeat = _sampleIndex % samplesPerBeat;
-                if (posInBeat < clickLengthSamples)
+                double clickIndex = Math.Floor(_sampleIndex / samplesPerClick);
+                double posInClick = _sampleIndex - clickIndex * samplesPerClick;
+                if (posInClick < clickLengthSamples)
                 {
-                    double t = posInBeat / sampleRate;
-                    double envelope = 1.0 - (posInBeat / clickLengthSamples);
-                    value = (float)(Math.Sin(2 * Math.PI * ClickFrequencyHz * t) * envelope);
+                    bool accent = (long)clickIndex % beatsPerBar == 0;
+                    double t = posInClick / sampleRate;
+                    double envelope = 1.0 - (posInClick / clickLengthSamples);
+                    value = (float)(Math.Sin(2 * Math.PI * (accent ? AccentFrequencyHz : ClickFrequencyHz) * t) * envelope);
                 }
             }
 

@@ -59,7 +59,10 @@ public partial class RecordSetupWindow : Window
     /// main window anymore since the spec confines the metronome to this dialog.</summary>
     public double Bpm => _metronome.Bpm;
 
-    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null)
+    /// <summary>The meter chosen in the dialog, carried back to the project like Bpm.</summary>
+    public TimeSignature TimeSignature => _metronome.TimeSignature;
+
+    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null, TimeSignature? initialTimeSignature = null)
     {
         InitializeComponent();
         _deviceCatalog = deviceCatalog;
@@ -72,6 +75,10 @@ public partial class RecordSetupWindow : Window
         _outputDevice = _deviceCatalog.GetDefaultRenderDevice();
         _metronome.Bpm = initialBpm;
         BpmTextBox.Text = initialBpm.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+        _metronome.TimeSignature = initialTimeSignature ?? TimeSignature.FourFour;
+        foreach (var signature in TimeSignature.Presets) TimeSignatureCombo.Items.Add(signature);
+        if (!TimeSignatureCombo.Items.Contains(_metronome.TimeSignature)) TimeSignatureCombo.Items.Add(_metronome.TimeSignature);
+        TimeSignatureCombo.SelectedItem = _metronome.TimeSignature;
 
         // Candidate 4 (Improvement_Proposal_2026-09-24): pre-select the last-used camera/mic/
         // metronome state instead of always defaulting to device index 0 -- persisted in
@@ -134,6 +141,12 @@ public partial class RecordSetupWindow : Window
 
     private void MetronomeToggle_Changed(object sender, RoutedEventArgs e) =>
         _metronome.Enabled = MetronomeToggle.IsChecked == true;
+
+    private void TimeSignatureCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (TimeSignatureCombo.SelectedItem is TimeSignature chosen)
+            _metronome.TimeSignature = chosen;
+    }
 
     private void BpmTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
