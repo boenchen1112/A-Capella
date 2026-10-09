@@ -30,7 +30,7 @@ public class LayerModel
     public double? TrimEndMs { get; set; }
 
     /// <summary>Grid cell this layer occupies (per the Data Model Rule: layout id + per-layer cell
-    /// index, not hardcoded positions). Defaults to recording order, matching Layout2x2Provider.</summary>
+    /// index, not hardcoded positions). Defaults to recording order, matching the layout's cell order.</summary>
     public int CellIndex { get; set; }
 
     /// <summary>Melodyne ARA archive key, keyed by (layerId, sourceAudioHash) once Phase 2A lands.
@@ -74,7 +74,7 @@ public class LayerModel
 
 public class LayerCollection
 {
-    public const int MaxLayers = 4;
+    public const int MaxLayers = 9;
 
     private readonly List<LayerModel> _layers = new();
 

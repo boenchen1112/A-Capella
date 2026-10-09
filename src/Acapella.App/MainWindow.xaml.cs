@@ -525,7 +525,7 @@ public partial class MainWindow : Window
     {
         if (_tracks.Count >= LayerCollection.MaxLayers)
         {
-            StatusText.Text = "Layer cap reached (4).";
+            StatusText.Text = $"Layer cap reached ({LayerCollection.MaxLayers}).";
             return;
         }
 
@@ -537,10 +537,42 @@ public partial class MainWindow : Window
         // a source, so it isn't part of the ProjectFileDto snapshot ToDto serializes.
     }
 
+    /// <summary>Pushes the project's video settings (layout) into the preview engine; the engine
+    /// reads them when it (re)builds its per-cell frame sources, so call before RefreshAsync/Play.</summary>
+    private void SyncPreviewVideoSettings()
+    {
+        _previewEngine.Layout = _session.Video.Layout;
+    }
+
+    /// <summary>After layers are added or imported: switch to a layout with enough cells if the
+    /// current one is too small, and say so. The caller still pushes the undo step.</summary>
+    private void EnsureLayoutFitsLayers()
+    {
+        if (_session.EnsureLayoutFits())
+            StatusText.Text = $"Switched to a {_session.Video.Layout.Cells.Count}-cell layout to fit your layers.";
+    }
+
+    private void ChooseLayoutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        int required = _layers.Layers.Count == 0 ? 1 : _layers.Layers.Max(l => l.CellIndex) + 1;
+        var picker = new LayoutPickerWindow(_session.Video.LayoutId, required) { Owner = this };
+        if (picker.ShowDialog() != true || picker.SelectedLayoutId is null) return;
+        if (picker.SelectedLayoutId == _session.Video.LayoutId) return;
+
+        if (!_session.TrySetLayout(picker.SelectedLayoutId, out var error))
+        {
+            StatusText.Text = error ?? "That layout can't be used.";
+            return;
+        }
+        RefreshPreviewLive();
+        StatusText.Text = $"Layout: {_session.Video.Layout.Cells.Count} cells.";
+        PushUndoSnapshot();
+    }
+
     private void UpdateAddLayerButtonState()
     {
         AddLayerButton.IsEnabled = _tracks.Count < LayerCollection.MaxLayers;
-        // Multi-file import: enabled while any LAYER slot is free, even if all 4 rows exist (spec D6).
+        // Multi-file import: enabled while any LAYER slot is free, even if all rows exist (spec D6).
         ImportFilesButton.IsEnabled = _layers.Layers.Count < LayerCollection.MaxLayers;
     }
 
@@ -609,6 +641,7 @@ public partial class MainWindow : Window
             dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
             row.Layer = dialog.CreatedLayer;
             if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+            EnsureLayoutFitsLayers();
             UpdateAddLayerButtonState();
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
@@ -626,7 +659,7 @@ public partial class MainWindow : Window
         int? targetCell = LowestFreeCell();   // read BEFORE ShowDialog -- see bug audit #7 step 3
         if (targetCell is null)
         {
-            StatusText.Text = "Layer cap reached (4).";
+            StatusText.Text = $"Layer cap reached ({LayerCollection.MaxLayers}).";
             return;
         }
         OpenRecordSetup(() => RowForCell(targetCell.Value));
@@ -759,6 +792,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
 
         AttachUploadedFile(row, dialog.FileName);
+        EnsureLayoutFitsLayers();
         UpdateAddLayerButtonState();                                     // new (D6)
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
@@ -767,13 +801,13 @@ public partial class MainWindow : Window
 
     /// <summary>Add > Import files as layers... and the mixer's "+ Import files..." button: one
     /// multi-select dialog; files (sorted by name, spec D3) fill free slots lowest-first up to the
-    /// 4-layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
+    /// layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
     /// (spec D2). Overflow is reported in StatusText, never a dialog.</summary>
     private void ImportFilesMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (_layers.Layers.Count >= LayerCollection.MaxLayers)
         {
-            StatusText.Text = "No empty layer slots (4-layer cap reached).";
+            StatusText.Text = $"No empty layer slots ({LayerCollection.MaxLayers}-layer cap reached).";
             return;
         }
 
@@ -792,6 +826,7 @@ public partial class MainWindow : Window
             AttachUploadedFile(_tracks[cellIndex], filePath);
         }
 
+        EnsureLayoutFitsLayers();
         UpdateAddLayerButtonState();
         if (assignments.Count > 0)
         {
@@ -807,7 +842,7 @@ public partial class MainWindow : Window
         static string Files(int n) => n == 1 ? "1 file" : $"{n} files";
         string text = $"Imported {Files(imported)}";
         if (skipped.Count > 0)
-            text += $"; {Files(skipped.Count)} skipped (4-layer cap reached): {string.Join(", ", skipped.Select(Path.GetFileName))}";
+            text += $"; {Files(skipped.Count)} skipped ({LayerCollection.MaxLayers}-layer cap reached): {string.Join(", ", skipped.Select(Path.GetFileName))}";
         return text + ".";
     }
 
@@ -902,7 +937,7 @@ public partial class MainWindow : Window
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom -----
     //
     // Video and audio are re-decoded on every Play/Seek by PreviewPlaybackEngine (measured fast
-    // enough for the app's up-to-4-layer/small-clip scale -- see the throughput spike referenced
+    // enough for the app's up-to-9-layer/small-clip scale -- see the throughput spike referenced
     // in the engine's doc comment). Engine commands are awaited, never waited on, so a decode never
     // blocks input.
 
@@ -939,6 +974,7 @@ public partial class MainWindow : Window
     /// -- this is the "no manual refresh step" mechanism the spec calls for.</summary>
     private async void RefreshPreviewLive()
     {
+        SyncPreviewVideoSettings();
         if (_layers.Layers.Count == 0)
         {
             await AwaitPreviewCommand(_previewEngine.SetLayersAsync(_layers.Layers));
@@ -978,6 +1014,7 @@ public partial class MainWindow : Window
 
         async Task SetLayersThenPlay()
         {
+            SyncPreviewVideoSettings();
             await _previewEngine.SetLayersAsync(_layers.Layers);
             await _previewEngine.PlayAsync();
         }
@@ -1195,7 +1232,7 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.StopAsync());      // bug audit #8: one audio graph at a time
         StatusText.Text = "Exporting...";                           // after the stop: AwaitPreviewCommand may write "Preview error: ..."
 
-        var (snapshotLayers, snapshotMasterVolumeDb) = _session.SnapshotForExport();
+        var (snapshotLayers, snapshotMasterVolumeDb, snapshotVideo) = _session.SnapshotForExport();
 
         // Built on the UI thread (candidate 3 / Improvement_Proposal_2026-09-24): Progress<T>
         // captures the current SynchronizationContext at construction, so every Report() call from
@@ -1213,7 +1250,7 @@ public partial class MainWindow : Window
             try
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
-                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress);
+                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress, layout: snapshotVideo.Layout);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)

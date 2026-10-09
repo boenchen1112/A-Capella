@@ -179,6 +179,9 @@
                                 <MenuItem Header="Add _layer" Click="AddLayerMenuItem_Click"/>
                                 <MenuItem Header="Import _files as layers..." Click="ImportFilesMenuItem_Click"/>
                             </MenuItem>
+                            <MenuItem Header="_Layout">
+                                <MenuItem Header="Choose _layout..." Click="ChooseLayoutMenuItem_Click"/>
+                            </MenuItem>
                             <MenuItem Header="_View">
                                 <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
                             </MenuItem>
@@ -325,7 +328,7 @@
                     <UniformGrid DockPanel.Dock="Bottom" Rows="1" Margin="0,8,0,0">
                         <Button x:Name="AddLayerButton" Content="+ Add layer" Click="AddLayerButton_Click" Margin="0,0,4,0"/>
                         <Button x:Name="ImportFilesButton" Content="+ Import files..." Click="ImportFilesMenuItem_Click" Margin="4,0,0,0"
-                                MouseEnter="Hint_MouseEnter" Tag="Pick several media files at once; each fills the next empty layer (up to 4)."/>
+                                MouseEnter="Hint_MouseEnter" Tag="Pick several media files at once; each fills the next empty layer (up to 9)."/>
                     </UniformGrid>
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                         <StackPanel Orientation="Horizontal">

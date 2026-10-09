@@ -35,11 +35,11 @@ public class LayerImportPlannerTests
     public void MoreFilesThanFreeCells_SkipsTheAlphabeticallyLast()
     {
         var (assignments, skipped) = LayerImportPlanner.Plan(
-            new[] { 0, 1, 2 },
+            Enumerable.Range(0, LayerCollection.MaxLayers - 1),
             new[] { @"C:\x\d.wav", @"C:\x\a.wav", @"C:\x\c.wav" });
 
         var assignment = Assert.Single(assignments);
-        Assert.Equal(new LayerImportPlanner.Assignment(3, @"C:\x\a.wav"), assignment);
+        Assert.Equal(new LayerImportPlanner.Assignment(LayerCollection.MaxLayers - 1, @"C:\x\a.wav"), assignment);
         Assert.Equal(new[] { @"C:\x\c.wav", @"C:\x\d.wav" }, skipped);
     }
 
@@ -47,7 +47,7 @@ public class LayerImportPlannerTests
     public void NoFreeCells_AssignsNothing_SkipsEverything()
     {
         var (assignments, skipped) = LayerImportPlanner.Plan(
-            new[] { 0, 1, 2, 3 },
+            Enumerable.Range(0, LayerCollection.MaxLayers),
             new[] { @"C:\x\a.wav", @"C:\x\b.wav" });
 
         Assert.Empty(assignments);
@@ -69,7 +69,7 @@ public class LayerImportPlannerTests
     [Fact]
     public void NeverAssignsMoreThanMaxLayers()
     {
-        var files = Enumerable.Range(0, 10).Select(i => $@"C:\x\f{i:D2}.wav").ToList();
+        var files = Enumerable.Range(0, LayerCollection.MaxLayers + 6).Select(i => $@"C:\x\f{i:D2}.wav").ToList();
 
         var (assignments, skipped) = LayerImportPlanner.Plan(Array.Empty<int>(), files);
 
@@ -95,7 +95,7 @@ public class LayerImportPlannerTests
     {
         var free = LayerImportPlanner.FreeCells(Array.Empty<int>());
 
-        Assert.Equal(new[] { 0, 1, 2, 3 }, free);
+        Assert.Equal(Enumerable.Range(0, LayerCollection.MaxLayers), free);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public class LayerImportPlannerTests
     {
         var free = LayerImportPlanner.FreeCells(new[] { 0, 2 });
 
-        Assert.Equal(new[] { 1, 3 }, free);
+        Assert.Equal(new[] { 1 }.Concat(Enumerable.Range(3, LayerCollection.MaxLayers - 3)), free);
     }
 
     [Fact]
@@ -111,13 +111,13 @@ public class LayerImportPlannerTests
     {
         var free = LayerImportPlanner.FreeCells(new[] { 3, 1 });
 
-        Assert.Equal(new[] { 0, 2 }, free);
+        Assert.Equal(new[] { 0, 2 }.Concat(Enumerable.Range(4, LayerCollection.MaxLayers - 4)), free);
     }
 
     [Fact]
     public void FreeCells_AllOccupied_IsEmpty()
     {
-        var free = LayerImportPlanner.FreeCells(new[] { 2, 0, 3, 1 });
+        var free = LayerImportPlanner.FreeCells(Enumerable.Range(0, LayerCollection.MaxLayers).Reverse());
 
         Assert.Empty(free);
     }

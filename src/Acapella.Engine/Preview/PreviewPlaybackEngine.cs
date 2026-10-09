@@ -137,6 +137,16 @@ public class PreviewPlaybackEngine : IDisposable
     /// it always composites without labels regardless.</summary>
     public volatile bool ShowLayerLabels = true;
 
+    private volatile GridLayout _layout = GridLayoutCatalog.Grid2x2;
+    private double _gutterFraction;
+
+    /// <summary>The cell arrangement the composite uses. Frame sources are sized per cell when they
+    /// are created, so after changing this (or GutterFraction) call RefreshAsync to rebuild them.</summary>
+    public GridLayout Layout { get => _layout; set => _layout = value; }
+
+    /// <summary>Gap between cells as a fraction of the canvas's shorter side (see GridLayout.GetCellRect).</summary>
+    public double GutterFraction { get => Volatile.Read(ref _gutterFraction); set => Volatile.Write(ref _gutterFraction, value); }
+
     /// <summary>hostedService, when given, is shared with MainWindow's launcher UI and
     /// ExportEngine (v7 Q0 task 1, audit A1) so a plugin edit is audible on the next rebuild and
     /// export captures the same live state -- pass hostedPluginAvailability instead only for
@@ -291,7 +301,7 @@ public class PreviewPlaybackEngine : IDisposable
         // Grid-gap compaction fix: key rects by each layer's actual CellIndex, not by position in
         // frames -- a lone layer at CellIndex 1 (cell 0 empty) must still land in the top-right
         // cell, not get compacted into top-left.
-        var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, _layers.Take(frames.Count).Select(l => l.CellIndex).ToList());
+        var cellRects = Layout.GetCellRects(_canvasWidth, _canvasHeight, GutterFraction, _layers.Take(frames.Count).Select(l => l.CellIndex).ToList());
         List<CellLabel?>? labels = null;
         if (ShowLayerLabels)
         {
@@ -314,8 +324,16 @@ public class PreviewPlaybackEngine : IDisposable
         _frameSources = CreateFrameSources(positionMs);
     }
 
-    private List<ILayerFrameSource> CreateFrameSources(double positionMs) =>
-        _layers.Select(layer => _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
+    private List<ILayerFrameSource> CreateFrameSources(double positionMs)
+    {
+        var layout = Layout;
+        double gutter = GutterFraction;
+        return _layers.Select(layer =>
+        {
+            var (cellWidth, cellHeight) = layout.GetCellPixelSize(layer.CellIndex, _canvasWidth, _canvasHeight, gutter);
+            return _timeline.FrameSource(layer, cellWidth, cellHeight, _fps, positionMs);
+        }).ToList();
+    }
 
     private (PositionTrackingSampleProvider Tracker, PadToLengthSampleProvider Padded) StartAudio(double positionMs)
     {

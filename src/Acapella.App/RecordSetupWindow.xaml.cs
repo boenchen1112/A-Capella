@@ -157,7 +157,7 @@ public partial class RecordSetupWindow : Window
 
         if (RecordTakeRules.IsBlockedByLayerCap(_layers.Layers.Count, _retakeLayerId))   // retake spec D2
         {
-            StatusText.Text = "Layer cap reached (4).";
+            StatusText.Text = $"Layer cap reached ({LayerCollection.MaxLayers}).";
             return;
         }
 

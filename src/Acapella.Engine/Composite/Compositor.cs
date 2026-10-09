@@ -4,9 +4,9 @@ namespace Acapella.Engine.Composite;
 
 /// <summary>
 /// Composites frames into their assigned cell rectangles on a canvas. Deliberately has no
-/// knowledge of "2x2" or any specific layout — it iterates whatever (frame, cellRect) pairs it's
-/// given, per the build plan's Data Model Rule. Layout2x2Provider is the only piece that knows
-/// about the fixed 2x2 grid.
+/// knowledge of any specific layout — it iterates whatever (frame, cellRect) pairs it's
+/// given, per the build plan's Data Model Rule. GridLayout is the only piece that knows where
+/// cells sit.
 /// </summary>
 /// <summary>Per-cell color + name for the grid-identification overlay (v5 P2 task 3). Aligned
 /// index-for-index with the frames/cellRects passed to Composite -- pass null for a cell to draw
