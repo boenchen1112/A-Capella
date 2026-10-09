@@ -100,7 +100,7 @@ public class LayerCollection
 
         var layer = new LayerModel
         {
-            LayerId = _layers.Count,
+            LayerId = NextLayerId(),
             Kind = kind,
             SourcePath = sourcePath,
             CellIndex = _layers.Count,
@@ -108,6 +108,10 @@ public class LayerCollection
         _layers.Add(layer);
         return layer;
     }
+
+    /// <summary>An id no current layer uses: one past the highest. (The old "= Count" collided as soon
+    /// as ids stopped being 0..n-1, e.g. after layers were imported from another project.)</summary>
+    public int NextLayerId() => _layers.Count == 0 ? 0 : _layers.Max(l => l.LayerId) + 1;
 
     /// <summary>Replaces the collection's contents wholesale -- used by project load.</summary>
     public void Restore(IEnumerable<LayerModel> layers)

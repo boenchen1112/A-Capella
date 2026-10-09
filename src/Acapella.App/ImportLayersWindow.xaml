@@ -1,0 +1,22 @@
+<Window x:Class="Acapella.App.ImportLayersWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Import layers" Height="380" Width="440" MinHeight="260" MinWidth="320"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="HintText" Grid.Row="0" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"/>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="LayerList"/>
+        </ScrollViewer>
+        <DockPanel Grid.Row="2" Margin="0,12,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Left" x:Name="SelectAllButton" Content="Select all" Click="SelectAllButton_Click" Padding="10,2"/>
+            <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Width="80"/>
+            <Button DockPanel.Dock="Right" x:Name="OkButton" Content="Import" IsDefault="True" Width="80" Margin="0,0,8,0" Click="OkButton_Click"/>
+        </DockPanel>
+    </Grid>
+</Window>

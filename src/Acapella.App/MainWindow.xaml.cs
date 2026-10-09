@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using Acapella.App.ViewModels;
+using Acapella.Engine.Collab;
 using Acapella.Engine.Devices;
 using Acapella.Engine.Export;
 using Acapella.Engine.Host;
@@ -1334,6 +1335,116 @@ public partial class MainWindow : Window
                 });
             }
         });
+    }
+
+    // ----- Offline collaboration: collab packages (File > Export collab package / Import layers) -----
+
+    private readonly CollabPackageService _collab = new();
+
+    /// <summary>Bundles the project and its media into one zip to send to a collaborator. The snapshot is
+    /// taken here on the UI thread (it pulls live plugin edits); only the file copying runs in the background.</summary>
+    private async void ExportCollabMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layers.Layers.Count == 0)
+        {
+            StatusText.Text = "Add at least one layer first.";
+            return;
+        }
+
+        string suggested = _session.CurrentFilePath is null ? "Untitled" : _session.DisplayName;
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Acapella collab package|*" + CollabPackageService.PackageSuffix,
+            DefaultExt = CollabPackageService.PackageSuffix,
+            FileName = suggested,
+            Title = "Export collab package",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        string path = dialog.FileName.EndsWith(CollabPackageService.PackageSuffix, StringComparison.OrdinalIgnoreCase)
+            ? dialog.FileName
+            : dialog.FileName + CollabPackageService.PackageSuffix;
+
+        var snapshot = _session.Snapshot();
+        ExportCollabMenuItem.IsEnabled = false;
+        StatusText.Text = "Packaging...";
+        try
+        {
+            await Task.Run(() => _collab.Export(snapshot, path));
+            StatusText.Text = $"Collab package saved: {Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Couldn't create the package: {ex.Message}";
+        }
+        finally
+        {
+            ExportCollabMenuItem.IsEnabled = true;
+        }
+    }
+
+    /// <summary>Pulls chosen layers from another project file or a collab package into this project, each
+    /// into the next empty cell. One undo step; like multi-file import, there is no dialog or await between
+    /// the first layer being added and PushUndoSnapshot (a pump there could record a half-imported project).</summary>
+    private void ImportFromProjectMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        int freeSlots = LayerImportPlanner.FreeCells(_layers.Layers.Select(l => l.CellIndex)).Count;
+        if (freeSlots == 0)
+        {
+            StatusText.Text = $"No empty layer slots ({LayerCollection.MaxLayers}-layer cap reached).";
+            return;
+        }
+
+        var open = new OpenFileDialog
+        {
+            Filter = "Acapella package or project|*.acapella.zip;*.acapella.json;*.json|All files|*.*",
+            Title = "Import layers from a project or collab package",
+        };
+        if (open.ShowDialog() != true) return;
+
+        Engine.Persistence.ProjectFileDto source;
+        try
+        {
+            source = _collab.LoadSource(open.FileName, Path.Combine(_mediaDir, "collab"));
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Couldn't read {Path.GetFileName(open.FileName)}: {ex.Message}";
+            return;
+        }
+
+        if (source.Layers.Count == 0)
+        {
+            StatusText.Text = "That project has no layers to import.";
+            return;
+        }
+
+        var picker = new ImportLayersWindow(source, freeSlots) { Owner = this };
+        if (picker.ShowDialog() != true || picker.SelectedLayerIds.Count == 0) return;
+
+        // Occupancy is read again here, after the dialogs: the project can't change underneath a modal
+        // dialog, but this keeps the rule uniform with ImportFilesMenuItem_Click.
+        var result = _collab.ImportLayers(_session, source, picker.SelectedLayerIds);
+        foreach (var layer in result.Added)
+        {
+            while (_tracks.Count <= layer.CellIndex) AppendEmptyRow();
+            var row = _tracks[layer.CellIndex];
+            row.Layer = layer;                                           // MUST precede Name: Name's setter no-ops while Layer is null
+            if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+        }
+
+        EnsureLayoutFitsLayers();
+        UpdateAddLayerButtonState();
+        if (result.Added.Count > 0)
+        {
+            RefreshPreviewLive();
+            PushUndoSnapshot();
+        }
+
+        string text = $"Imported {result.Added.Count} layer(s) from {Path.GetFileName(open.FileName)}";
+        if (result.Skipped.Count > 0)
+            text += $"; {result.Skipped.Count} skipped (layer cap reached): {string.Join(", ", result.Skipped)}";
+        StatusText.Text = text + ".";
     }
 
     // ----- Menu bar: File > New, Help > About (v5 P1 task 1) -----
