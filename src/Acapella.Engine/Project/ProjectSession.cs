@@ -1,3 +1,4 @@
+using Acapella.Engine.Composite;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Persistence;
 
@@ -30,6 +31,7 @@ public sealed class ProjectSession
     /// callers may hold on to it; Open/Undo/New replace its contents, not the collection.</summary>
     public LayerCollection Layers { get; } = new();
 
+    private VideoSettings _video = new();
     private double _metronomeBpm = 120;
     private float _masterVolumeDb;
 
@@ -38,6 +40,42 @@ public sealed class ProjectSession
         get => _metronomeBpm;
         set { if (_metronomeBpm == value) return; _metronomeBpm = value; MarkDirty(); }
     }
+
+    /// <summary>How the layers are composited (layout today; more in later builds).</summary>
+    public VideoSettings Video
+    {
+        get => _video;
+        set { if (_video == value) return; _video = value; MarkDirty(); }
+    }
+
+    /// <summary>Switches to another layout unless it has too few cells for the layers already
+    /// placed (a layer must never be silently clamped into the wrong cell). Returns false and the
+    /// reason in that case; the caller commits the undo step on success.</summary>
+    public bool TrySetLayout(string layoutId, out string? error)
+    {
+        var layout = GridLayoutCatalog.Get(layoutId);
+        int required = RequiredCells();
+        if (layout.Cells.Count < required)
+        {
+            error = $"That layout has {layout.Cells.Count} cells but your layers use {required}. Pick a layout with at least {required}.";
+            return false;
+        }
+        error = null;
+        Video = Video with { LayoutId = layout.Id };
+        return true;
+    }
+
+    /// <summary>Grows the layout (to the preferred one with exactly that many cells) when the layers'
+    /// cells no longer fit; returns true if it changed. Call after adding or importing layers.</summary>
+    public bool EnsureLayoutFits()
+    {
+        string fitted = GridLayoutCatalog.EnsureFits(Video.LayoutId, RequiredCells());
+        if (fitted == Video.LayoutId) return false;
+        Video = Video with { LayoutId = fitted };
+        return true;
+    }
+
+    private int RequiredCells() => Layers.Layers.Count == 0 ? 1 : Layers.Layers.Max(l => l.CellIndex) + 1;
 
     /// <summary>The latency offset that was used when this project's layers were recorded.</summary>
     public double? LatencyOffsetMsUsed { get; private set; }
@@ -82,15 +120,15 @@ public sealed class ProjectSession
     {
         foreach (var layer in Layers.Layers)
             _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
-        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb);
+        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, Video);
     }
 
-    /// <summary>A deep copy of the layers and master volume, unaffected by later edits -- for a
-    /// background export racing the user (M7).</summary>
-    public (LayerCollection Layers, float MasterVolumeDb) SnapshotForExport()
+    /// <summary>A deep copy of the layers, master volume and video settings, unaffected by later
+    /// edits -- for a background export racing the user (M7).</summary>
+    public (LayerCollection Layers, float MasterVolumeDb, VideoSettings Video) SnapshotForExport()
     {
-        var (layers, _, _, masterVolumeDb) = _persistence.FromDto(Snapshot());
-        return (layers, masterVolumeDb);
+        var (layers, _, _, masterVolumeDb, video) = _persistence.FromDto(Snapshot());
+        return (layers, masterVolumeDb, video);
     }
 
     /// <summary>Records one completed user-visible edit as an undo step.</summary>
@@ -154,6 +192,7 @@ public sealed class ProjectSession
         Layers.Restore(Enumerable.Empty<LayerModel>());
         LatencyOffsetMsUsed = null;
         MasterVolumeDb = 0f;
+        Video = new VideoSettings();
         _undoStack.Reset(Snapshot());
         SetSaveState(null, dirty: false);                // LAST, same reason
     }
@@ -165,12 +204,13 @@ public sealed class ProjectSession
         return true;
     }
 
-    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) loaded)
+    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video) loaded)
     {
         Layers.Restore(loaded.Layers.Layers);
         MetronomeBpm = loaded.MetronomeBpm;
         LatencyOffsetMsUsed = loaded.LatencyOffsetMsUsed;
         MasterVolumeDb = loaded.MasterVolumeDb;
+        Video = loaded.Video;
 
         foreach (var layer in Layers.Layers)
             _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);

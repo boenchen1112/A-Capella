@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Acapella.Engine.Composite;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 
@@ -14,11 +15,12 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, VideoSettings? video = null)
     {
+        video ??= new VideoSettings();
         return new ProjectFileDto
         {
-            LayoutId = "2x2",
+            LayoutId = video.LayoutId,
             MetronomeBpm = metronomeBpm,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
@@ -26,11 +28,13 @@ public class ProjectPersistenceService
         };
     }
 
-    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) FromDto(ProjectFileDto dto)
+    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video) FromDto(ProjectFileDto dto)
     {
         var layers = new LayerCollection();
         layers.Restore(dto.Layers.Select(FromLayerDto));
-        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb);
+        // Unknown ids (hand-edited or from a newer build) fall back to the 2x2 layout, which is also what every pre-layout project is.
+        var video = new VideoSettings { LayoutId = GridLayoutCatalog.Get(dto.LayoutId).Id };
+        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video);
     }
 
     public void SaveToFile(ProjectFileDto dto, string filePath)
