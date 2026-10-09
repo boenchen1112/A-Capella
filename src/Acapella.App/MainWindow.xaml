@@ -181,6 +181,7 @@
                             </MenuItem>
                             <MenuItem Header="_Layout">
                                 <MenuItem Header="Choose _layout..." Click="ChooseLayoutMenuItem_Click"/>
+                                <MenuItem Header="_Video settings..." Click="VideoSettingsMenuItem_Click"/>
                             </MenuItem>
                             <MenuItem Header="_View">
                                 <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer _labels" IsCheckable="True" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>

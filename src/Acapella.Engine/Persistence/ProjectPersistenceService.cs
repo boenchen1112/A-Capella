@@ -21,6 +21,12 @@ public class ProjectPersistenceService
         return new ProjectFileDto
         {
             LayoutId = video.LayoutId,
+            Video = new VideoDto
+            {
+                AspectRatio = video.AspectRatio.ToString(),
+                FillMode = video.Fit.ToString(),
+                GutterFraction = video.GutterFraction,
+            },
             MetronomeBpm = metronomeBpm,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
@@ -33,7 +39,16 @@ public class ProjectPersistenceService
         var layers = new LayerCollection();
         layers.Restore(dto.Layers.Select(FromLayerDto));
         // Unknown ids (hand-edited or from a newer build) fall back to the 2x2 layout, which is also what every pre-layout project is.
-        var video = new VideoSettings { LayoutId = GridLayoutCatalog.Get(dto.LayoutId).Id };
+        string layoutId = GridLayoutCatalog.Get(dto.LayoutId).Id;
+        var video = dto.Video is null
+            ? VideoSettings.Legacy(layoutId)
+            : new VideoSettings
+            {
+                LayoutId = layoutId,
+                AspectRatio = Enum.TryParse<AspectRatioOption>(dto.Video.AspectRatio, out var ratio) ? ratio : AspectRatioOption.Wide16x9,
+                Fit = Enum.TryParse<CellFit>(dto.Video.FillMode, out var fit) ? fit : CellFit.Fill,
+                GutterFraction = Math.Clamp(double.IsFinite(dto.Video.GutterFraction) ? dto.Video.GutterFraction : 0, 0, VideoSettings.MaxGutterFraction),
+            };
         return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video);
     }
 

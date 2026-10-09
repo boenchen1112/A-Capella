@@ -13,6 +13,10 @@ public class ProjectFileDto
     /// No initializer (bug audit #17): null after a load means the file had no LayoutId, i.e. isn't a project.</summary>
     public string? LayoutId { get; set; }
 
+    /// <summary>Video look (canvas shape, cell fill, gutter). Null in files saved before it existed;
+    /// those load as VideoSettings.Legacy so they render exactly as saved.</summary>
+    public VideoDto? Video { get; set; }
+
     public double MetronomeBpm { get; set; } = 120;
 
     /// <summary>Bus gain applied after summing all layers, before the master limiter (P1 task 4) --
@@ -25,6 +29,13 @@ public class ProjectFileDto
     public double? LatencyOffsetMsUsed { get; set; }
 
     public List<LayerDto> Layers { get; set; } = new();
+}
+
+public class VideoDto
+{
+    public string AspectRatio { get; set; } = nameof(Project.AspectRatioOption.Wide16x9);
+    public string FillMode { get; set; } = nameof(Composite.CellFit.Fill);
+    public double GutterFraction { get; set; } = 0.01;
 }
 
 public class LayerDto

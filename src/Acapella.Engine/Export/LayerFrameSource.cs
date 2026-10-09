@@ -1,3 +1,4 @@
+using Acapella.Engine.Composite;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Acapella.Engine.Ffmpeg;
@@ -33,7 +34,7 @@ public class VideoFrameStreamSource : ILayerFrameSource
     /// equivalent): trimStartMs adds to the -ss skip, trimEndMs bounds playback via -t so the
     /// source exhausts (and freezes on its last frame, per GetNextFrame) at the trim-out point.
     /// </summary>
-    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg", double trimStartMs = 0, double? trimEndMs = null)
+    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg", double trimStartMs = 0, double? trimEndMs = null, CellFit fit = CellFit.Fit)
     {
         _width = width;
         _height = height;
@@ -72,9 +73,9 @@ public class VideoFrameStreamSource : ILayerFrameSource
         }
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
-        // Letterbox instead of stretching: preserve source aspect ratio, pad the remainder black
-        // (see VideoFrameDecoder for the same fix on the single-frame preview path).
-        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add($"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={fps}");
+        // Never stretch: Fit letterboxes (preserves the source aspect ratio, pads black), Fill crops
+        // to cover the cell (see CellVideoFilter; VideoFrameDecoder has the older single-frame variant).
+        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(CellVideoFilter.Build(width, height, fps, fit));
         psi.ArgumentList.Add("-");
 
         _process = Process.Start(psi);

@@ -38,9 +38,18 @@ public class ExportEngine : IDisposable
     /// isn't flooded), and exactly 1.0 once the encode process has exited successfully -- callers
     /// building a Progress&lt;double&gt; on the UI thread get every callback marshaled back there
     /// automatically with no extra Dispatcher.Invoke.</summary>
-    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, GridLayout? layout = null, double gutterFraction = 0)
+    public void Export(LayerCollection layers, string outputPath, int? width = null, int? height = null, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, VideoSettings? video = null)
     {
-        layout ??= GridLayoutCatalog.Grid2x2;
+        // No settings means the pre-layout behavior (2x2, no gap, letterboxed 16:9) so existing callers are unchanged.
+        video ??= VideoSettings.Legacy(GridLayoutCatalog.LegacyId);
+        var (defaultWidth, defaultHeight) = video.ExportSize;
+        ExportCore(layers, outputPath, width ?? defaultWidth, height ?? defaultHeight, fps, sampleRate, masterVolumeDb, progress, video);
+    }
+
+    private void ExportCore(LayerCollection layers, string outputPath, int width, int height, int fps, int sampleRate, float masterVolumeDb, IProgress<double>? progress, VideoSettings video)
+    {
+        var layout = video.Layout;
+        double gutterFraction = video.GutterFraction;
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
 
@@ -74,7 +83,7 @@ public class ExportEngine : IDisposable
                 .Select(l =>
                 {
                     var (cellWidth, cellHeight) = layout.GetCellPixelSize(l.CellIndex, width, height, gutterFraction);
-                    return _timeline.FrameSource(l, cellWidth, cellHeight, fps);
+                    return _timeline.FrameSource(l, cellWidth, cellHeight, fps, fit: video.Fit);
                 })
                 .ToList();
 

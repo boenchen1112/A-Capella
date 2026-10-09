@@ -541,7 +541,10 @@ public partial class MainWindow : Window
     /// reads them when it (re)builds its per-cell frame sources, so call before RefreshAsync/Play.</summary>
     private void SyncPreviewVideoSettings()
     {
-        _previewEngine.Layout = _session.Video.Layout;
+        _previewEngine.ApplyVideoSettings(_session.Video);
+        var (width, height) = _session.Video.PreviewSize;
+        CompositeCanvas.Width = width;
+        CompositeCanvas.Height = height;
     }
 
     /// <summary>After layers are added or imported: switch to a layout with enough cells if the
@@ -550,6 +553,17 @@ public partial class MainWindow : Window
     {
         if (_session.EnsureLayoutFits())
             StatusText.Text = $"Switched to a {_session.Video.Layout.Cells.Count}-cell layout to fit your layers.";
+    }
+
+    private void VideoSettingsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new VideoSettingsWindow(_session.Video) { Owner = this };
+        if (window.ShowDialog() != true || window.Result == _session.Video) return;
+
+        _session.Video = window.Result;
+        RefreshPreviewLive();
+        StatusText.Text = "Video settings updated.";
+        PushUndoSnapshot();
     }
 
     private void ChooseLayoutMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1250,7 +1264,7 @@ public partial class MainWindow : Window
             try
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
-                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress, layout: snapshotVideo.Layout);
+                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress, video: snapshotVideo);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)
