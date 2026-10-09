@@ -34,7 +34,7 @@ public class VideoFrameStreamSource : ILayerFrameSource
     /// equivalent): trimStartMs adds to the -ss skip, trimEndMs bounds playback via -t so the
     /// source exhausts (and freezes on its last frame, per GetNextFrame) at the trim-out point.
     /// </summary>
-    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg", double trimStartMs = 0, double? trimEndMs = null, CellFit fit = CellFit.Fit)
+    public VideoFrameStreamSource(string mediaPath, int width, int height, int fps, double shiftMs = 0, string ffmpegPath = "ffmpeg", double trimStartMs = 0, double? trimEndMs = null, CellFit fit = CellFit.Fit, bool mirror = false)
     {
         _width = width;
         _height = height;
@@ -75,7 +75,7 @@ public class VideoFrameStreamSource : ILayerFrameSource
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
         // Never stretch: Fit letterboxes (preserves the source aspect ratio, pads black), Fill crops
         // to cover the cell (see CellVideoFilter; VideoFrameDecoder has the older single-frame variant).
-        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(CellVideoFilter.Build(width, height, fps, fit));
+        psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(CellVideoFilter.Build(width, height, fps, fit, mirror));
         psi.ArgumentList.Add("-");
 
         _process = Process.Start(psi);

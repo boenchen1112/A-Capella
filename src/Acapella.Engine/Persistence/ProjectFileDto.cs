@@ -60,6 +60,7 @@ public class LayerDto
 {
     public int LayerId { get; set; }
     public int CellIndex { get; set; }
+    public bool Mirror { get; set; }
     public string Kind { get; set; } = "";
     public string SourcePath { get; set; } = "";
     public string? Name { get; set; }

@@ -119,6 +119,7 @@ public class ProjectPersistenceService
     {
         LayerId = layer.LayerId,
         CellIndex = layer.CellIndex,
+        Mirror = layer.Mirror,
         Kind = layer.Kind.ToString(),
         SourcePath = layer.SourcePath,
         Name = layer.Name,
@@ -143,6 +144,7 @@ public class ProjectPersistenceService
             TrimStartMs = dto.TrimStartMs,
             TrimEndMs = dto.TrimEndMs,
             CellIndex = dto.CellIndex,
+            Mirror = dto.Mirror,
             AraArchiveKey = dto.AraArchiveKey,
         };
         ApplyMixParametersDto(dto.MixParameters, layer.MixParameters);
