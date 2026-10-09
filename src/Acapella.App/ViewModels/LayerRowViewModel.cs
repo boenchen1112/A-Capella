@@ -14,11 +14,9 @@ namespace Acapella.App.ViewModels;
 /// don't move pixels, but the preview transport plays audio too, so they still need a refresh
 /// while playing (see MainWindow's debounced RefreshPreviewLive).
 ///
-/// v2 removes the standalone manual-offset ("Sync") slider from the UI entirely -- trim now
-/// covers the Editor screen's in/out need, and LayerModel.CalibratedOffsetMs (automatic
-/// round-trip latency correction) stays wired under the hood via GetShiftMs regardless of what
-/// the UI exposes. ManualOffsetMs is intentionally left at its default (0) since v2 gives the
-/// user no control to change it.
+/// Timing: LayerModel.CalibratedOffsetMs (automatic round-trip latency correction) is applied
+/// under the hood via GetShiftMs; the strip's -/+ buttons add a manual nudge on top
+/// (LayerModel.ManualOffsetMs) for layers that still sit slightly off.
 /// </summary>
 public class LayerRowViewModel : INotifyPropertyChanged
 {
@@ -91,6 +89,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SourceStateLabel));
             OnPropertyChanged(nameof(CellColor));
             OnPropertyChanged(nameof(Mirror));
+            NotifyManualOffsetChanged();
             RefreshMixDisplayProperties();
         }
     }
@@ -103,6 +102,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(TrimStartMs));        // visible: the strip's In box
         OnPropertyChanged(nameof(TrimEndText));        // visible: the strip's Out box
+        NotifyManualOffsetChanged();                   // visible: a retake resets the nudge (ReplaceSource)
         OnPropertyChanged(nameof(IconGlyph));          // not bound today; raised so a future binding is right
         OnPropertyChanged(nameof(SourceStateLabel));   // not bound today; same
     }
@@ -192,6 +192,36 @@ public class LayerRowViewModel : INotifyPropertyChanged
     {
         get => Params?.Mute ?? false;
         set { if (Params is null) return; Params.Mute = value; OnPropertyChanged(nameof(Mute)); LiveParamChanged?.Invoke(); }
+    }
+
+    /// <summary>Manual timing nudge in ms: positive plays this layer later than the others.</summary>
+    public double ManualOffsetMs => _layer?.ManualOffsetMs ?? 0;
+
+    /// <summary>"+12 ms" / "-3 ms" / "0 ms" for the strip's timing label.</summary>
+    public string ManualOffsetDisplay => ManualOffsetMs == 0 ? "0 ms" : $"{ManualOffsetMs:+0.#;-0.#} ms";
+
+    /// <summary>Moves this layer earlier or later by deltaMs (see LayerModel.NudgeManualOffset) and
+    /// refreshes the live preview; the caller pushes the undo step.</summary>
+    public void Nudge(double deltaMs)
+    {
+        if (_layer is null) return;
+        _layer.NudgeManualOffset(deltaMs);
+        NotifyManualOffsetChanged();
+        LiveParamChanged?.Invoke();
+    }
+
+    public void ResetNudge()
+    {
+        if (_layer is null || _layer.ManualOffsetMs == 0) return;
+        _layer.ManualOffsetMs = 0;
+        NotifyManualOffsetChanged();
+        LiveParamChanged?.Invoke();
+    }
+
+    private void NotifyManualOffsetChanged()
+    {
+        OnPropertyChanged(nameof(ManualOffsetMs));
+        OnPropertyChanged(nameof(ManualOffsetDisplay));
     }
 
     /// <summary>Flips the picture left-to-right in the preview and export (video only).</summary>
