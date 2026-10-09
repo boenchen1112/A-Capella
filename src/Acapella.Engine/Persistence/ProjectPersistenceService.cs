@@ -26,6 +26,22 @@ public class ProjectPersistenceService
                 AspectRatio = video.AspectRatio.ToString(),
                 FillMode = video.Fit.ToString(),
                 GutterFraction = video.GutterFraction,
+                BackgroundColor = video.Background.Color,
+                BackgroundImagePath = video.Background.ImagePath,
+                BackgroundImageMode = video.Background.ImageMode.ToString(),
+                Watermark = new WatermarkDto
+                {
+                    Enabled = video.Watermark.Enabled,
+                    Text = video.Watermark.Text,
+                    FontFamily = video.Watermark.FontFamily,
+                    SizeFraction = video.Watermark.SizeFraction,
+                    FillColor = video.Watermark.FillColor,
+                    StrokeColor = video.Watermark.StrokeColor,
+                    StrokeFraction = video.Watermark.StrokeFraction,
+                    Shadow = video.Watermark.Shadow,
+                    Opacity = video.Watermark.Opacity,
+                    Corner = video.Watermark.Corner.ToString(),
+                },
             },
             MetronomeBpm = metronomeBpm,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
@@ -47,9 +63,36 @@ public class ProjectPersistenceService
                 LayoutId = layoutId,
                 AspectRatio = Enum.TryParse<AspectRatioOption>(dto.Video.AspectRatio, out var ratio) ? ratio : AspectRatioOption.Wide16x9,
                 Fit = Enum.TryParse<CellFit>(dto.Video.FillMode, out var fit) ? fit : CellFit.Fill,
-                GutterFraction = Math.Clamp(double.IsFinite(dto.Video.GutterFraction) ? dto.Video.GutterFraction : 0, 0, VideoSettings.MaxGutterFraction),
+                GutterFraction = Math.Clamp(Finite(dto.Video.GutterFraction, 0), 0, VideoSettings.MaxGutterFraction),
+                Background = new BackgroundSettings
+                {
+                    Color = dto.Video.BackgroundColor ?? "#000000",
+                    ImagePath = dto.Video.BackgroundImagePath,
+                    ImageMode = Enum.TryParse<BackgroundImageMode>(dto.Video.BackgroundImageMode, out var mode) ? mode : BackgroundImageMode.Stretch,
+                },
+                Watermark = FromWatermarkDto(dto.Video.Watermark),
             };
         return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video);
+    }
+
+    private static double Finite(double value, double fallback) => double.IsFinite(value) ? value : fallback;
+
+    private static WatermarkSettings FromWatermarkDto(WatermarkDto? w)
+    {
+        if (w is null) return new WatermarkSettings();
+        return new WatermarkSettings
+        {
+            Enabled = w.Enabled,
+            Text = w.Text ?? "",
+            FontFamily = string.IsNullOrWhiteSpace(w.FontFamily) ? "Arial" : w.FontFamily,
+            SizeFraction = Math.Clamp(Finite(w.SizeFraction, 0.06), WatermarkSettings.MinSizeFraction, WatermarkSettings.MaxSizeFraction),
+            FillColor = w.FillColor ?? "#FFFFFF",
+            StrokeColor = w.StrokeColor ?? "#000000",
+            StrokeFraction = Math.Clamp(Finite(w.StrokeFraction, 0.08), 0, 0.3),
+            Shadow = w.Shadow,
+            Opacity = Math.Clamp(Finite(w.Opacity, 0.85), 0, 1),
+            Corner = Enum.TryParse<WatermarkCorner>(w.Corner, out var corner) ? corner : WatermarkCorner.BottomRight,
+        };
     }
 
     public void SaveToFile(ProjectFileDto dto, string filePath)

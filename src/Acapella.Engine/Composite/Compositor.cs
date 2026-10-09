@@ -20,14 +20,16 @@ public static class Compositor
     private const float TagFontSize = 14f;
     private const float TagPadding = 4f;
 
-    /// <summary>labels is optional and off by default: export never passes it (export output must
+    /// <summary>style, when given, supplies the background (instead of black) and a watermark drawn
+    /// over the finished cells; null keeps the plain black canvas.
+    /// labels is optional and off by default: export never passes it (export output must
     /// never include the overlay), and preview only passes it when its "show layer labels" toggle
     /// is on.</summary>
-    public static SKBitmap Composite(int canvasWidth, int canvasHeight, IReadOnlyList<SKBitmap> frames, IReadOnlyList<SKRect> cellRects, IReadOnlyList<CellLabel?>? labels = null)
+    public static SKBitmap Composite(int canvasWidth, int canvasHeight, IReadOnlyList<SKBitmap> frames, IReadOnlyList<SKRect> cellRects, IReadOnlyList<CellLabel?>? labels = null, StyleRenderer? style = null)
     {
         var output = new SKBitmap(new SKImageInfo(canvasWidth, canvasHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul));
         using var canvas = new SKCanvas(output);
-        canvas.Clear(SKColors.Black);
+        if (style is not null) style.DrawBackground(canvas); else canvas.Clear(SKColors.Black);
 
         int cellCount = Math.Min(frames.Count, cellRects.Count);
         for (int i = 0; i < cellCount; i++)
@@ -39,6 +41,7 @@ public static class Compositor
                 DrawCellOverlay(canvas, cellRects[i], l);
         }
 
+        style?.DrawWatermark(canvas);
         return output;
     }
 

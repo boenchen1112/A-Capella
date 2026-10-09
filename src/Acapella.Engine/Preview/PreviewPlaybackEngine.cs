@@ -140,6 +140,8 @@ public class PreviewPlaybackEngine : IDisposable
     private volatile GridLayout _layout = GridLayoutCatalog.Grid2x2;
     private double _gutterFraction;
     private volatile CellFit _fit = CellFit.Fit;
+    private StyleRenderer? _style;
+    private VideoSettings? _appliedVideo;
 
     /// <summary>The cell arrangement the composite uses. Frame sources are sized per cell when they
     /// are created, so after changing this (or GutterFraction) call RefreshAsync to rebuild them.</summary>
@@ -152,12 +154,21 @@ public class PreviewPlaybackEngine : IDisposable
     /// sources are sized when they are created, so follow this with RefreshAsync.</summary>
     public void ApplyVideoSettings(VideoSettings video)
     {
+        // Called on every live refresh; rebuilding the style decodes the background image, so skip when nothing changed.
+        if (video == _appliedVideo) return;
+        _appliedVideo = video;
+
         Layout = video.Layout;
         GutterFraction = video.GutterFraction;
         Fit = video.Fit;
         var (w, h) = video.PreviewSize;
         _canvasWidth = w;
         _canvasHeight = h;
+
+        // Rebuilt on every apply (cheap unless a background image is set); the old renderer is
+        // disposed after the swap and goes inert, so a frame mid-draw on the loop thread is safe.
+        var previous = Interlocked.Exchange(ref _style, new StyleRenderer(video.Style, w, h));
+        previous?.Dispose();
     }
 
     /// <summary>Gap between cells as a fraction of the canvas's shorter side (see GridLayout.GetCellRect).</summary>
@@ -325,7 +336,7 @@ public class PreviewPlaybackEngine : IDisposable
                 .Select(l => (CellLabel?)new CellLabel(LayerColorPalette.GetColor(l.CellIndex), l.Name is { Length: > 0 } n ? n : $"Layer {l.CellIndex + 1}"))
                 .ToList();
         }
-        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects, labels);
+        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects, labels, Volatile.Read(ref _style));
         FrameReady?.Invoke(composited);
     }
 
@@ -448,5 +459,6 @@ public class PreviewPlaybackEngine : IDisposable
         _commandThread.Join();
         _audioSink.Dispose();
         _mixEngine.Dispose();
+        Interlocked.Exchange(ref _style, null)?.Dispose();
     }
 }

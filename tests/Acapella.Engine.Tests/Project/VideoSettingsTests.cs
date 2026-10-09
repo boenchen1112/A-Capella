@@ -107,4 +107,52 @@ public class VideoSettingsTests : IDisposable
         Assert.True(session.Undo());
         Assert.Equal(AspectRatioOption.Wide16x9, session.Video.AspectRatio);
     }
+
+    [Fact]
+    public void BackgroundAndWatermark_RoundTripThroughSaveAndOpen()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.Video = session.Video with
+        {
+            Background = new BackgroundSettings { Color = "#123456", ImagePath = "C:/pics/bg.png", ImageMode = BackgroundImageMode.Tile },
+            Watermark = new WatermarkSettings
+            {
+                Enabled = true, Text = "My Choir", FontFamily = "Georgia", SizeFraction = 0.1, FillColor = "#FFEE00",
+                StrokeColor = "#000011", StrokeFraction = 0.12, Shadow = false, Opacity = 0.5, Corner = WatermarkCorner.TopLeft,
+            },
+        };
+        string path = TempPath();
+        session.Save(path);
+
+        var reopened = new ProjectSession(_mixEngine);
+        reopened.Open(path);
+        Assert.Equal(session.Video, reopened.Video);
+    }
+
+    [Fact]
+    public void WatermarkValuesInTheFile_AreClamped()
+    {
+        string path = TempPath();
+        File.WriteAllText(path, "{\"LayoutId\":\"2x2\",\"Video\":{\"Watermark\":{\"Enabled\":true,\"Text\":\"x\",\"SizeFraction\":50,\"Opacity\":-3,\"StrokeFraction\":9,\"Corner\":\"Nowhere\"}},\"Layers\":[]}");
+        var session = new ProjectSession(_mixEngine);
+        session.Open(path);
+
+        var w = session.Video.Watermark;
+        Assert.Equal(WatermarkSettings.MaxSizeFraction, w.SizeFraction);
+        Assert.Equal(0, w.Opacity);
+        Assert.Equal(0.3, w.StrokeFraction);
+        Assert.Equal(WatermarkCorner.BottomRight, w.Corner);
+    }
+
+    [Fact]
+    public void LegacyFile_HasNoWatermarkAndABlackBackground()
+    {
+        string path = TempPath();
+        File.WriteAllText(path, "{\"LayoutId\":\"2x2\",\"Layers\":[]}");
+        var session = new ProjectSession(_mixEngine);
+        session.Open(path);
+        Assert.False(session.Video.Watermark.IsVisible);
+        Assert.Equal("#000000", session.Video.Background.Color);
+        Assert.Null(session.Video.Background.ImagePath);
+    }
 }
