@@ -80,13 +80,13 @@ public sealed class LayerTimeline
     /// <summary>A frame source showing this layer's video from project position positionMs onward,
     /// in sync with AudioInput's samples at the same position. Audio-only layers get a static
     /// placeholder.</summary>
-    public ILayerFrameSource FrameSource(LayerModel layer, int cellWidth, int cellHeight, int fps, double positionMs = 0)
+    public ILayerFrameSource FrameSource(LayerModel layer, int cellWidth, int cellHeight, int fps, double positionMs = 0, CellFit fit = CellFit.Fit)
     {
         if (layer.Kind == LayerKind.UploadedAudioOnly)
             return new StaticFrameSource(PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight));
 
         var window = VideoWindowAt(layer, positionMs);
-        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, window.HoldMs, _ffmpegPath, window.SourceStartMs, layer.TrimEndMs);
+        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, window.HoldMs, _ffmpegPath, window.SourceStartMs, layer.TrimEndMs, fit);
     }
 
     /// <summary>SourceStartMs: where in the source file decoding begins. HoldMs: how long the

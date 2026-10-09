@@ -84,8 +84,8 @@ public class PreviewPlaybackEngine : IDisposable
     private readonly LayerTimeline _timeline;
     private readonly int _sampleRate;
     private readonly int _fps;
-    private readonly int _canvasWidth;
-    private readonly int _canvasHeight;
+    private volatile int _canvasWidth;
+    private volatile int _canvasHeight;
 
     private readonly IPreviewAudioSink _audioSink;
 
@@ -139,10 +139,26 @@ public class PreviewPlaybackEngine : IDisposable
 
     private volatile GridLayout _layout = GridLayoutCatalog.Grid2x2;
     private double _gutterFraction;
+    private volatile CellFit _fit = CellFit.Fit;
 
     /// <summary>The cell arrangement the composite uses. Frame sources are sized per cell when they
     /// are created, so after changing this (or GutterFraction) call RefreshAsync to rebuild them.</summary>
     public GridLayout Layout { get => _layout; set => _layout = value; }
+
+    /// <summary>How videos fill cells that don't match their shape.</summary>
+    public CellFit Fit { get => _fit; set => _fit = value; }
+
+    /// <summary>Applies a project's video settings (layout, gutter, fill mode and canvas size). Frame
+    /// sources are sized when they are created, so follow this with RefreshAsync.</summary>
+    public void ApplyVideoSettings(VideoSettings video)
+    {
+        Layout = video.Layout;
+        GutterFraction = video.GutterFraction;
+        Fit = video.Fit;
+        var (w, h) = video.PreviewSize;
+        _canvasWidth = w;
+        _canvasHeight = h;
+    }
 
     /// <summary>Gap between cells as a fraction of the canvas's shorter side (see GridLayout.GetCellRect).</summary>
     public double GutterFraction { get => Volatile.Read(ref _gutterFraction); set => Volatile.Write(ref _gutterFraction, value); }
@@ -328,10 +344,11 @@ public class PreviewPlaybackEngine : IDisposable
     {
         var layout = Layout;
         double gutter = GutterFraction;
+        var fit = Fit;
         return _layers.Select(layer =>
         {
             var (cellWidth, cellHeight) = layout.GetCellPixelSize(layer.CellIndex, _canvasWidth, _canvasHeight, gutter);
-            return _timeline.FrameSource(layer, cellWidth, cellHeight, _fps, positionMs);
+            return _timeline.FrameSource(layer, cellWidth, cellHeight, _fps, positionMs, fit);
         }).ToList();
     }
 
