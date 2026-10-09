@@ -109,6 +109,8 @@
                             <CheckBox Content="M" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,6,0" MouseEnter="Hint_MouseEnter" Tag="Mute this layer."/>
                             <CheckBox Content="S" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click" MouseEnter="Hint_MouseEnter" Tag="Solo this layer."/>
                         </StackPanel>
+                        <CheckBox Content="Mirror" FontSize="9" IsChecked="{Binding Mirror, Mode=TwoWay}" Click="CommitCheckBox_Click" HorizontalAlignment="Center" Margin="0,0,0,4"
+                                  MouseEnter="Hint_MouseEnter" Tag="Flip this layer's picture left-to-right."/>
                         <!-- Monitor: vertical, same height as the Volume fader below, so both
                              read as a matched pair (per redesign feedback). -->
                         <ProgressBar Orientation="Vertical" Value="{Binding MeterLevel}" Minimum="0" Maximum="1" Height="150" Width="14" HorizontalAlignment="Center" Margin="0,0,0,4"

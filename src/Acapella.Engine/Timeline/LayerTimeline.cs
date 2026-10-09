@@ -86,7 +86,7 @@ public sealed class LayerTimeline
             return new StaticFrameSource(PlaceholderRenderer.CreateAudioOnlyPlaceholder(cellWidth, cellHeight));
 
         var window = VideoWindowAt(layer, positionMs);
-        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, window.HoldMs, _ffmpegPath, window.SourceStartMs, layer.TrimEndMs, fit);
+        return new VideoFrameStreamSource(layer.SourcePath, cellWidth, cellHeight, fps, window.HoldMs, _ffmpegPath, window.SourceStartMs, layer.TrimEndMs, fit, layer.Mirror);
     }
 
     /// <summary>SourceStartMs: where in the source file decoding begins. HoldMs: how long the

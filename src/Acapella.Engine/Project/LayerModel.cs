@@ -33,6 +33,10 @@ public class LayerModel
     /// index, not hardcoded positions). Defaults to recording order, matching the layout's cell order.</summary>
     public int CellIndex { get; set; }
 
+    /// <summary>Flip this layer's picture left-to-right (selfie-style webcam footage reads naturally
+    /// mirrored). Video only; a property of the slot rather than the take, so a retake keeps it.</summary>
+    public bool Mirror { get; set; }
+
     /// <summary>Melodyne ARA archive key, keyed by (layerId, sourceAudioHash) once Phase 2A lands.
     /// Null until then -- this field exists now so Phase 5's persistence format doesn't need to
     /// change shape when Phase 2A adds it.</summary>

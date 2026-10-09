@@ -90,6 +90,7 @@ public class LayerRowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(MixingHeaderLabel));
             OnPropertyChanged(nameof(SourceStateLabel));
             OnPropertyChanged(nameof(CellColor));
+            OnPropertyChanged(nameof(Mirror));
             RefreshMixDisplayProperties();
         }
     }
@@ -191,6 +192,13 @@ public class LayerRowViewModel : INotifyPropertyChanged
     {
         get => Params?.Mute ?? false;
         set { if (Params is null) return; Params.Mute = value; OnPropertyChanged(nameof(Mute)); LiveParamChanged?.Invoke(); }
+    }
+
+    /// <summary>Flips the picture left-to-right in the preview and export (video only).</summary>
+    public bool Mirror
+    {
+        get => _layer?.Mirror ?? false;
+        set { if (_layer is null) return; _layer.Mirror = value; OnPropertyChanged(nameof(Mirror)); LiveParamChanged?.Invoke(); }
     }
 
     public bool Solo

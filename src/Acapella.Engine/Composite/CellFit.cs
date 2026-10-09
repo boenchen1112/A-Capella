@@ -12,11 +12,11 @@ public enum CellFit
 /// <summary>The ffmpeg -vf chain that turns a source video into raw cell-sized frames.</summary>
 public static class CellVideoFilter
 {
-    public static string Build(int width, int height, int fps, CellFit fit)
+    public static string Build(int width, int height, int fps, CellFit fit, bool mirror = false)
     {
         string scaleAndShape = fit == CellFit.Fill
             ? $"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
             : $"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black";
-        return $"{scaleAndShape},fps={fps}";
+        return $"{(mirror ? "hflip," : "")}{scaleAndShape},fps={fps}";
     }
 }
