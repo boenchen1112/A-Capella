@@ -17,6 +17,15 @@ public class LayerModel
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 
+    /// <summary>How far the manual timing nudge may move a layer either way.</summary>
+    public const double MaxManualOffsetMs = 2000;
+
+    /// <summary>Moves this layer later (positive) or earlier (negative) against the others by deltaMs,
+    /// clamped to +/-MaxManualOffsetMs. Rounded to a microsecond-free value so repeated 0.1 ms
+    /// steps don't accumulate floating-point dust into the saved file.</summary>
+    public void NudgeManualOffset(double deltaMs) =>
+        ManualOffsetMs = Math.Clamp(Math.Round(ManualOffsetMs + deltaMs, 3), -MaxManualOffsetMs, MaxManualOffsetMs);
+
     /// <summary>User-editable display name (v5 P2 task 1). Null/blank means "not renamed yet" --
     /// callers fall back to a positional default (e.g. "Layer {CellIndex + 1}") rather than baking
     /// that default in here, since the model doesn't know which UI slot it's shown in.</summary>

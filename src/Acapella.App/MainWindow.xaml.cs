@@ -302,6 +302,30 @@ public partial class MainWindow : Window
 
     private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
+    // ----- Per-layer timing nudge: -/+ on the strip (one undo step per click) -----
+
+    private static double NudgeStepMs() => (Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? 1 : 10;
+
+    private void NudgeEarlierButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, -NudgeStepMs());
+
+    private void NudgeLaterButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, NudgeStepMs());
+
+    private void NudgeRow(object sender, double deltaMs)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        row.Nudge(deltaMs);
+        StatusText.Text = $"{row.DisplayName} timing: {row.ManualOffsetDisplay}.";
+        PushUndoSnapshot();
+    }
+
+    private void NudgeLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.ManualOffsetMs == 0) return;
+        row.ResetNudge();
+        StatusText.Text = $"{row.DisplayName} timing reset.";
+        PushUndoSnapshot();
+    }
+
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
     private void LayerNameTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
