@@ -1,12 +1,16 @@
 # Acapella
 
-A Windows desktop app for recording and mixing multi-layer acapella videos: one singer records up to four layers (melody, harmony, bass, beatbox…), and Acapella combines them into a single 2×2 grid video with all layers singing in sync.
+A Windows desktop app for recording and mixing multi-layer acapella videos: one singer records up to nine layers (melody, harmony, bass, beatbox…), and Acapella combines them into a single grid video with all layers singing in sync.
 
 ## Features
 
-- **Record or upload up to four layers.** Layer 1 can be recorded live (webcam + mic) or uploaded from a file. Later layers are recorded while the earlier ones play back through headphones.
+- **Record or upload up to nine layers.** Layer 1 can be recorded live (webcam + mic) or uploaded from a file. Later layers are recorded while the earlier ones play back through headphones.
 - **Automatic latency calibration.** A one-time click-track measurement compensates for recording delay, so layers recorded minutes apart line up sample-accurately.
-- **Optional metronome** with adjustable BPM.
+- **Optional metronome** with adjustable BPM and time signature (2/4, 3/4, 4/4, 6/8); the first beat of each bar is accented.
+- **Grid layouts.** Over 35 built-in arrangements for 1 to 9 layers (rows, columns, one big cell beside or above smaller ones, 2×2, 3×3…) picked from a thumbnail chooser (Layout ▸ Choose layout). The layout grows automatically when you add more layers than it has cells.
+- **Video settings** (Layout ▸ Video settings): canvas shape (16:9, 1:1, 4:3 or 9:16), whether videos fill their cell (cropped) or fit inside it (letterboxed), an adjustable gap between cells, a background (solid color, or a stretched or tiled image of your own) and a text watermark with font, size, colors, outline, shadow, opacity and position. Preview and export use the same renderer, so what you see is what you get. Projects saved before these settings existed open with their original look.
+- **Per-layer controls:** mirror a layer's picture, and nudge its timing earlier or later in 10 ms steps (1 ms with Shift) to line up a take that still sits slightly off.
+- **Offline collaboration.** File ▸ Export collab package bundles a project and all its media into a single `.acapella.zip` that you can send to a friend. They open it with File ▸ Import layers from project or package, tick the layers they want and add their own; sending a package back works the same way. No server or account is involved.
 - **Trim with a live preview.** The 2×2 composited preview updates as trims, mixes and effects change; there's no render-to-see step.
 - **Per-layer effects chain:** noise gate, EQ, compressor, limiter, reverb, pan and pitch correction, each switchable per layer, with level meters on the mixing screen.
 - **VST3 plugin hosting.** If FabFilter Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G or Pro-R 2 is installed, it is used for its slot and opened in its own editor window. Otherwise Acapella falls back to its built-in processing.
@@ -71,7 +75,18 @@ tools/HardwareChecks       Manual real-hardware checks (devices, sync, throughpu
    dotnet run --project src/Acapella.App
    ```
 
-   Tests that need a specific FabFilter or Melodyne plugin are skipped, with a message, when that plugin isn't installed.
+   Tests that need a specific FabFilter or Melodyne plugin are skipped, with a message, when that plugin isn't installed. The engine tests that draw watermark text return early on a machine with no installed fonts (for example a bare Linux container).
+
+## Roadmap (not built yet)
+
+Ideas that need a hosted backend or are otherwise larger than a desktop-only change:
+
+- Accounts and cloud-hosted collaboration: share a link instead of a zip, and invite people to record into your project.
+- A feed, profiles, likes and comments for finished videos.
+- Searching for songs and backing tracks to sing along with.
+- One-click sharing to social networks.
+- Recording length presets with an automatic stop and countdown.
+- Carrying Melodyne (ARA) pitch edits across when layers are imported from another project; today an imported layer is analysed afresh.
 
 ## Third-party plugins
 
