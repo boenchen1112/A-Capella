@@ -303,6 +303,46 @@ public class PreviewPlaybackEngineTests
         }
     }
 
+    /// <summary>Video settings reach the preview: the canvas takes the ratio's size, the layer sits in
+    /// the cell its CellIndex names within the chosen layout, and the empty cell shows the background.</summary>
+    [Fact]
+    public async Task ApplyVideoSettings_ResizesTheCanvas_PlacesTheLayerAndShowsTheBackground()
+    {
+        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 1);
+        try
+        {
+            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.RecordedAV, SourcePath = path, CellIndex = 1 };
+            using var engine = new PreviewPlaybackEngine(canvasWidth: 128, canvasHeight: 128, fps: 10, audioSink: new FakeAudioSink(), hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
+
+            SKBitmap? latest = null;
+            var frameLock = new object();
+            engine.FrameReady += frame => { lock (frameLock) { latest?.Dispose(); latest = frame; } };
+
+            engine.ApplyVideoSettings(new VideoSettings
+            {
+                LayoutId = "2-cols",
+                AspectRatio = AspectRatioOption.Square1x1,
+                GutterFraction = 0,
+                Background = new Acapella.Engine.Composite.BackgroundSettings { Color = "#0000FF" },
+            });
+            await engine.RefreshAsync(new[] { layer });
+
+            lock (frameLock)
+            {
+                Assert.NotNull(latest);
+                Assert.Equal((540, 540), (latest!.Width, latest.Height));
+                Assert.Equal(new SKColor(0, 0, 255), latest.GetPixel(135, 270));   // cell 0 is empty: background
+                var right = latest.GetPixel(405, 270);                              // cell 1: the red clip
+                Assert.True(right.Red > 200 && right.Blue < 60, $"expected red in cell 1, got {right}");
+                latest.Dispose();
+            }
+        }
+        finally
+        {
+            DeleteWithRetry(tempDir);
+        }
+    }
+
     /// <summary>Regression test for audit B1: MainWindow calls SetLayers/Seek/Play/Stop from
     /// several different threads (debounced refresh, transport clicks, the engine's own
     /// frame-loop thread on natural stop). 50 rapid interleaved calls from parallel tasks must not

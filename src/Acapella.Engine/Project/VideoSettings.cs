@@ -21,6 +21,11 @@ public sealed record VideoSettings
     public string LayoutId { get; init; } = GridLayoutCatalog.LegacyId;
     public AspectRatioOption AspectRatio { get; init; } = AspectRatioOption.Wide16x9;
     public CellFit Fit { get; init; } = CellFit.Fill;
+    public BackgroundSettings Background { get; init; } = new();
+    public WatermarkSettings Watermark { get; init; } = new();
+
+    /// <summary>The background and watermark, in the form the renderer takes.</summary>
+    public CompositeStyle Style => new(Background, Watermark);
 
     /// <summary>Gap between cells as a fraction of the canvas's shorter side (0 to MaxGutterFraction).</summary>
     public double GutterFraction { get; init; } = 0.01;

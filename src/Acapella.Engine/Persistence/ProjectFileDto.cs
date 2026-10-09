@@ -36,6 +36,24 @@ public class VideoDto
     public string AspectRatio { get; set; } = nameof(Project.AspectRatioOption.Wide16x9);
     public string FillMode { get; set; } = nameof(Composite.CellFit.Fill);
     public double GutterFraction { get; set; } = 0.01;
+    public string BackgroundColor { get; set; } = "#000000";
+    public string? BackgroundImagePath { get; set; }
+    public string BackgroundImageMode { get; set; } = nameof(Composite.BackgroundImageMode.Stretch);
+    public WatermarkDto Watermark { get; set; } = new();
+}
+
+public class WatermarkDto
+{
+    public bool Enabled { get; set; }
+    public string Text { get; set; } = "";
+    public string FontFamily { get; set; } = "Arial";
+    public double SizeFraction { get; set; } = 0.06;
+    public string FillColor { get; set; } = "#FFFFFF";
+    public string StrokeColor { get; set; } = "#000000";
+    public double StrokeFraction { get; set; } = 0.08;
+    public bool Shadow { get; set; } = true;
+    public double Opacity { get; set; } = 0.85;
+    public string Corner { get; set; } = nameof(Composite.WatermarkCorner.BottomRight);
 }
 
 public class LayerDto

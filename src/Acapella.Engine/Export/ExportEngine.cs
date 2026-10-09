@@ -50,6 +50,7 @@ public class ExportEngine : IDisposable
     {
         var layout = video.Layout;
         double gutterFraction = video.GutterFraction;
+        using var style = new StyleRenderer(video.Style, width, height);
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
 
@@ -106,7 +107,7 @@ public class ExportEngine : IDisposable
                 for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++)
                 {
                     var frames = frameSources.Select(s => s.GetNextFrame()).ToList();
-                    using var composite = Compositor.Composite(width, height, frames, cellRects);
+                    using var composite = Compositor.Composite(width, height, frames, cellRects, style: style);
                     WriteBitmapPixels(stdin, composite, pixelBuffer);
 
                     if (frameIndex % fps == 0 || frameIndex == totalFrames - 1)
