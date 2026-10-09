@@ -19,6 +19,10 @@ public class ProjectFileDto
 
     public double MetronomeBpm { get; set; } = 120;
 
+    /// <summary>Metronome meter (e.g. 3 and 4 for 3/4). Missing in older files, which are 4/4.</summary>
+    public int MetronomeBeatsPerBar { get; set; } = 4;
+    public int MetronomeBeatUnit { get; set; } = 4;
+
     /// <summary>Bus gain applied after summing all layers, before the master limiter (P1 task 4) --
     /// used identically by preview and export so exports sound like the preview.</summary>
     public float MasterVolumeDb { get; set; } = 0f;

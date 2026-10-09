@@ -238,6 +238,9 @@
                         <TextBox x:Name="MetronomeBpmTextBox" Text="130.000" Width="64" VerticalAlignment="Center"
                                  LostFocus="MetronomeBpmTextBox_LostFocus" MouseEnter="Hint_MouseEnter" Tag="Metronome tempo (BPM)."
                                  shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                        <ComboBox x:Name="TimeSignatureCombo" Width="56" Margin="6,0,0,0" VerticalAlignment="Center"
+                                  SelectionChanged="TimeSignatureCombo_SelectionChanged" MouseEnter="Hint_MouseEnter" Tag="Metronome time signature. The first beat of each bar is accented."
+                                  shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
 
                         <TextBlock x:Name="CurrentTimeText" Text="0:00:00" Style="{StaticResource ToolbarText}" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
                                    MouseEnter="Hint_MouseEnter" Tag="Current playback position."/>

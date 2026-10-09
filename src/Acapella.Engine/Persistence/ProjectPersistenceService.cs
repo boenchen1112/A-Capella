@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Acapella.Engine.Composite;
+using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Project;
 
@@ -15,7 +16,7 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, VideoSettings? video = null)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, VideoSettings? video = null, TimeSignature? timeSignature = null)
     {
         video ??= new VideoSettings();
         return new ProjectFileDto
@@ -44,13 +45,15 @@ public class ProjectPersistenceService
                 },
             },
             MetronomeBpm = metronomeBpm,
+            MetronomeBeatsPerBar = (timeSignature ?? TimeSignature.FourFour).BeatsPerBar,
+            MetronomeBeatUnit = (timeSignature ?? TimeSignature.FourFour).BeatUnit,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
             Layers = layers.Layers.Select(ToLayerDto).ToList(),
         };
     }
 
-    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video) FromDto(ProjectFileDto dto)
+    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video, TimeSignature TimeSignature) FromDto(ProjectFileDto dto)
     {
         var layers = new LayerCollection();
         layers.Restore(dto.Layers.Select(FromLayerDto));
@@ -72,7 +75,7 @@ public class ProjectPersistenceService
                 },
                 Watermark = FromWatermarkDto(dto.Video.Watermark),
             };
-        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video);
+        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video, new TimeSignature(dto.MetronomeBeatsPerBar, dto.MetronomeBeatUnit).Sanitized());
     }
 
     private static double Finite(double value, double fallback) => double.IsFinite(value) ? value : fallback;

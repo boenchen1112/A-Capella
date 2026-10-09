@@ -1,5 +1,6 @@
 using Acapella.Engine.Composite;
 using Acapella.Engine.Host;
+using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Persistence;
 using Acapella.Engine.Project;
@@ -154,5 +155,55 @@ public class VideoSettingsTests : IDisposable
         Assert.False(session.Video.Watermark.IsVisible);
         Assert.Equal("#000000", session.Video.Background.Color);
         Assert.Null(session.Video.Background.ImagePath);
+    }
+
+    // ----- Metronome meter (stored with the project like the BPM) -----
+
+    [Fact]
+    public void TimeSignature_DefaultsTo4_4()
+    {
+        Assert.Equal(TimeSignature.FourFour, new ProjectSession(_mixEngine).MetronomeTimeSignature);
+    }
+
+    [Fact]
+    public void TimeSignature_RoundTripsThroughSaveAndOpen_AndIsUndoable()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.MetronomeTimeSignature = TimeSignature.SixEight;
+        session.CommitEdit();
+        string path = TempPath();
+        session.Save(path);
+
+        var reopened = new ProjectSession(_mixEngine);
+        reopened.Open(path);
+        Assert.Equal(TimeSignature.SixEight, reopened.MetronomeTimeSignature);
+
+        Assert.True(session.Undo());
+        Assert.Equal(TimeSignature.FourFour, session.MetronomeTimeSignature);
+    }
+
+    [Fact]
+    public void FileWithoutAMeter_OpensAs4_4_AndNonsenseIsSanitized()
+    {
+        string old = TempPath();
+        File.WriteAllText(old, "{\"LayoutId\":\"2x2\",\"Layers\":[]}");
+        var session = new ProjectSession(_mixEngine);
+        session.Open(old);
+        Assert.Equal(TimeSignature.FourFour, session.MetronomeTimeSignature);
+
+        string weird = TempPath();
+        File.WriteAllText(weird, "{\"LayoutId\":\"2x2\",\"MetronomeBeatsPerBar\":0,\"MetronomeBeatUnit\":7,\"Layers\":[]}");
+        session.Open(weird);
+        Assert.Equal(new TimeSignature(1, 4), session.MetronomeTimeSignature);
+    }
+
+    [Fact]
+    public void ChangingTheMeter_MarksTheProjectDirty_ButReassigningTheSameOneDoesNot()
+    {
+        var session = new ProjectSession(_mixEngine);
+        session.MetronomeTimeSignature = TimeSignature.FourFour;
+        Assert.False(session.IsDirty);
+        session.MetronomeTimeSignature = TimeSignature.ThreeFour;
+        Assert.True(session.IsDirty);
     }
 }

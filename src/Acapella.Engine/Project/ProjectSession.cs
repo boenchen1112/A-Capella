@@ -1,4 +1,5 @@
 using Acapella.Engine.Composite;
+using Acapella.Engine.Metronome;
 using Acapella.Engine.Mix;
 using Acapella.Engine.Persistence;
 
@@ -34,11 +35,19 @@ public sealed class ProjectSession
     private VideoSettings _video = new();
     private double _metronomeBpm = 120;
     private float _masterVolumeDb;
+    private TimeSignature _timeSignature = TimeSignature.FourFour;
 
     public double MetronomeBpm
     {
         get => _metronomeBpm;
         set { if (_metronomeBpm == value) return; _metronomeBpm = value; MarkDirty(); }
+    }
+
+    /// <summary>The metronome's meter (clicks per bar and which note gets the click).</summary>
+    public TimeSignature MetronomeTimeSignature
+    {
+        get => _timeSignature;
+        set { value = value.Sanitized(); if (_timeSignature == value) return; _timeSignature = value; MarkDirty(); }
     }
 
     /// <summary>How the layers are composited (layout today; more in later builds).</summary>
@@ -120,14 +129,14 @@ public sealed class ProjectSession
     {
         foreach (var layer in Layers.Layers)
             _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
-        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, Video);
+        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, Video, MetronomeTimeSignature);
     }
 
     /// <summary>A deep copy of the layers, master volume and video settings, unaffected by later
     /// edits -- for a background export racing the user (M7).</summary>
     public (LayerCollection Layers, float MasterVolumeDb, VideoSettings Video) SnapshotForExport()
     {
-        var (layers, _, _, masterVolumeDb, video) = _persistence.FromDto(Snapshot());
+        var (layers, _, _, masterVolumeDb, video, _) = _persistence.FromDto(Snapshot());
         return (layers, masterVolumeDb, video);
     }
 
@@ -204,13 +213,14 @@ public sealed class ProjectSession
         return true;
     }
 
-    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video) loaded)
+    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video, TimeSignature TimeSignature) loaded)
     {
         Layers.Restore(loaded.Layers.Layers);
         MetronomeBpm = loaded.MetronomeBpm;
         LatencyOffsetMsUsed = loaded.LatencyOffsetMsUsed;
         MasterVolumeDb = loaded.MasterVolumeDb;
         Video = loaded.Video;
+        MetronomeTimeSignature = loaded.TimeSignature;
 
         foreach (var layer in Layers.Layers)
             _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
