@@ -73,18 +73,6 @@ public class TrimHandleXConverter : IMultiValueConverter
         throw new NotSupportedException();
 }
 
-/// <summary>One-way: is LayerRowViewModel.PitchMode equal to the mode named by ConverterParameter
-/// ("Melodyne" or "Auto")? Drives the channel panel's two-button segmented switch; the switch's
-/// own Click handlers (not a TwoWay binding) are what actually change PitchMode.</summary>
-public class PitchModeEqualsConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value is not null && string.Equals(value.ToString(), parameter as string, StringComparison.OrdinalIgnoreCase);
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        throw new NotSupportedException();
-}
-
 /// <summary>0..1 unit level (LayerRowViewModel.MeterLevel) to a pixel height within a fixed-height
 /// meter track, for the lane's small vertical level bar. ConverterParameter is the track's full
 /// height in device-independent pixels (a string, parsed once).</summary>

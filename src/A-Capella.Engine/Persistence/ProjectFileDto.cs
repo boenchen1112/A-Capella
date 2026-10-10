@@ -27,6 +27,9 @@ public class ProjectFileDto
     /// used identically by preview and export so exports sound like the preview.</summary>
     public float MasterVolumeDb { get; set; } = 0f;
 
+    /// <summary>The master limiter's FabFilter factory preset; null = off (a fixed safety ceiling still applies).</summary>
+    public Presets.PresetRef? MasterLimiterPreset { get; set; }
+
     /// <summary>The latency offset (ms) that was actually used when this project's layers were
     /// recorded -- distinct from SettingsService's per-device-pair calibration store, which is
     /// about recalibrating future sessions, not remembering what a saved project used.</summary>
@@ -78,35 +81,14 @@ public class MixParametersDto
     public bool Mute { get; set; }
     public bool Solo { get; set; }
     public float Pan { get; set; }
-    public float LowShelfGainDb { get; set; }
-    public float MidBellGainDb { get; set; }
-    public float HighShelfGainDb { get; set; }
-    // v7 Q0 task 4: defaults to true (unlike LayerMixParameters' live default of false) so a
-    // project file saved before this flag existed -- where the JSON simply lacks the property --
-    // deserializes as "enabled", matching that gate/EQ were unconditionally always-on before this
-    // flag was introduced. A project saved after this flag exists always writes an explicit
-    // true/false, so this default only ever engages for old files.
-    public bool NoiseGateEnabled { get; set; } = true;
-    public float NoiseGateThresholdDb { get; set; } = -60f;
-    public float NoiseGateReleaseMs { get; set; } = 100f;
-    public bool CompressorEnabled { get; set; }
-    public float CompressorThresholdDb { get; set; } = -18f;
-    public float CompressorRatio { get; set; } = 2f;
-    public bool EqEnabled { get; set; } = true;
-    public bool LimiterEnabled { get; set; }
-    public float LimiterCeilingDb { get; set; } = -0.3f;
-    public float LimiterGainDb { get; set; }
+    // Each effect is a choice of FabFilter factory preset; null = off.
+    public Presets.PresetRef? CompressorPreset { get; set; }
+    public Presets.PresetRef? EqPreset { get; set; }
+    public Presets.PresetRef? DeEsserPreset { get; set; }
+    public Presets.PresetRef? ReverbPreset { get; set; }
+
+    /// <summary>Kept so files that carry it still load; the value is ignored (no pitch tool on Windows).</summary>
     public string PitchBackend { get; set; } = "None";
-
-    // v6 P3: hosted FabFilter stage state, base64-encoded VST3 state chunks (null if never hosted
-    // or never tweaked away from factory default). See LayerMixParameters' matching byte[] fields.
-    public string? NoiseGateHostedStateBase64 { get; set; }
-    public string? CompressorHostedStateBase64 { get; set; }
-    public string? EqHostedStateBase64 { get; set; }
-    public string? LimiterHostedStateBase64 { get; set; }
-
-    public bool ReverbEnabled { get; set; }
-    public string? ReverbHostedStateBase64 { get; set; }
 
     /// <summary>Only the flag is saved -- the frozen buffer itself is re-rendered after load, not
     /// persisted. Defaults false, so a file saved before this field existed (plain JSON absence)

@@ -58,6 +58,27 @@ internal static class NativeHostBridge
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_set_parameter_value(IntPtr handle, int index, float value);
 
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_get_parameter_text(IntPtr handle, int index, float value, byte[] outText, int outTextSize);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern float aca_get_parameter_value_for_text(IntPtr handle, int index, string text);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_get_parameter_num_steps(IntPtr handle, int index);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_get_program_count(IntPtr handle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int aca_get_program_name(IntPtr handle, int index, byte[] outName, int outNameSize);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_get_current_program(IntPtr handle);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void aca_set_current_program(IntPtr handle, int index);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern void aca_reset(IntPtr handle);
 

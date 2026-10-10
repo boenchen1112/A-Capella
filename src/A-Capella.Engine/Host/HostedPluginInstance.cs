@@ -90,6 +90,28 @@ public sealed class HostedPluginInstance : IHostedPlugin
 
     public void SetParameterValue(int index, float value) => NativeHostBridge.aca_set_parameter_value(_handle, index, value);
 
+    public string GetParameterText(int index, float normalizedValue)
+    {
+        var buf = new byte[256];
+        NativeHostBridge.aca_get_parameter_text(_handle, index, normalizedValue, buf, buf.Length);
+        return ToString(buf);
+    }
+
+    public float GetParameterValueForText(int index, string text) => NativeHostBridge.aca_get_parameter_value_for_text(_handle, index, text);
+
+    public int GetParameterNumSteps(int index) => NativeHostBridge.aca_get_parameter_num_steps(_handle, index);
+
+    public int ProgramCount => Math.Max(0, NativeHostBridge.aca_get_program_count(_handle));
+
+    public string GetProgramName(int index)
+    {
+        var buf = new byte[256];
+        NativeHostBridge.aca_get_program_name(_handle, index, buf, buf.Length);
+        return ToString(buf);
+    }
+
+    public void SetProgram(int index) => NativeHostBridge.aca_set_current_program(_handle, index);
+
     /// <summary>Opens the plugin's own editor in its own top-level window (P3a task 7 -- never
     /// embedded in WPF). Must be called on the same thread as HostedPluginInstance.Initialize()
     /// (the WPF UI thread) -- JUCE's MessageManager is bound to whichever thread that was.

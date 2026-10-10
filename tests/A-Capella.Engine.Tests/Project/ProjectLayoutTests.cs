@@ -121,7 +121,7 @@ public class ProjectLayoutTests : IDisposable
     {
         var session = new ProjectSession(_mixEngine);
         Assert.True(session.TrySetLayout("3-cols", out _));
-        var (_, _, _, _, video) = session.SnapshotForExport();
+        var (_, _, _, _, video, _) = session.SnapshotForExport();
         Assert.Equal("3-cols", video.LayoutId);
     }
 

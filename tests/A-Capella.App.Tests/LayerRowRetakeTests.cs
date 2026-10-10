@@ -4,10 +4,8 @@ using Xunit;
 
 namespace A_Capella.App.Tests;
 
-/// <summary>Retake spec D5: LayerRowViewModel.NotifySourceReplaced raises exactly the source- and
-/// trim-derived properties, and never Layer/HasSource -- unlike the `Layer = Layer` "refresh" it
-/// deliberately avoids, which would clear the poll-tracking a still-open FabFilter editor needs
-/// (bug audit #5).</summary>
+/// <summary>LayerRowViewModel.NotifySourceReplaced raises exactly the source- and trim-derived
+/// properties, and never Layer/HasSource.</summary>
 public class LayerRowRetakeTests
 {
     [StaFact]

@@ -38,7 +38,6 @@
         <conv:FullSourceBarGeometryConverter x:Key="FullSourceBarGeom"/>
         <conv:TrimmedBarGeometryConverter x:Key="TrimmedBarGeom"/>
         <conv:UnitToHeightConverter x:Key="UnitToHeight"/>
-        <conv:PitchModeEqualsConverter x:Key="PitchModeEquals"/>
         <conv:TrimHandleXConverter x:Key="TrimHandleX"/>
 
         <!-- A lane's drag-to-trim handle: a plain filled bar, no chrome beyond that; it's small
@@ -299,6 +298,11 @@
                                   Checked="MonitorToggle_Changed" Unchecked="MonitorToggle_Changed" Margin="0,0,16,0"
                                   shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
 
+                    <TextBlock Text="Limiter" FontSize="11" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="MasterLimiterCombo" Width="130" VerticalAlignment="Center" Margin="0,0,16,0" DisplayMemberPath="Label"
+                              IsSynchronizedWithCurrentItem="False" SelectionChanged="MasterLimiterCombo_SelectionChanged"
+                              shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                              ToolTip="The one limiter on the whole mix (FabFilter Pro-L 2)."/>
                     <TextBlock Text="Master" FontSize="11" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ProgressBar x:Name="ToolbarPeakMeter" Minimum="0" Maximum="1" Value="0" Width="80" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"/>
                     <Slider x:Name="MasterVolumeSlider" Minimum="-60" Maximum="12" Value="0" Width="100" VerticalAlignment="Center"
@@ -469,101 +473,62 @@
                     </Grid>
 
                     <Border DockPanel.Dock="Top" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,10,16,4">
-                        <StackPanel>
-                            <TextBlock Text="Effects" FontFamily="{StaticResource PlexSansSemiBold}" FontSize="13"/>
-                            <TextBlock Text="Signal flows top to bottom" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                        </StackPanel>
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right" x:Name="PackagesButton" Content="Packages ▾" Click="PackagesButton_Click" Style="{StaticResource AccentButton}" Padding="10,4"
+                                    ToolTip="Apply a saved set of effects to this layer, or save this layer's effects as a package."/>
+                            <StackPanel>
+                                <TextBlock Text="Effects" FontFamily="{StaticResource PlexSansSemiBold}" FontSize="13"/>
+                                <TextBlock Text="Pick a preset for each effect. Signal flows top to bottom." FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                            </StackPanel>
+                        </DockPanel>
                     </Border>
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <!-- Scoped to just these six rows (MixingScreenTests.FxPanel_HasNoSliderBoundToGainDb):
+                        <!-- Scoped to just the effect rows (MixingScreenTests.FxPanel_HasNoSliderBoundToGainDb):
                              the Volume slider above (bound to GainDb) must stay outside this element. -->
-                        <StackPanel x:Name="FxPanel" Margin="16,8" IsEnabled="{Binding IsNotFrozen}">
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
-                                <DockPanel LastChildFill="True">
-                                    <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding NoiseGateEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                    <Button DockPanel.Dock="Right" Content="Open" Click="OpenNoiseGateEditor_Click" Style="{StaticResource AccentButton}" Padding="8,4"/>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="Noise gate" FontFamily="{StaticResource PlexSansMedium}"/>
-                                        <TextBlock Text="FabFilter Pro-G" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
-                                <DockPanel LastChildFill="True">
-                                    <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding CompressorEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                    <Button DockPanel.Dock="Right" Content="Open" Click="OpenCompressorEditor_Click" Style="{StaticResource AccentButton}" Padding="8,4"/>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="Compressor" FontFamily="{StaticResource PlexSansMedium}"/>
-                                        <TextBlock Text="FabFilter Pro-C 3" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
-                                <DockPanel LastChildFill="True">
-                                    <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding EqEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                    <Button DockPanel.Dock="Right" Content="Open" Click="OpenEqEditor_Click" Style="{StaticResource AccentButton}" Padding="8,4"/>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="EQ" FontFamily="{StaticResource PlexSansMedium}"/>
-                                        <TextBlock Text="FabFilter Pro-Q 4" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
-                                <DockPanel LastChildFill="True">
-                                    <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding ReverbEnabled, Mode=TwoWay}" IsEnabled="{Binding IsReverbHosted}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                    <Button DockPanel.Dock="Right" Content="Open" Click="OpenReverbEditor_Click" Style="{StaticResource AccentButton}" Padding="8,4"/>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="Reverb" FontFamily="{StaticResource PlexSansMedium}"/>
-                                        <TextBlock Text="FabFilter Pro-R 2 · no native fallback" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
-                                <StackPanel>
-                                    <DockPanel LastChildFill="True">
-                                        <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding LimiterEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                        <Button DockPanel.Dock="Right" Content="Open" Click="OpenLimiterEditor_Click" Style="{StaticResource AccentButton}" Padding="8,4"/>
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Limiter" FontFamily="{StaticResource PlexSansMedium}"/>
-                                            <TextBlock Text="Built-in · Pro-L 2 not installed" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                        <ItemsControl x:Name="FxPanel" Margin="16,8" ItemsSource="{Binding Effects}" IsEnabled="{Binding IsNotFrozen}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontFamily="{StaticResource PlexSansMedium}"/>
+                                            <TextBlock Text="{Binding PluginLabel}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
+                                            <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+                                                      DisplayMemberPath="Label" IsSynchronizedWithCurrentItem="False"
+                                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
+                                                <ComboBox.GroupStyle>
+                                                    <GroupStyle>
+                                                        <GroupStyle.HeaderTemplate>
+                                                            <DataTemplate>
+                                                                <TextBlock x:Name="GroupName" Text="{Binding Name}" FontWeight="SemiBold" FontSize="11"
+                                                                           Foreground="{StaticResource MutedTextBrush}" Margin="2,6,0,2"/>
+                                                                <DataTemplate.Triggers>
+                                                                    <DataTrigger Binding="{Binding Name}" Value="">
+                                                                        <Setter TargetName="GroupName" Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </DataTemplate.Triggers>
+                                                            </DataTemplate>
+                                                        </GroupStyle.HeaderTemplate>
+                                                    </GroupStyle>
+                                                </ComboBox.GroupStyle>
+                                            </ComboBox>
+                                            <TextBlock Text="{Binding Status}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasStatus}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                         </StackPanel>
-                                    </DockPanel>
-                                    <Grid Visibility="{Binding IsLimiterHosted, Converter={StaticResource InverseBoolToVis}}" Margin="0,8,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Ceiling" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <Slider Grid.Row="0" Grid.Column="1" Minimum="-12" Maximum="0" Value="{Binding LimiterCeilingDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}"/>
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Gain" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <Slider Grid.Row="1" Grid.Column="1" Minimum="-12" Maximum="24" Value="{Binding LimiterGainDb, Mode=TwoWay}" Style="{StaticResource CommitSlider}"/>
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-
-                            <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
-                                <StackPanel>
-                                    <DockPanel LastChildFill="True">
-                                        <ToggleButton DockPanel.Dock="Left" Style="{StaticResource FxPowerToggle}" IsChecked="{Binding MelodyneEnabled, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,10,0"/>
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Pitch correction" FontFamily="{StaticResource PlexSansMedium}" Cursor="Hand" MouseLeftButtonUp="EditMelodyne_Click"/>
-                                            <TextBlock Text="Melodyne" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
-                                        </StackPanel>
-                                    </DockPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                        <ToggleButton Content="Melodyne" Style="{StaticResource SegmentButton}" Click="PitchModeMelodyne_Click"
-                                                      IsChecked="{Binding PitchMode, Converter={StaticResource PitchModeEquals}, ConverterParameter=Melodyne, Mode=OneWay}"/>
-                                        <ToggleButton Content="Auto" Style="{StaticResource SegmentButton}" Click="PitchModeAuto_Click"
-                                                      IsChecked="{Binding PitchMode, Converter={StaticResource PitchModeEquals}, ConverterParameter=Auto, Mode=OneWay}"/>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </ScrollViewer>
                 </DockPanel>
             </Border>

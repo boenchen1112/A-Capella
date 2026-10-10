@@ -16,7 +16,7 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, double? songInMs = null, double? songOutMs = null, VideoSettings? video = null, TimeSignature? timeSignature = null)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, double? songInMs = null, double? songOutMs = null, VideoSettings? video = null, TimeSignature? timeSignature = null, Presets.PresetRef? masterLimiter = null)
     {
         video ??= new VideoSettings();
         return new ProjectFileDto
@@ -36,6 +36,7 @@ public class ProjectPersistenceService
             MetronomeBeatUnit = (timeSignature ?? TimeSignature.FourFour).BeatUnit,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
+            MasterLimiterPreset = masterLimiter,
             SongInMs = songInMs,
             SongOutMs = songOutMs,
             Layers = layers.Layers.Select(ToLayerDto).ToList(),
@@ -130,31 +131,13 @@ public class ProjectPersistenceService
         Mute = p.Mute,
         Solo = p.Solo,
         Pan = p.Pan,
-        LowShelfGainDb = p.LowShelfGainDb,
-        MidBellGainDb = p.MidBellGainDb,
-        HighShelfGainDb = p.HighShelfGainDb,
-        NoiseGateEnabled = p.NoiseGateEnabled,
-        NoiseGateThresholdDb = p.NoiseGateThresholdDb,
-        NoiseGateReleaseMs = p.NoiseGateReleaseMs,
-        CompressorEnabled = p.CompressorEnabled,
-        CompressorThresholdDb = p.CompressorThresholdDb,
-        CompressorRatio = p.CompressorRatio,
-        EqEnabled = p.EqEnabled,
-        LimiterEnabled = p.LimiterEnabled,
-        LimiterCeilingDb = p.LimiterCeilingDb,
-        LimiterGainDb = p.LimiterGainDb,
+        CompressorPreset = p.CompressorPreset,
+        EqPreset = p.EqPreset,
+        DeEsserPreset = p.DeEsserPreset,
+        ReverbPreset = p.ReverbPreset,
         PitchBackend = p.PitchBackend.ToString(),
-        NoiseGateHostedStateBase64 = ToBase64(p.NoiseGateHostedState),
-        CompressorHostedStateBase64 = ToBase64(p.CompressorHostedState),
-        EqHostedStateBase64 = ToBase64(p.EqHostedState),
-        LimiterHostedStateBase64 = ToBase64(p.LimiterHostedState),
-        ReverbEnabled = p.ReverbEnabled,
-        ReverbHostedStateBase64 = ToBase64(p.ReverbHostedState),
         Frozen = p.Frozen,
     };
-
-    private static string? ToBase64(byte[]? data) => data is null ? null : Convert.ToBase64String(data);
-    private static byte[]? FromBase64(string? data) => data is null ? null : Convert.FromBase64String(data);
 
     private static void ApplyMixParametersDto(MixParametersDto dto, LayerMixParameters target)
     {
@@ -162,26 +145,11 @@ public class ProjectPersistenceService
         target.Mute = dto.Mute;
         target.Solo = dto.Solo;
         target.Pan = dto.Pan;
-        target.LowShelfGainDb = dto.LowShelfGainDb;
-        target.MidBellGainDb = dto.MidBellGainDb;
-        target.HighShelfGainDb = dto.HighShelfGainDb;
-        target.NoiseGateEnabled = dto.NoiseGateEnabled;
-        target.NoiseGateThresholdDb = dto.NoiseGateThresholdDb;
-        target.NoiseGateReleaseMs = dto.NoiseGateReleaseMs;
-        target.CompressorEnabled = dto.CompressorEnabled;
-        target.CompressorThresholdDb = dto.CompressorThresholdDb;
-        target.CompressorRatio = dto.CompressorRatio;
-        target.EqEnabled = dto.EqEnabled;
-        target.LimiterEnabled = dto.LimiterEnabled;
-        target.LimiterCeilingDb = dto.LimiterCeilingDb;
-        target.LimiterGainDb = dto.LimiterGainDb;
+        target.CompressorPreset = dto.CompressorPreset;
+        target.EqPreset = dto.EqPreset;
+        target.DeEsserPreset = dto.DeEsserPreset;
+        target.ReverbPreset = dto.ReverbPreset;
         target.PitchBackend = Enum.Parse<PitchBackendSelection>(dto.PitchBackend);
-        target.NoiseGateHostedState = FromBase64(dto.NoiseGateHostedStateBase64);
-        target.CompressorHostedState = FromBase64(dto.CompressorHostedStateBase64);
-        target.EqHostedState = FromBase64(dto.EqHostedStateBase64);
-        target.LimiterHostedState = FromBase64(dto.LimiterHostedStateBase64);
-        target.ReverbEnabled = dto.ReverbEnabled;
-        target.ReverbHostedState = FromBase64(dto.ReverbHostedStateBase64);
         target.Frozen = dto.Frozen;
     }
 }

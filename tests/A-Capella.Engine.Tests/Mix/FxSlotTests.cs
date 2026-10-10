@@ -1,5 +1,6 @@
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Tests.Host;
 using NAudio.Wave;
 
@@ -13,14 +14,10 @@ public class FxSlotTests
 
     private static FxSlot Slot(string stage) => FxSlots.All.Single(s => s.Stage == stage);
 
-    private static LayerMixParameters EnabledOnly(FxSlot slot)
+    private static LayerMixParameters WithPreset(FxSlot slot, string name = "Warm")
     {
         var p = new LayerMixParameters();
-        if (slot == FxSlots.NoiseGate) p.NoiseGateEnabled = true;
-        else if (slot == FxSlots.Compressor) p.CompressorEnabled = true;
-        else if (slot == FxSlots.Eq) p.EqEnabled = true;
-        else if (slot == FxSlots.Reverb) p.ReverbEnabled = true;
-        else if (slot == FxSlots.Limiter) p.LimiterEnabled = true;
+        slot.SetPreset(p, new PresetRef(slot.PluginLabel, "Basic", name));
         return p;
     }
 
@@ -43,41 +40,42 @@ public class FxSlotTests
     [Fact]
     public void Rack_IsInChainOrder_WithDistinctStagesAndPlugins()
     {
-        Assert.Equal(new[] { "NoiseGate", "Compressor", "Eq", "Reverb", "Limiter" }, FxSlots.All.Select(s => s.Stage));
+        Assert.Equal(new[] { "Compressor", "Eq", "DeEsser", "Reverb" }, FxSlots.All.Select(s => s.Stage));
         Assert.Equal(FxSlots.All.Count, FxSlots.All.Select(s => s.PluginLabel).Distinct().Count());
         Assert.All(FxSlots.All, s => Assert.True(HostedPluginCatalog.KnownPluginPaths.ContainsKey(s.PluginLabel), s.PluginLabel));
     }
 
     [Theory]
     [MemberData(nameof(SlotStages))]
-    public void EnabledSlot_WithItsPluginInstalled_ProcessesThroughTheSharedLiveInstance(string stage)
+    public void SlotWithPreset_ProcessesThroughTheSharedLiveInstance_CarryingThatPreset(string stage)
     {
         var slot = Slot(stage);
         var fakes = new FakeHostedPluginFactory().With(slot.PluginLabel, latencySamples: 32);
         using var service = fakes.CreateService();
         using var engine = new MixEngine(service);
 
-        ReadAll(engine.BuildLayerChain(new MixLayerInput(0, Sine(2048), SampleRate, EnabledOnly(slot)), anySolo: false, SampleRate), 1024);
+        ReadAll(engine.BuildLayerChain(new MixLayerInput(0, Sine(2048), SampleRate, WithPreset(slot)), anySolo: false, SampleRate), 1024);
 
         var plugin = Assert.Single(fakes.Created);
         Assert.Equal(slot.PluginLabel, plugin.Label);
         Assert.Equal(1, plugin.ResetCount);
+        Assert.Equal("Warm", System.Text.Encoding.UTF8.GetString(plugin.GetState()));
         Assert.Same(plugin, service.TryGetLiveInstance(0, slot.Stage));
     }
 
     [Theory]
     [MemberData(nameof(SlotStages))]
-    public void DisabledSlot_CreatesNoInstance_AndLeavesTheChainUntouched(string stage)
+    public void SlotOff_CreatesNoInstance_AndLeavesTheChainUntouched(string stage)
     {
         var slot = Slot(stage);
         var fakes = new FakeHostedPluginFactory().With(slot.PluginLabel, latencySamples: 32);
         using var service = fakes.CreateService();
         using var hostedEngine = new MixEngine(service);
-        using var nativeEngine = new MixEngine(NoHostedPluginsAvailable.Instance);
+        using var bareEngine = new MixEngine(NoHostedPluginsAvailable.Instance);
 
         var samples = Sine(2048);
         var withPluginInstalled = ReadAll(hostedEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 8192);
-        var withoutPlugin = ReadAll(nativeEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 8192);
+        var withoutPlugin = ReadAll(bareEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 8192);
 
         Assert.Empty(fakes.Created);
         Assert.Equal(withoutPlugin, withPluginInstalled);
@@ -85,30 +83,47 @@ public class FxSlotTests
 
     [Theory]
     [MemberData(nameof(SlotStages))]
-    public void EnabledSlot_WithoutItsPlugin_UsesNativeFallback_OrPassesThroughWhenItHasNone(string stage)
+    public void SlotWithPreset_WithoutItsPlugin_PassesAudioThrough(string stage)
     {
         var slot = Slot(stage);
         using var engine = new MixEngine(NoHostedPluginsAvailable.Instance);
 
         var samples = Sine(4096);
-        var enabled = ReadAll(engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, EnabledOnly(slot)), anySolo: false, SampleRate), 16384);
-        var disabled = ReadAll(engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 16384);
+        var chosen = ReadAll(engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, WithPreset(slot)), anySolo: false, SampleRate), 16384);
+        var off = ReadAll(engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 16384);
 
-        Assert.Equal(disabled.Length, enabled.Length);
-        if (!slot.HasNativeFallback)
-            Assert.Equal(disabled, enabled);
+        Assert.Equal(off, chosen);
     }
 
     [Theory]
     [MemberData(nameof(SlotStages))]
-    public void HostedState_RoundTripsThroughItsOwnParameterField_Only(string stage)
+    public void MissingPreset_LeavesTheEffectOff(string stage)
+    {
+        var slot = Slot(stage);
+        var fakes = new FakeHostedPluginFactory().With(slot.PluginLabel, latencySamples: 32);
+        using var service = fakes.CreateService();
+        using var engine = new MixEngine(service);
+        using var bareEngine = new MixEngine(NoHostedPluginsAvailable.Instance);
+
+        var samples = Sine(2048);
+        var missing = ReadAll(engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, WithPreset(slot, "Missing")), anySolo: false, SampleRate), 8192);
+        var off = ReadAll(bareEngine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, new LayerMixParameters()), anySolo: false, SampleRate), 8192);
+
+        Assert.Equal(off, missing);
+    }
+
+    [Theory]
+    [MemberData(nameof(SlotStages))]
+    public void Preset_RoundTripsThroughItsOwnParameterField_Only(string stage)
     {
         var slot = Slot(stage);
         var p = new LayerMixParameters();
+        var preset = new PresetRef(slot.PluginLabel, "Basic", "Warm");
 
-        slot.SetHostedState(p, new byte[] { 4, 2 });
+        slot.SetPreset(p, preset);
 
-        Assert.Equal(new byte[] { 4, 2 }, slot.GetHostedState(p));
-        Assert.All(FxSlots.All.Where(other => other != slot), other => Assert.Null(other.GetHostedState(p)));
+        Assert.Equal(preset, slot.GetPreset(p));
+        Assert.True(slot.IsEnabled(p));
+        Assert.All(FxSlots.All.Where(other => other != slot), other => Assert.Null(other.GetPreset(p)));
     }
 }

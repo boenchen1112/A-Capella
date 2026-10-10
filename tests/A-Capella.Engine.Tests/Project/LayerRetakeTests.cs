@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Project;
@@ -64,7 +65,7 @@ public class LayerRetakeTests
         layer.MixParameters.GainDb = -6f;
         layer.MixParameters.Pan = 0.5f;
         layer.MixParameters.Solo = true;
-        layer.MixParameters.EqHostedState = new byte[] { 7 };
+        layer.MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Bright");
         var mix = layer.MixParameters;
 
         layer.ReplaceSource(LayerKind.UploadedAudioOnly, "x.wav", 0);
@@ -76,7 +77,7 @@ public class LayerRetakeTests
         Assert.Equal(-6f, layer.MixParameters.GainDb);
         Assert.Equal(0.5f, layer.MixParameters.Pan);
         Assert.True(layer.MixParameters.Solo);
-        Assert.Equal(new byte[] { 7 }, layer.MixParameters.EqHostedState);
+        Assert.Equal(new PresetRef("FabFilter Pro-Q 4", "", "Bright"), layer.MixParameters.EqPreset);
     }
 
     [Fact]

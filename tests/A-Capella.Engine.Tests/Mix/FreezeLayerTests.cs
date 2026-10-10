@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Persistence;
@@ -49,11 +50,6 @@ public class FreezeLayerTests
         {
             GainDb = -6f,
             Pan = 0.3f,
-            NoiseGateEnabled = true,
-            CompressorEnabled = true,
-            EqEnabled = true,
-            LowShelfGainDb = 2f,
-            LimiterEnabled = true,
         };
 
         using var liveEngine = new MixEngine(NoHostedPluginsAvailable.Instance);

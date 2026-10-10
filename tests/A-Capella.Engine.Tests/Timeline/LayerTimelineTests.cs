@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using System.Linq;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
@@ -84,7 +85,7 @@ public class LayerTimelineTests
         using var mixEngine = new MixEngine(factory.CreateService());
         var timeline = TimelineWithProbe(mixEngine, durationSeconds: 10);
         var layer = Layer(cellIndex: 0);
-        layer.MixParameters.ReverbEnabled = true;
+        layer.MixParameters.ReverbPreset = new PresetRef("FabFilter Pro-R 2", "_2 Small", "Studio A");
 
         Assert.Equal(11_000, timeline.DurationMs(layer, 44100), 6);   // 10s source + 1s tail
 
