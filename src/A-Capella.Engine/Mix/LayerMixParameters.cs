@@ -5,7 +5,6 @@ namespace A_Capella.Engine.Mix;
 public enum PitchBackendSelection
 {
     None,
-    Automatic2B,
     Manual2A,
 }
 

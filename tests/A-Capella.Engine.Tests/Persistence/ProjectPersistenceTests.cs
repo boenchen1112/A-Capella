@@ -23,7 +23,7 @@ public class ProjectPersistenceTests
         layer0.MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Bright");
         layer0.MixParameters.DeEsserPreset = new PresetRef("FabFilter Pro-DS", "Single Vocal", "Male Wide Band");
         layer0.MixParameters.ReverbPreset = new PresetRef("FabFilter Pro-R 2", "_2 Small", "Studio A");
-        layer0.MixParameters.PitchBackend = PitchBackendSelection.Automatic2B;
+        layer0.MixParameters.PitchBackend = PitchBackendSelection.Manual2A;
 
         var layer1 = layers.Add(LayerKind.UploadedAudioOnly, "layer1.wav");
         layer1.MixParameters.Solo = true;

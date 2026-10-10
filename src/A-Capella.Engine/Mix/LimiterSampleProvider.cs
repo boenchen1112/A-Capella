@@ -56,8 +56,10 @@ public class LimiterSampleProvider : ISampleProvider
                 : _releaseCoeff * _gain + (1 - _releaseCoeff) * targetGain;
             _gain = Math.Min(1f, _gain);
 
+            // The envelope needs a moment to catch a sudden loud onset, so clamp what slips past it:
+            // nothing leaves this stage above the ceiling.
             for (int ch = 0; ch < channels; ch++)
-                buffer[offset + frameStart + ch] *= _gain;
+                buffer[offset + frameStart + ch] = Math.Clamp(buffer[offset + frameStart + ch] * _gain, -_ceilingLinear, _ceilingLinear);
         }
 
         return read;
