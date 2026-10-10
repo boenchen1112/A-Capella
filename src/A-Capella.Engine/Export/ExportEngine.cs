@@ -10,7 +10,7 @@ using SkiaSharp;
 namespace A_Capella.Engine.Export;
 
 /// <summary>
-/// Mixes down all layers (Phase 3's fixed chain) and composites the 2x2 grid (Phase 4) across
+/// Mixes down all layers (Phase 3's fixed chain) and composites the layout grid (Phase 4) across
 /// the full duration, then muxes both into a single H.264+AAC .mp4 via ffmpeg.
 /// </summary>
 public class ExportEngine : IDisposable
@@ -44,8 +44,19 @@ public class ExportEngine : IDisposable
     /// layer is cut at the same instant regardless of its own trim/shift. Null (the default) exports
     /// the whole song, exactly as before either parameter existed. Both are clamped to
     /// [0, full duration]; an empty resulting span throws.</summary>
-    public void Export(LayerCollection layers, string outputPath, int width = 1280, int height = 720, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, double? rangeStartMs = null, double? rangeOutMs = null)
+    public void Export(LayerCollection layers, string outputPath, int? width = null, int? height = null, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, double? rangeStartMs = null, double? rangeOutMs = null, VideoSettings? video = null)
     {
+        // No settings means the pre-layout behavior (2x2, no gap, letterboxed 16:9) so existing callers are unchanged.
+        video ??= VideoSettings.Legacy(GridLayoutCatalog.LegacyId);
+        var (defaultWidth, defaultHeight) = video.ExportSize;
+        ExportCore(layers, outputPath, width ?? defaultWidth, height ?? defaultHeight, fps, sampleRate, masterVolumeDb, progress, video, rangeStartMs, rangeOutMs);
+    }
+
+    private void ExportCore(LayerCollection layers, string outputPath, int width, int height, int fps, int sampleRate, float masterVolumeDb, IProgress<double>? progress, VideoSettings video, double? rangeStartMs, double? rangeOutMs)
+    {
+        var layout = video.Layout;
+        double gutterFraction = video.GutterFraction;
+        using var style = new StyleRenderer(video.Style, width, height);
         if (layers.Layers.Count == 0)
             throw new InvalidOperationException("No layers to export.");
 
@@ -96,11 +107,12 @@ public class ExportEngine : IDisposable
 
         try
         {
-            int cellWidth = width / 2;
-            int cellHeight = height / 2;
-
             var frameSources = orderedLayers
-                .Select(l => _timeline.FrameSource(l, cellWidth, cellHeight, fps, positionMs: rangeStartMsClamped))
+                .Select(l =>
+                {
+                    var (cellWidth, cellHeight) = layout.GetCellPixelSize(l.CellIndex, width, height, gutterFraction);
+                    return _timeline.FrameSource(l, cellWidth, cellHeight, fps, positionMs: rangeStartMsClamped, fit: video.Fit);
+                })
                 .ToList();
 
             try
@@ -108,7 +120,7 @@ public class ExportEngine : IDisposable
                 // Grid-gap compaction fix: key rects by each layer's actual CellIndex, not by
                 // position in orderedLayers -- a lone layer at CellIndex 1 (cell 0 empty) must
                 // still land in the top-right cell, not get compacted into top-left.
-                var cellRects = Layout2x2Provider.GetCellRects(width, height, orderedLayers.Select(l => l.CellIndex).ToList());
+                var cellRects = layout.GetCellRects(width, height, gutterFraction, orderedLayers.Select(l => l.CellIndex).ToList());
                 int totalFrames = (int)Math.Ceiling(durationSeconds * fps);
 
                 using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath);
@@ -122,7 +134,7 @@ public class ExportEngine : IDisposable
                 for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++)
                 {
                     var frames = frameSources.Select(s => s.GetNextFrame()).ToList();
-                    using var composite = Compositor.Composite(width, height, frames, cellRects);
+                    using var composite = Compositor.Composite(width, height, frames, cellRects, style: style);
                     WriteBitmapPixels(stdin, composite, pixelBuffer);
 
                     if (frameIndex % fps == 0 || frameIndex == totalFrames - 1)

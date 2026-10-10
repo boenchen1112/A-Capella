@@ -52,6 +52,8 @@
                         <CheckBox x:Name="MetronomeToggle" Content="Click track while recording" VerticalAlignment="Center" Checked="MetronomeToggle_Changed" Unchecked="MetronomeToggle_Changed"/>
                         <TextBlock Text="BPM" Foreground="{StaticResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="16,0,6,0"/>
                         <TextBox x:Name="BpmTextBox" Width="64" Text="120" TextChanged="BpmTextBox_TextChanged" FontFamily="{StaticResource PlexMonoRegular}" TextAlignment="Right"/>
+                        <ComboBox x:Name="TimeSignatureCombo" Width="58" Margin="8,0,0,0" VerticalAlignment="Center" SelectionChanged="TimeSignatureCombo_SelectionChanged"
+                                  ToolTip="Time signature: the first beat of each bar is accented."/>
                     </StackPanel>
 
                     <TextBlock x:Name="StatusText" Margin="0,14,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12"/>

@@ -14,6 +14,7 @@ public class ProjectPersistenceTests
         layer0.Name = "Lead vocal";
         layer0.CalibratedOffsetMs = 162.7;
         layer0.ManualOffsetMs = -15.5;
+        layer0.Mirror = true;
         layer0.MixParameters.GainDb = -6.5f;
         layer0.MixParameters.Pan = -0.3f;
         layer0.MixParameters.Mute = true;
@@ -47,7 +48,7 @@ public class ProjectPersistenceTests
             service.SaveToFile(dto, tempPath);
 
             var loadedDto = service.LoadFromFile(tempPath);
-            var (loadedLayers, loadedBpm, loadedOffset, _) = service.FromDto(loadedDto);
+            var (loadedLayers, loadedBpm, loadedOffset, _, _, _) = service.FromDto(loadedDto);
 
             Assert.Equal(metronomeBpm, loadedBpm);
             Assert.Equal(latencyOffset, loadedOffset);
@@ -65,6 +66,7 @@ public class ProjectPersistenceTests
                 Assert.Equal(original.CalibratedOffsetMs, loaded.CalibratedOffsetMs);
                 Assert.Equal(original.ManualOffsetMs, loaded.ManualOffsetMs);
                 Assert.Equal(original.CellIndex, loaded.CellIndex);
+                Assert.Equal(original.Mirror, loaded.Mirror);
                 Assert.Equal(original.AraArchiveKey, loaded.AraArchiveKey);
 
                 Assert.Equal(original.MixParameters.GainDb, loaded.MixParameters.GainDb);
@@ -141,7 +143,7 @@ public class ProjectPersistenceTests
             var dto = service.ToDto(layers, 120, null);
             service.SaveToFile(dto, tempPath);
 
-            var (loadedLayers, loadedBpm, loadedOffset, _) = service.FromDto(service.LoadFromFile(tempPath));
+            var (loadedLayers, loadedBpm, loadedOffset, _, _, _) = service.FromDto(service.LoadFromFile(tempPath));
 
             Assert.Empty(loadedLayers.Layers);
             Assert.Equal(120, loadedBpm);

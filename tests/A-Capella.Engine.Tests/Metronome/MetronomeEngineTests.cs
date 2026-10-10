@@ -127,4 +127,89 @@ public class MetronomeEngineTests
 
         Assert.Contains(firstBlock, s => s != 0f);   // still clicks immediately, same as without the call
     }
+
+    // ----- Time signature -----
+
+    private const int Rate = 44100;
+
+    /// <summary>Reads bars*beats clicks at 120 BPM (22050 samples per quarter note) and returns, per
+    /// click, how many times the waveform crosses zero in the 30 ms click window -- a stand-in for pitch
+    /// (about 90 for the 1500 Hz accent, 60 for the 1000 Hz click).</summary>
+    private static List<int> ClickCrossings(MetronomeEngine metronome, int clicks, double samplesPerClick)
+    {
+        var all = new float[(int)(samplesPerClick * clicks)];
+        metronome.Read(all, 0, all.Length);
+        var crossings = new List<int>();
+        for (int c = 0; c < clicks; c++)
+        {
+            int start = (int)Math.Round(c * samplesPerClick);
+            int n = 0;
+            for (int i = start + 1; i < start + (int)(Rate * 0.03); i++)
+                if ((all[i - 1] < 0) != (all[i] < 0) && all[i] != 0) n++;
+            crossings.Add(n);
+        }
+        return crossings;
+    }
+
+    [Theory]
+    [InlineData(2, 4)]
+    [InlineData(3, 4)]
+    [InlineData(4, 4)]
+    public void TimeSignature_AccentsOnlyTheFirstBeatOfEachBar(int beats, int unit)
+    {
+        var metronome = new MetronomeEngine(Rate) { Enabled = true, Bpm = 120, TimeSignature = new TimeSignature(beats, unit) };
+        var crossings = ClickCrossings(metronome, beats * 3, samplesPerClick: 22050);
+
+        for (int i = 0; i < crossings.Count; i++)
+        {
+            if (i % beats == 0) Assert.True(crossings[i] > 75, $"click {i} should be the accent, got {crossings[i]} crossings");
+            else Assert.True(crossings[i] < 75, $"click {i} should be a normal click, got {crossings[i]} crossings");
+        }
+    }
+
+    [Fact]
+    public void SixEight_ClicksOnEveryEighth_AccentingOnePerBar()
+    {
+        var metronome = new MetronomeEngine(Rate) { Enabled = true, Bpm = 120, TimeSignature = TimeSignature.SixEight };
+        // x/8 clicks twice per quarter: 11025 samples per click at 120 BPM.
+        var crossings = ClickCrossings(metronome, 12, samplesPerClick: 11025);
+
+        Assert.Equal(new[] { true, false, false, false, false, false, true, false, false, false, false, false },
+            crossings.Select(c => c > 75));
+    }
+
+    [Fact]
+    public void ChangingTheSignatureMidBeat_KeepsThePhase_AndTheBeatInTheBar()
+    {
+        var metronome = new MetronomeEngine(Rate) { Enabled = true, Bpm = 120, TimeSignature = TimeSignature.FourFour };
+        // Run into the middle of beat 2 of the bar (index 1): 1.5 quarter notes.
+        var scratch = new float[33075];
+        metronome.Read(scratch, 0, scratch.Length);
+
+        metronome.TimeSignature = TimeSignature.ThreeFour;
+
+        // Still mid-beat: silence, not a re-triggered click.
+        var after = new float[100];
+        metronome.Read(after, 0, after.Length);
+        Assert.All(after, s => Assert.Equal(0f, s));
+    }
+
+    [Fact]
+    public void TimeSignature_DefaultsTo4_4_AndSanitizesNonsense()
+    {
+        var metronome = new MetronomeEngine();
+        Assert.Equal(TimeSignature.FourFour, metronome.TimeSignature);
+
+        metronome.TimeSignature = new TimeSignature(99, 3);
+        Assert.Equal(new TimeSignature(12, 4), metronome.TimeSignature);
+
+        metronome.TimeSignature = new TimeSignature(-4, 8);
+        Assert.Equal(new TimeSignature(1, 8), metronome.TimeSignature);
+    }
+
+    [Fact]
+    public void Presets_AreTheFourOffered()
+    {
+        Assert.Equal(new[] { "2/4", "3/4", "4/4", "6/8" }, TimeSignature.Presets.Select(t => t.ToString()));
+    }
 }

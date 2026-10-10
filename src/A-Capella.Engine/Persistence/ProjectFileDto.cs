@@ -13,7 +13,15 @@ public class ProjectFileDto
     /// No initializer (bug audit #17): null after a load means the file had no LayoutId, i.e. isn't a project.</summary>
     public string? LayoutId { get; set; }
 
+    /// <summary>Video look (canvas shape, cell fill, gutter). Null in files saved before it existed;
+    /// those load as VideoSettings.Legacy so they render exactly as saved.</summary>
+    public VideoDto? Video { get; set; }
+
     public double MetronomeBpm { get; set; } = 120;
+
+    /// <summary>Metronome meter (e.g. 3 and 4 for 3/4). Missing in older files, which are 4/4.</summary>
+    public int MetronomeBeatsPerBar { get; set; } = 4;
+    public int MetronomeBeatUnit { get; set; } = 4;
 
     /// <summary>Bus gain applied after summing all layers, before the master limiter (P1 task 4) --
     /// used identically by preview and export so exports sound like the preview.</summary>
@@ -34,10 +42,21 @@ public class ProjectFileDto
     public List<LayerDto> Layers { get; set; } = new();
 }
 
+public class VideoDto
+{
+    public string AspectRatio { get; set; } = nameof(Project.AspectRatioOption.Wide16x9);
+    public string FillMode { get; set; } = nameof(Composite.CellFit.Fill);
+    public double GutterFraction { get; set; } = 0.01;
+    public string BackgroundColor { get; set; } = "#000000";
+    public string? BackgroundImagePath { get; set; }
+    public string BackgroundImageMode { get; set; } = nameof(Composite.BackgroundImageMode.Stretch);
+}
+
 public class LayerDto
 {
     public int LayerId { get; set; }
     public int CellIndex { get; set; }
+    public bool Mirror { get; set; }
     public string Kind { get; set; } = "";
     public string SourcePath { get; set; } = "";
     public string? Name { get; set; }

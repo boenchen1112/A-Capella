@@ -84,8 +84,8 @@ public class PreviewPlaybackEngine : IDisposable
     private readonly LayerTimeline _timeline;
     private readonly int _sampleRate;
     private readonly int _fps;
-    private readonly int _canvasWidth;
-    private readonly int _canvasHeight;
+    private volatile int _canvasWidth;
+    private volatile int _canvasHeight;
 
     private readonly IPreviewAudioSink _audioSink;
 
@@ -165,6 +165,43 @@ public class PreviewPlaybackEngine : IDisposable
     /// routed through the command queue, same reasoning as MasterVolumeDb. Export never sets this;
     /// it always composites without labels regardless.</summary>
     public volatile bool ShowLayerLabels = true;
+
+    private volatile GridLayout _layout = GridLayoutCatalog.Grid2x2;
+    private double _gutterFraction;
+    private volatile CellFit _fit = CellFit.Fit;
+    private StyleRenderer? _style;
+    private VideoSettings? _appliedVideo;
+
+    /// <summary>The cell arrangement the composite uses. Frame sources are sized per cell when they
+    /// are created, so after changing this (or GutterFraction) call RefreshAsync to rebuild them.</summary>
+    public GridLayout Layout { get => _layout; set => _layout = value; }
+
+    /// <summary>How videos fill cells that don't match their shape.</summary>
+    public CellFit Fit { get => _fit; set => _fit = value; }
+
+    /// <summary>Applies a project's video settings (layout, gutter, fill mode and canvas size). Frame
+    /// sources are sized when they are created, so follow this with RefreshAsync.</summary>
+    public void ApplyVideoSettings(VideoSettings video)
+    {
+        // Called on every live refresh; rebuilding the style decodes the background image, so skip when nothing changed.
+        if (video == _appliedVideo) return;
+        _appliedVideo = video;
+
+        Layout = video.Layout;
+        GutterFraction = video.GutterFraction;
+        Fit = video.Fit;
+        var (w, h) = video.PreviewSize;
+        _canvasWidth = w;
+        _canvasHeight = h;
+
+        // Rebuilt on every apply (cheap unless a background image is set); the old renderer is
+        // disposed after the swap and goes inert, so a frame mid-draw on the loop thread is safe.
+        var previous = Interlocked.Exchange(ref _style, new StyleRenderer(video.Style, w, h));
+        previous?.Dispose();
+    }
+
+    /// <summary>Gap between cells as a fraction of the canvas's shorter side (see GridLayout.GetCellRect).</summary>
+    public double GutterFraction { get => Volatile.Read(ref _gutterFraction); set => Volatile.Write(ref _gutterFraction, value); }
 
     /// <summary>hostedService, when given, is shared with MainWindow's launcher UI and
     /// ExportEngine (v7 Q0 task 1, audit A1) so a plugin edit is audible on the next rebuild and
@@ -378,7 +415,7 @@ public class PreviewPlaybackEngine : IDisposable
         // Grid-gap compaction fix: key rects by each layer's actual CellIndex, not by position in
         // frames -- a lone layer at CellIndex 1 (cell 0 empty) must still land in the top-right
         // cell, not get compacted into top-left.
-        var cellRects = Layout2x2Provider.GetCellRects(_canvasWidth, _canvasHeight, _layers.Take(frames.Count).Select(l => l.CellIndex).ToList());
+        var cellRects = Layout.GetCellRects(_canvasWidth, _canvasHeight, GutterFraction, _layers.Take(frames.Count).Select(l => l.CellIndex).ToList());
         List<CellLabel?>? labels = null;
         if (ShowLayerLabels)
         {
@@ -386,7 +423,7 @@ public class PreviewPlaybackEngine : IDisposable
                 .Select(l => (CellLabel?)new CellLabel(LayerColorPalette.GetColor(l.CellIndex), l.Name is { Length: > 0 } n ? n : $"Layer {l.CellIndex + 1}"))
                 .ToList();
         }
-        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects, labels);
+        var composited = Compositor.Composite(_canvasWidth, _canvasHeight, frames, cellRects, labels, Volatile.Read(ref _style));
         FrameReady?.Invoke(composited);
     }
 
@@ -401,10 +438,19 @@ public class PreviewPlaybackEngine : IDisposable
         _frameSources = CreateFrameSources(positionMs);
     }
 
-    private List<ILayerFrameSource> CreateFrameSources(double positionMs) =>
-        _layers.Select(layer => FrameSourceFactoryOverride is not null
-            ? FrameSourceFactoryOverride(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)
-            : _timeline.FrameSource(layer, _canvasWidth / 2, _canvasHeight / 2, _fps, positionMs)).ToList();
+    private List<ILayerFrameSource> CreateFrameSources(double positionMs)
+    {
+        var layout = Layout;
+        double gutter = GutterFraction;
+        var fit = Fit;
+        return _layers.Select(layer =>
+        {
+            var (cellWidth, cellHeight) = layout.GetCellPixelSize(layer.CellIndex, _canvasWidth, _canvasHeight, gutter);
+            return FrameSourceFactoryOverride is not null
+                ? FrameSourceFactoryOverride(layer, cellWidth, cellHeight, _fps, positionMs)
+                : _timeline.FrameSource(layer, cellWidth, cellHeight, _fps, positionMs, fit);
+        }).ToList();
+    }
 
     private (PositionTrackingSampleProvider Tracker, PadToLengthSampleProvider Padded) StartAudio(double positionMs)
     {
@@ -515,5 +561,6 @@ public class PreviewPlaybackEngine : IDisposable
         _commandThread.Join();
         _audioSink.Dispose();
         _mixEngine.Dispose();
+        Interlocked.Exchange(ref _style, null)?.Dispose();
     }
 }
