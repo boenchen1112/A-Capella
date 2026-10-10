@@ -220,6 +220,10 @@
                             <MenuItem Header="Import _files as layers..." Click="ImportFilesMenuItem_Click"/>
                             <MenuItem Header="_Delete selected layer" Click="DeleteLayerMenuItem_Click"/>
                         </MenuItem>
+                        <MenuItem Header="La_yout">
+                            <MenuItem Header="Choose _layout..." Click="ChooseLayoutMenuItem_Click"/>
+                            <MenuItem Header="_Video settings..." Click="VideoSettingsMenuItem_Click"/>
+                        </MenuItem>
                         <MenuItem Header="_Song">
                             <MenuItem Header="Set Song _In" Click="SetSongInMenuItem_Click" InputGestureText="I"/>
                             <MenuItem Header="Set Song _Out" Click="SetSongOutMenuItem_Click" InputGestureText="O"/>
@@ -285,6 +289,9 @@
                             <TextBox x:Name="MetronomeBpmTextBox" Text="130.000" Width="54" Background="Transparent" BorderThickness="0"
                                      Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"
                                      LostFocus="MetronomeBpmTextBox_LostFocus" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                            <ComboBox x:Name="TimeSignatureCombo" Width="58" Margin="8,0,0,0" VerticalAlignment="Center"
+                                      SelectionChanged="TimeSignatureCombo_SelectionChanged" ToolTip="Metronome time signature. The first beat of each bar is accented."
+                                      shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                         </StackPanel>
                     </Border>
 
@@ -424,6 +431,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition/>
                             <RowDefinition/>
+                            <RowDefinition/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" IsEnabled="{Binding IsNotFrozen}">
                             <TextBlock Text="Volume" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
@@ -437,9 +445,26 @@
                             <TextBlock Text="Trim in (ms)" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
                             <TextBox Text="{Binding TrimStartMs, Mode=TwoWay}" LostFocus="TrimTextBox_LostFocus"/>
                         </StackPanel>
-                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,8">
                             <TextBlock Text="Trim out (ms)" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
                             <TextBox Text="{Binding TrimEndText, Mode=TwoWay}" LostFocus="TrimTextBox_LostFocus"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Picture" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <CheckBox Content="Mirror" IsChecked="{Binding Mirror, Mode=TwoWay}" Click="CommitCheckBox_Click"
+                                      ToolTip="Flip this layer's picture left-to-right."/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Timing nudge" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Left" Content="−" Click="NudgeEarlierButton_Click" Style="{StaticResource FlatIconButton}" Width="26" Height="24"
+                                        ToolTip="Play this layer earlier (hold Shift for 1 ms steps, otherwise 10 ms)."/>
+                                <Button DockPanel.Dock="Right" Content="+" Click="NudgeLaterButton_Click" Style="{StaticResource FlatIconButton}" Width="26" Height="24"
+                                        ToolTip="Play this layer later (hold Shift for 1 ms steps, otherwise 10 ms)."/>
+                                <TextBlock Text="{Binding ManualOffsetDisplay}" FontFamily="{StaticResource PlexMonoRegular}" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand"
+                                           MouseLeftButtonDown="NudgeLabel_MouseLeftButtonDown" ToolTip="Click to reset to 0."/>
+                            </DockPanel>
                         </StackPanel>
                     </Grid>
 

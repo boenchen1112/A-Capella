@@ -1,4 +1,6 @@
 using System.Text.Json;
+using A_Capella.Engine.Composite;
+using A_Capella.Engine.Metronome;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Project;
 
@@ -14,12 +16,24 @@ public class ProjectPersistenceService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, double? songInMs = null, double? songOutMs = null)
+    public ProjectFileDto ToDto(LayerCollection layers, double metronomeBpm, double? latencyOffsetMsUsed, float masterVolumeDb = 0f, double? songInMs = null, double? songOutMs = null, VideoSettings? video = null, TimeSignature? timeSignature = null)
     {
+        video ??= new VideoSettings();
         return new ProjectFileDto
         {
-            LayoutId = "2x2",
+            LayoutId = video.LayoutId,
+            Video = new VideoDto
+            {
+                AspectRatio = video.AspectRatio.ToString(),
+                FillMode = video.Fit.ToString(),
+                GutterFraction = video.GutterFraction,
+                BackgroundColor = video.Background.Color,
+                BackgroundImagePath = video.Background.ImagePath,
+                BackgroundImageMode = video.Background.ImageMode.ToString(),
+            },
             MetronomeBpm = metronomeBpm,
+            MetronomeBeatsPerBar = (timeSignature ?? TimeSignature.FourFour).BeatsPerBar,
+            MetronomeBeatUnit = (timeSignature ?? TimeSignature.FourFour).BeatUnit,
             LatencyOffsetMsUsed = latencyOffsetMsUsed,
             MasterVolumeDb = masterVolumeDb,
             SongInMs = songInMs,
@@ -28,12 +42,31 @@ public class ProjectPersistenceService
         };
     }
 
-    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb) FromDto(ProjectFileDto dto)
+    public (LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video, TimeSignature TimeSignature) FromDto(ProjectFileDto dto)
     {
         var layers = new LayerCollection();
         layers.Restore(dto.Layers.Select(FromLayerDto));
-        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb);
+        // Unknown ids (hand-edited or from a newer build) fall back to the 2x2 layout, which is also what every pre-layout project is.
+        string layoutId = GridLayoutCatalog.Get(dto.LayoutId).Id;
+        var video = dto.Video is null
+            ? VideoSettings.Legacy(layoutId)
+            : new VideoSettings
+            {
+                LayoutId = layoutId,
+                AspectRatio = Enum.TryParse<AspectRatioOption>(dto.Video.AspectRatio, out var ratio) ? ratio : AspectRatioOption.Wide16x9,
+                Fit = Enum.TryParse<CellFit>(dto.Video.FillMode, out var fit) ? fit : CellFit.Fill,
+                GutterFraction = Math.Clamp(Finite(dto.Video.GutterFraction, 0), 0, VideoSettings.MaxGutterFraction),
+                Background = new BackgroundSettings
+                {
+                    Color = dto.Video.BackgroundColor ?? "#000000",
+                    ImagePath = dto.Video.BackgroundImagePath,
+                    ImageMode = Enum.TryParse<BackgroundImageMode>(dto.Video.BackgroundImageMode, out var mode) ? mode : BackgroundImageMode.Stretch,
+                },
+            };
+        return (layers, dto.MetronomeBpm, dto.LatencyOffsetMsUsed, dto.MasterVolumeDb, video, new TimeSignature(dto.MetronomeBeatsPerBar, dto.MetronomeBeatUnit).Sanitized());
     }
+
+    private static double Finite(double value, double fallback) => double.IsFinite(value) ? value : fallback;
 
     public void SaveToFile(ProjectFileDto dto, string filePath)
     {
@@ -59,6 +92,7 @@ public class ProjectPersistenceService
     {
         LayerId = layer.LayerId,
         CellIndex = layer.CellIndex,
+        Mirror = layer.Mirror,
         Kind = layer.Kind.ToString(),
         SourcePath = layer.SourcePath,
         Name = layer.Name,
@@ -83,6 +117,7 @@ public class ProjectPersistenceService
             TrimStartMs = dto.TrimStartMs,
             TrimEndMs = dto.TrimEndMs,
             CellIndex = dto.CellIndex,
+            Mirror = dto.Mirror,
             AraArchiveKey = dto.AraArchiveKey,
         };
         ApplyMixParametersDto(dto.MixParameters, layer.MixParameters);

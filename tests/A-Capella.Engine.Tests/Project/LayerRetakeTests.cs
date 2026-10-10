@@ -102,7 +102,7 @@ public class LayerRetakeTests
         originals[2].ReplaceSource(LayerKind.RecordedAV, "retake.mkv", 0);
 
         Assert.Equal(LayerCollection.MaxLayers, layers.Layers.Count);
-        Assert.Equal(new[] { 0, 1, 2, 3 }, layers.Layers.Select(l => l.LayerId));
+        Assert.Equal(Enumerable.Range(0, LayerCollection.MaxLayers), layers.Layers.Select(l => l.LayerId));
         for (int i = 0; i < originals.Count; i++)
             Assert.Same(originals[i], layers.Layers[i]);
     }

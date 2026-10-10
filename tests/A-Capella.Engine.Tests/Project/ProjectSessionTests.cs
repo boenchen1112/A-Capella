@@ -218,7 +218,7 @@ public class ProjectSessionTests : IDisposable
         layer.MixParameters.GainDb = -1f;
         session.MasterVolumeDb = -5f;
 
-        var (layers, masterVolumeDb, songInMs, songOutMs) = session.SnapshotForExport();
+        var (layers, masterVolumeDb, songInMs, songOutMs, _) = session.SnapshotForExport();
         layer.MixParameters.GainDb = -20f;
         session.MasterVolumeDb = 0f;
 
@@ -459,7 +459,7 @@ public class ProjectSessionTests : IDisposable
     [InlineData("unknown layer Kind", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"Bogus\",\"SourcePath\":\"x.wav\"}]}")]
     [InlineData("null Layers", "{\"LayoutId\":\"2x2\",\"Layers\":null}")]
     [InlineData("bad hosted-state base64", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"RecordedAV\",\"SourcePath\":\"x.wav\",\"MixParameters\":{\"EqHostedStateBase64\":\"!!\"}}]}")]
-    [InlineData("five layers", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"},{\"Kind\":\"RecordedAV\"}]}")]
+    [InlineData("ten layers", "{\"LayoutId\":\"3x3\",\"Layers\":[" + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}]}")]
     public void FailedOpen_KeepsTheCurrentProjectsLivePluginInstances(string description, string? fileContent)
     {
         var session = new ProjectSession(_mixEngine);
@@ -691,7 +691,7 @@ public class ProjectSessionTests : IDisposable
         session.SongInMs = 2000;
         session.SongOutMs = 6000;
 
-        var (_, _, songInMs, songOutMs) = session.SnapshotForExport();
+        var (_, _, songInMs, songOutMs, _) = session.SnapshotForExport();
 
         Assert.Equal(2000, songInMs);
         Assert.Equal(6000, songOutMs);

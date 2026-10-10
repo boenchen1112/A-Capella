@@ -170,7 +170,7 @@ public class FreezeLayerTests
         var dto = persistence.ToDto(layers, 120, null);
         Assert.True(dto.Layers[0].MixParameters.Frozen);
 
-        var (restored, _, _, _) = persistence.FromDto(dto);
+        var (restored, _, _, _, _, _) = persistence.FromDto(dto);
         Assert.True(restored.Layers[0].MixParameters.Frozen);
     }
 

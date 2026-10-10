@@ -19,6 +19,15 @@ public class LayerModel
     public double CalibratedOffsetMs { get; set; }
     public double ManualOffsetMs { get; set; }
 
+    /// <summary>How far the manual timing nudge may move a layer either way.</summary>
+    public const double MaxManualOffsetMs = 2000;
+
+    /// <summary>Moves this layer later (positive) or earlier (negative) against the others by deltaMs,
+    /// clamped to +/-MaxManualOffsetMs. Rounded to a microsecond-free value so repeated 0.1 ms
+    /// steps don't accumulate floating-point dust into the saved file.</summary>
+    public void NudgeManualOffset(double deltaMs) =>
+        ManualOffsetMs = Math.Clamp(Math.Round(ManualOffsetMs + deltaMs, 3), -MaxManualOffsetMs, MaxManualOffsetMs);
+
     /// <summary>User-editable display name (v5 P2 task 1). Null/blank means "not renamed yet" --
     /// callers fall back to a positional default (e.g. "Layer {CellIndex + 1}") rather than baking
     /// that default in here, since the model doesn't know which UI slot it's shown in.</summary>
@@ -32,8 +41,12 @@ public class LayerModel
     public double? TrimEndMs { get; set; }
 
     /// <summary>Grid cell this layer occupies (per the Data Model Rule: layout id + per-layer cell
-    /// index, not hardcoded positions). Defaults to recording order, matching Layout2x2Provider.</summary>
+    /// index, not hardcoded positions). Defaults to recording order, matching the layout's cell order.</summary>
     public int CellIndex { get; set; }
+
+    /// <summary>Flip this layer's picture left-to-right (selfie-style webcam footage reads naturally
+    /// mirrored). Video only; a property of the slot rather than the take, so a retake keeps it.</summary>
+    public bool Mirror { get; set; }
 
     /// <summary>Melodyne ARA archive key, keyed by (layerId, sourceAudioHash) once Phase 2A lands.
     /// Null until then -- this field exists now so Phase 5's persistence format doesn't need to
@@ -76,7 +89,7 @@ public class LayerModel
 
 public class LayerCollection
 {
-    public const int MaxLayers = 4;
+    public const int MaxLayers = 9;
 
     private readonly List<LayerModel> _layers = new();
 

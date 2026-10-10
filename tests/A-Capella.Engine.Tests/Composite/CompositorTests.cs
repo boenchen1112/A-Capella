@@ -22,7 +22,7 @@ public class CompositorTests
         var colors = new[] { SKColors.Red, SKColors.Green, SKColors.Blue, SKColors.Yellow };
         var frames = colors.Select(c => SolidColorBitmap(320, 240, c)).ToList();
 
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, frames.Count);
         var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
 
         // Sample the center of each expected cell: top-left, top-right, bottom-left, bottom-right.
@@ -39,7 +39,7 @@ public class CompositorTests
         const int canvasHeight = 480;
 
         var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.Red), SolidColorBitmap(320, 240, SKColors.Green) };
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, frames.Count);
 
         Assert.Equal(2, cellRects.Count);
 
@@ -63,7 +63,7 @@ public class CompositorTests
             SolidColorBitmap(320, 240, SKColors.Red),
             PlaceholderRenderer.CreateAudioOnlyPlaceholder(320, 240),
         };
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, frames.Count);
 
         var exception = Record.Exception(() => Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects));
 
@@ -80,7 +80,7 @@ public class CompositorTests
         const int canvasHeight = 480;
 
         var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.White), SolidColorBitmap(320, 240, SKColors.White) };
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, frames.Count);
         var labels = new List<CellLabel?>
         {
             new CellLabel(SKColors.Red, "Layer 1"),
@@ -105,7 +105,7 @@ public class CompositorTests
         const int canvasHeight = 480;
 
         var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.White) };
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, frames.Count);
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, frames.Count);
 
         var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects, labels: null);
 
@@ -123,7 +123,7 @@ public class CompositorTests
         const int canvasHeight = 480;
 
         var frames = new List<SKBitmap> { SolidColorBitmap(320, 240, SKColors.Red) };
-        var cellRects = Layout2x2Provider.GetCellRects(canvasWidth, canvasHeight, new[] { 1 });
+        var cellRects = GridLayoutCatalog.Grid2x2.GetCellRects(canvasWidth, canvasHeight, 0, new[] { 1 });
         var output = Compositor.Composite(canvasWidth, canvasHeight, frames, cellRects);
 
         AssertPixelNear(output, canvasWidth * 3 / 4, canvasHeight / 4, SKColors.Red);

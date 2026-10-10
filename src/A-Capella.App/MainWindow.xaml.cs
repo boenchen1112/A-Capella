@@ -13,6 +13,7 @@ using A_Capella.App.ViewModels;
 using A_Capella.Engine.Devices;
 using A_Capella.Engine.Export;
 using A_Capella.Engine.Host;
+using A_Capella.Engine.Metronome;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Preview;
 using A_Capella.Engine.Project;
@@ -111,6 +112,8 @@ public partial class MainWindow : Window
         EmptyCellOverlay.ItemsSource = _tracks;
         RestoreTracksFromLayers();   // Fixed 4-lane model: rows exist from app start, not grown on demand
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
+        foreach (var signature in TimeSignature.Presets) TimeSignatureCombo.Items.Add(signature);
+        ShowTimeSignature();
         SelectLane(_tracks[0]);
 
         _session.SaveStateChanged += UpdateWindowTitle;
@@ -265,6 +268,7 @@ public partial class MainWindow : Window
             if (!restore()) return false;
 
             MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
+            ShowTimeSignature();
             MasterVolumeSlider.Value = _session.MasterVolumeDb;
             RestoreTracksFromLayers();
             // Bug audit #9: keep polling any FabFilter editor still open across the undo. AFTER
@@ -336,6 +340,30 @@ public partial class MainWindow : Window
     }
 
     private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+
+    // ----- Per-layer timing nudge: -/+ on the strip (one undo step per click) -----
+
+    private static double NudgeStepMs() => (Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? 1 : 10;
+
+    private void NudgeEarlierButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, -NudgeStepMs());
+
+    private void NudgeLaterButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, NudgeStepMs());
+
+    private void NudgeRow(object sender, double deltaMs)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        row.Nudge(deltaMs);
+        StatusText.Text = $"{row.DisplayName} timing: {row.ManualOffsetDisplay}.";
+        PushUndoSnapshot();
+    }
+
+    private void NudgeLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.ManualOffsetMs == 0) return;
+        row.ResetNudge();
+        StatusText.Text = $"{row.DisplayName} timing reset.";
+        PushUndoSnapshot();
+    }
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
 
@@ -466,6 +494,30 @@ public partial class MainWindow : Window
     }
 
     private void MasterVolumeSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+
+    private bool _syncingTimeSignature;
+
+    /// <summary>Reflects the session's meter in the toolbar combo without it echoing back as an edit.</summary>
+    private void ShowTimeSignature()
+    {
+        _syncingTimeSignature = true;
+        try
+        {
+            var current = _session.MetronomeTimeSignature;
+            if (!TimeSignatureCombo.Items.Contains(current)) TimeSignatureCombo.Items.Add(current);   // a meter from a hand-edited file
+            TimeSignatureCombo.SelectedItem = current;
+        }
+        finally { _syncingTimeSignature = false; }
+    }
+
+    private void TimeSignatureCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingTimeSignature || _applyingHistory || TimeSignatureCombo.SelectedItem is not TimeSignature chosen) return;
+        if (chosen == _session.MetronomeTimeSignature) return;
+        _session.MetronomeTimeSignature = chosen;
+        StatusText.Text = $"Metronome: {chosen}.";
+        PushUndoSnapshot();
+    }
 
     private void MetronomeBpmTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
@@ -601,6 +653,52 @@ public partial class MainWindow : Window
         RecordButton.IsEnabled = freeCell is not null;
     }
 
+    /// <summary>Pushes the project's video settings (layout) into the preview engine; the engine
+    /// reads them when it (re)builds its per-cell frame sources, so call before RefreshAsync/Play.</summary>
+    private void SyncPreviewVideoSettings()
+    {
+        _previewEngine.ApplyVideoSettings(_session.Video);
+        var (width, height) = _session.Video.PreviewSize;
+        CompositeCanvas.Width = width;
+        CompositeCanvas.Height = height;
+    }
+
+    /// <summary>After layers are added or imported: switch to a layout with enough cells if the
+    /// current one is too small, and say so. The caller still pushes the undo step.</summary>
+    private void EnsureLayoutFitsLayers()
+    {
+        if (_session.EnsureLayoutFits())
+            StatusText.Text = $"Switched to a {_session.Video.Layout.Cells.Count}-cell layout to fit your layers.";
+    }
+
+    private void VideoSettingsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new VideoSettingsWindow(_session.Video) { Owner = this };
+        if (window.ShowDialog() != true || window.Result == _session.Video) return;
+
+        _session.Video = window.Result;
+        RefreshPreviewLive();
+        StatusText.Text = "Video settings updated.";
+        PushUndoSnapshot();
+    }
+
+    private void ChooseLayoutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        int required = _layers.Layers.Count == 0 ? 1 : _layers.Layers.Max(l => l.CellIndex) + 1;
+        var picker = new LayoutPickerWindow(_session.Video.LayoutId, required) { Owner = this };
+        if (picker.ShowDialog() != true || picker.SelectedLayoutId is null) return;
+        if (picker.SelectedLayoutId == _session.Video.LayoutId) return;
+
+        if (!_session.TrySetLayout(picker.SelectedLayoutId, out var error))
+        {
+            StatusText.Text = error ?? "That layout can't be used.";
+            return;
+        }
+        RefreshPreviewLive();
+        StatusText.Text = $"Layout: {_session.Video.Layout.Cells.Count} cells.";
+        PushUndoSnapshot();
+    }
+
     private void RecordChoice_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
@@ -638,10 +736,12 @@ public partial class MainWindow : Window
         }
 
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm,
-                                           retakeLayerId: retakeRow?.Layer?.LayerId) { Owner = this };
+                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature) { Owner = this };
         if (retakeRow is not null) dialog.Title = $"Re-record {retakeRow.DisplayName}";
         bool recorded = dialog.ShowDialog() == true;
         _session.MetronomeBpm = dialog.Bpm;
+        _session.MetronomeTimeSignature = dialog.TimeSignature;
+        ShowTimeSignature();
         return (dialog, recorded);
     }
 
@@ -664,6 +764,7 @@ public partial class MainWindow : Window
             dialog.CreatedLayer.CellIndex = row.SlotNumber - 1;
             row.Layer = dialog.CreatedLayer;
             if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
+            EnsureLayoutFitsLayers();
             UpdateLaneHeaderCount();
             RefreshPreviewLive();
             StatusText.Text = $"Recorded {row.DisplayName}.";
@@ -681,7 +782,7 @@ public partial class MainWindow : Window
         int? targetCell = LowestFreeCell();   // read BEFORE ShowDialog -- see bug audit #7 step 3
         if (targetCell is null)
         {
-            StatusText.Text = "Layer cap reached (4).";
+            StatusText.Text = $"Layer cap reached ({LayerCollection.MaxLayers}).";
             return;
         }
         OpenRecordSetup(() => RowForCell(targetCell.Value));
@@ -803,6 +904,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
 
         AttachUploadedFile(row, dialog.FileName);
+        EnsureLayoutFitsLayers();
         UpdateLaneHeaderCount();
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
@@ -811,13 +913,13 @@ public partial class MainWindow : Window
 
     /// <summary>Add > Import files as layers... and the mixer's "+ Import files..." button: one
     /// multi-select dialog; files (sorted by name, spec D3) fill free slots lowest-first up to the
-    /// 4-layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
+    /// layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
     /// (spec D2). Overflow is reported in StatusText, never a dialog.</summary>
     private void ImportFilesMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (_layers.Layers.Count >= LayerCollection.MaxLayers)
         {
-            StatusText.Text = "No empty layer slots (4-layer cap reached).";
+            StatusText.Text = $"No empty layer slots ({LayerCollection.MaxLayers}-layer cap reached).";
             return;
         }
 
@@ -833,6 +935,7 @@ public partial class MainWindow : Window
         foreach (var (cellIndex, filePath) in assignments)
             AttachUploadedFile(_tracks[cellIndex], filePath);
 
+        EnsureLayoutFitsLayers();
         UpdateLaneHeaderCount();
         if (assignments.Count > 0)
         {
@@ -848,7 +951,7 @@ public partial class MainWindow : Window
         static string Files(int n) => n == 1 ? "1 file" : $"{n} files";
         string text = $"Imported {Files(imported)}";
         if (skipped.Count > 0)
-            text += $"; {Files(skipped.Count)} skipped (4-layer cap reached): {string.Join(", ", skipped.Select(Path.GetFileName))}";
+            text += $"; {Files(skipped.Count)} skipped ({LayerCollection.MaxLayers}-layer cap reached): {string.Join(", ", skipped.Select(Path.GetFileName))}";
         return text + ".";
     }
 
@@ -1011,7 +1114,7 @@ public partial class MainWindow : Window
     // ----- Preview transport: Restart / Play-Stop / scrub / zoom -----
     //
     // Video and audio are re-decoded on every Play/Seek by PreviewPlaybackEngine (measured fast
-    // enough for the app's up-to-4-layer/small-clip scale -- see the throughput spike referenced
+    // enough for the app's up-to-9-layer/small-clip scale -- see the throughput spike referenced
     // in the engine's doc comment). Engine commands are awaited, never waited on, so a decode never
     // blocks input.
 
@@ -1080,6 +1183,7 @@ public partial class MainWindow : Window
     /// -- this is the "no manual refresh step" mechanism the spec calls for.</summary>
     private async void RefreshPreviewLive()
     {
+        SyncPreviewVideoSettings();
         if (_layers.Layers.Count == 0)
         {
             await AwaitPreviewCommand(_previewEngine.SetLayersAsync(_layers.Layers));
@@ -1129,6 +1233,7 @@ public partial class MainWindow : Window
 
         async Task SetLayersThenPlay()
         {
+            SyncPreviewVideoSettings();
             await _previewEngine.SetLayersAsync(_layers.Layers);
             await _previewEngine.PlayAsync();
         }
@@ -1438,7 +1543,7 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.StopAsync());      // bug audit #8: one audio graph at a time
         StatusText.Text = "Exporting...";                           // after the stop: AwaitPreviewCommand may write "Preview error: ..."
 
-        var (snapshotLayers, snapshotMasterVolumeDb, snapshotSongInMs, snapshotSongOutMs) = _session.SnapshotForExport();
+        var (snapshotLayers, snapshotMasterVolumeDb, snapshotSongInMs, snapshotSongOutMs, snapshotVideo) = _session.SnapshotForExport();
 
         // Built on the UI thread (candidate 3 / Improvement_Proposal_2026-09-24): Progress<T>
         // captures the current SynchronizationContext at construction, so every Report() call from
@@ -1457,7 +1562,7 @@ public partial class MainWindow : Window
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
                 exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
-                    rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs);
+                    rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs, video: snapshotVideo);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)
