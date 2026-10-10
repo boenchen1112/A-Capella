@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Persistence;
 using A_Capella.Engine.Project;
@@ -18,11 +19,10 @@ public class ProjectPersistenceTests
         layer0.MixParameters.GainDb = -6.5f;
         layer0.MixParameters.Pan = -0.3f;
         layer0.MixParameters.Mute = true;
-        layer0.MixParameters.LowShelfGainDb = 2.5f;
-        layer0.MixParameters.MidBellGainDb = -1.5f;
-        layer0.MixParameters.HighShelfGainDb = 3f;
-        layer0.MixParameters.NoiseGateThresholdDb = -45f;
-        layer0.MixParameters.NoiseGateReleaseMs = 150f;
+        layer0.MixParameters.CompressorPreset = new PresetRef("FabFilter Pro-C 3", "Basic", "Vocal");
+        layer0.MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Bright");
+        layer0.MixParameters.DeEsserPreset = new PresetRef("FabFilter Pro-DS", "Single Vocal", "Male Wide Band");
+        layer0.MixParameters.ReverbPreset = new PresetRef("FabFilter Pro-R 2", "_2 Small", "Studio A");
         layer0.MixParameters.PitchBackend = PitchBackendSelection.Automatic2B;
 
         var layer1 = layers.Add(LayerKind.UploadedAudioOnly, "layer1.wav");
@@ -73,11 +73,10 @@ public class ProjectPersistenceTests
                 Assert.Equal(original.MixParameters.Mute, loaded.MixParameters.Mute);
                 Assert.Equal(original.MixParameters.Solo, loaded.MixParameters.Solo);
                 Assert.Equal(original.MixParameters.Pan, loaded.MixParameters.Pan);
-                Assert.Equal(original.MixParameters.LowShelfGainDb, loaded.MixParameters.LowShelfGainDb);
-                Assert.Equal(original.MixParameters.MidBellGainDb, loaded.MixParameters.MidBellGainDb);
-                Assert.Equal(original.MixParameters.HighShelfGainDb, loaded.MixParameters.HighShelfGainDb);
-                Assert.Equal(original.MixParameters.NoiseGateThresholdDb, loaded.MixParameters.NoiseGateThresholdDb);
-                Assert.Equal(original.MixParameters.NoiseGateReleaseMs, loaded.MixParameters.NoiseGateReleaseMs);
+                Assert.Equal(original.MixParameters.CompressorPreset, loaded.MixParameters.CompressorPreset);
+                Assert.Equal(original.MixParameters.EqPreset, loaded.MixParameters.EqPreset);
+                Assert.Equal(original.MixParameters.DeEsserPreset, loaded.MixParameters.DeEsserPreset);
+                Assert.Equal(original.MixParameters.ReverbPreset, loaded.MixParameters.ReverbPreset);
                 Assert.Equal(original.MixParameters.PitchBackend, loaded.MixParameters.PitchBackend);
             }
         }

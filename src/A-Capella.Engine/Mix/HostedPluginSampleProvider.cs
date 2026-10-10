@@ -22,7 +22,7 @@ namespace A_Capella.Engine.Mix;
 /// exists solely for the reverb stage's tail extension (v6 P3 task 5), which is deliberately NOT
 /// trimmed away -- it's the desired lengthening of the layer's audible duration.
 /// </summary>
-public sealed class HostedPluginSampleProvider : ISampleProvider, ISlotBypassNode
+public sealed class HostedPluginSampleProvider : ISampleProvider
 {
     public const int DefaultBlockSize = 4096;
 

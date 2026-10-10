@@ -23,7 +23,7 @@ public class HostedPluginInstanceTests
     [Fact]
     public void CreateProcessRelease_HundredTimes_DoesNotLeakOrThrow()
     {
-        string path = HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-G"];
+        string path = HostedPluginCatalog.KnownPluginPaths["FabFilter Pro-C 3"];
         var inL = new float[BlockSize];
         var inR = new float[BlockSize];
         var outL = new float[BlockSize];

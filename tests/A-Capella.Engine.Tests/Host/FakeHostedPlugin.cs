@@ -106,5 +106,13 @@ public sealed class FakeHostedPluginFactory : IHostedPluginFactory, IHostedPlugi
         return plugin;
     }
 
-    public HostedPluginService CreateService() => new(this, dispatcher: null, factory: this);
+    public HostedPluginService CreateService() => new(this, dispatcher: null, factory: this, presets: new FakePresetStateBuilder());
+}
+
+/// <summary>Builds a state blob for any preset except one named "Missing", so tests don't need
+/// FabFilter's files on disk. The blob is the preset's own name, so a state shows which preset it carries.</summary>
+public sealed class FakePresetStateBuilder : A_Capella.Engine.Presets.IPresetStateBuilder
+{
+    public byte[]? Build(A_Capella.Engine.Presets.PresetRef preset, byte[] defaultState) =>
+        preset.Name == "Missing" ? null : System.Text.Encoding.UTF8.GetBytes(preset.Name);
 }

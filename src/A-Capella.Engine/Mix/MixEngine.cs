@@ -1,6 +1,7 @@
 using System.Linq;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Pitch;
+using A_Capella.Engine.Presets;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -53,13 +54,6 @@ public class MixEngine : IDisposable
     // stale if PositionMs isn't advancing rather than something this class needs to clear itself.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, MeterTapSampleProvider> _layerTaps = new();
     private volatile MeterTapSampleProvider? _masterTap;
-
-    // Live bypassable slot nodes from the most recent BuildLayerChain call, keyed by layerId then
-    // stage name. Swapped in wholesale per layer (same pattern as _layerTaps) so a layer's entry
-    // always reflects exactly what that layer's last rebuild actually wired into the chain -- a
-    // stage that didn't get built this time (disabled and never used) just isn't in the dictionary,
-    // and TrySetSlotEnabled below correctly reports "no live node" for it.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, IReadOnlyDictionary<string, ISlotBypassNode>> _slotNodes = new();
 
     // Background pitch rendering: when NonBlockingPitchCorrection is on (PreviewPlaybackEngine
     // only -- see GetPitchCorrectedSamples), a layer whose pitch correction isn't cached yet plays
@@ -166,43 +160,6 @@ public class MixEngine : IDisposable
     public double GetTailSeconds(int layerId, LayerMixParameters parameters, int sampleRate = 44100) =>
         FxSlots.All.Sum(slot => slot.TailSeconds(layerId, parameters, _hostedService, sampleRate));
 
-    /// <summary>Fetches (lazily creating) the same live hosted instance BuildLayerChain uses for
-    /// (layerId, stage), for the UI's "Open Pro-X..." launcher buttons to call ShowEditorWindow on
-    /// -- both go through the one shared HostedPluginService, so this is never an orphaned second
-    /// instance (audit A1). Safe to call from any thread: the service marshals the actual creation
-    /// onto the dispatcher thread.</summary>
-    public IHostedPlugin GetOrCreateHostedInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
-        _hostedService.GetOrCreateInstance(layerId, stage, pluginLabel, initialState, sampleRate);
-
-    /// <summary>Pulls each stage's live VST3 state into parameters' matching *HostedState field, for
-    /// every stage that already has a live instance (v7 Q0 task 3, audit A2) -- call before a
-    /// project snapshot (save/export/undo) is taken so the file reflects the user's actual editor
-    /// tweaks, not just the state as of whenever the editor was first opened.</summary>
-    public void SyncLiveStateIntoParameters(int layerId, LayerMixParameters parameters)
-    {
-        foreach (var slot in FxSlots.All)
-        {
-            var instance = _hostedService.TryGetLiveInstance(layerId, slot.Stage);
-            if (instance is not null)
-                slot.SetHostedState(parameters, _hostedService.PullLiveState(instance));
-        }
-    }
-
-    /// <summary>Pushes parameters' saved *HostedState blobs into any already-live instances for
-    /// this layerId (v7 Q0 task 3, audit B7) -- call after restoring a project (load, undo/redo),
-    /// since GetOrCreateInstance's initialState only ever applies at first creation and a live
-    /// instance surviving across the restore would otherwise keep its old (pre-restore) state.</summary>
-    public void PushSavedStateIntoLiveInstances(int layerId, LayerMixParameters parameters)
-    {
-        foreach (var slot in FxSlots.All)
-        {
-            var instance = _hostedService.TryGetLiveInstance(layerId, slot.Stage);
-            var state = slot.GetHostedState(parameters);
-            if (instance is not null && state is { Length: > 0 })
-                _hostedService.PushState(instance, state);
-        }
-    }
-
     /// <summary>Releases every live hosted instance and ARA session -- for a whole-project
     /// replacement (see ProjectSession.New/Open). Layer ids are positional and restart at 0 per
     /// project, so without this the next project's layer 0 would silently inherit the previous
@@ -213,39 +170,21 @@ public class MixEngine : IDisposable
     {
         _melodyneBackends.Clear();
         _layerTaps.Clear();
-        _slotNodes.Clear();
         // Doesn't cancel a render already running on a worker thread -- nothing here can -- but
         // stops this instance from treating it as something a future layer should still wait on.
         _pendingPitchRenders.Clear();
         _hostedService.ReleaseAll();
     }
 
-    /// <summary>Flips a slot's live bypass flag on the running chain instead of rebuilding it --
-    /// lets a power-toggle click apply instantly during playback. Returns false when the caller
-    /// must fall back to a full preview refresh instead: the slot extends the layer's tail
-    /// (reverb -- toggling it changes DurationMs, which a bypass flip can't), or there's no live
-    /// node for (layerId, stage) in the most recent chain build (the slot was never enabled yet, so
-    /// nothing is there to flip).</summary>
-    public bool TrySetSlotEnabled(int layerId, string stage, bool enabled)
-    {
-        var slot = FxSlots.All.FirstOrDefault(s => s.Stage == stage);
-        if (slot is null || slot.ExtendsTail) return false;
-        if (!_slotNodes.TryGetValue(layerId, out var stages)) return false;
-        if (!stages.TryGetValue(stage, out var node)) return false;
-
-        node.Bypassed = !enabled;
-        return true;
-    }
-
-    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f) =>
-        BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb).Mix;
+    public ISampleProvider BuildMix(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f, PresetRef? masterLimiter = null) =>
+        BuildMixWithMasterVolumeHandle(layers, outputSampleRate, masterVolumeDb, masterLimiter).Mix;
 
     /// <summary>Same chain as BuildMix, but also returns the master-volume-only VolumeSampleProvider
     /// node so a live caller (PreviewPlaybackEngine) can update its Volume mid-playback instead of
     /// only picking up a new masterVolumeDb on the next full rebuild -- BuildMix alone bakes
     /// masterVolumeDb into the graph once at build time, which is why a real-time master-volume
     /// slider previously had no audible effect until the next Play/Seek.</summary>
-    public (ISampleProvider Mix, VolumeSampleProvider MasterVolumeStage) BuildMixWithMasterVolumeHandle(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f)
+    public (ISampleProvider Mix, VolumeSampleProvider MasterVolumeStage) BuildMixWithMasterVolumeHandle(IReadOnlyList<MixLayerInput> layers, int outputSampleRate = 44100, float masterVolumeDb = 0f, PresetRef? masterLimiter = null)
     {
         bool anySolo = layers.Any(l => l.Parameters.Solo);
         var mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(outputSampleRate, 2));
@@ -264,13 +203,36 @@ public class MixEngine : IDisposable
         var headroomStage = new VolumeSampleProvider(mixer) { Volume = headroomGain };
         var masterVolumeStage = new VolumeSampleProvider(headroomStage) { Volume = DbToLinear(masterVolumeDb) };
 
-        // Bus limiter sits after master volume so preview and export share one ceiling regardless
-        // of how loud the mix or the master fader is pushed.
-        ISampleProvider mix = new LimiterSampleProvider(masterVolumeStage, MasterCeilingDb, makeupGainDb: 0f);
+        // The master limiter sits after master volume so preview and export share one ceiling
+        // regardless of how loud the mix or the master fader is pushed.
+        ISampleProvider mix = BuildMasterLimiter(masterVolumeStage, outputSampleRate, masterLimiter);
 
         var masterTap = new MeterTapSampleProvider(mix);
         _masterTap = masterTap;
         return (masterTap, masterVolumeStage);
+    }
+
+    /// <summary>Layer id the master limiter's hosted instance is cached under (real layers are >= 0).</summary>
+    internal const int MasterLimiterLayerId = -1;
+    internal const string MasterLimiterStage = "MasterLimiter";
+    public const string MasterLimiterPluginLabel = "FabFilter Pro-L 2";
+
+    /// <summary>The master limiter: Pro-L 2 with the chosen factory preset. With no preset chosen, or
+    /// Pro-L 2 missing, a fixed brick-wall ceiling still guards the mix so an export can't clip -- it
+    /// is a safety net, not an effect, and has no settings.</summary>
+    private ISampleProvider BuildMasterLimiter(ISampleProvider source, int sampleRate, PresetRef? preset)
+    {
+        if (preset is not null && _hostedService.IsAvailable(MasterLimiterPluginLabel))
+        {
+            var instance = _hostedService.GetOrCreatePresetInstance(MasterLimiterLayerId, MasterLimiterStage, MasterLimiterPluginLabel, preset, sampleRate);
+            if (instance is not null)
+            {
+                _hostedService.Reset(instance);
+                var hosted = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize, 0);
+                return hosted.LatencySamples > 0 ? new LatencySkipSampleProvider(hosted, hosted.LatencySamples) : hosted;
+            }
+        }
+        return new LimiterSampleProvider(source, MasterCeilingDb, makeupGainDb: 0f);
     }
 
     /// <summary>Frozen layers (LayerMixParameters.Frozen) skip the live chain entirely and instead
@@ -293,10 +255,6 @@ public class MixEngine : IDisposable
 
         var layerTap = new MeterTapSampleProvider(withGain);
         _layerTaps[layer.LayerId] = layerTap;
-        // A frozen layer has no live bypassable nodes (its FX rack isn't built at all) -- drop any
-        // stale entry from before it was frozen so TrySetSlotEnabled correctly reports "nothing to
-        // flip" rather than toggling a node that isn't actually wired into this chain anymore.
-        _slotNodes.TryRemove(layer.LayerId, out _);
         return layerTap;
     }
 
@@ -448,45 +406,31 @@ public class MixEngine : IDisposable
             chain = new WdlResamplingSampleProvider(chain, outputSampleRate);
 
         int totalHostedLatency = 0;
-        var slotNodes = new Dictionary<string, ISlotBypassNode>();
 
-        chain = InsertSlots(FxSlotPosition.PrePan, chain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
+        chain = InsertSlots(FxSlotPosition.PrePan, chain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
 
         ISampleProvider afterPan = new PanningSampleProvider(chain) { Pan = parameters.Pan };
-        afterPan = InsertSlots(FxSlotPosition.PostPan, afterPan, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
+        afterPan = InsertSlots(FxSlotPosition.PostPan, afterPan, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency);
 
         bool effectiveMute = parameters.Mute || (anySolo && !parameters.Solo);
         float linearGain = effectiveMute ? 0f : DbToLinear(parameters.GainDb);
         ISampleProvider withGain = new VolumeSampleProvider(afterPan) { Volume = linearGain };
-        withGain = InsertSlots(FxSlotPosition.PostGain, withGain, layer.LayerId, parameters, outputSampleRate, ref totalHostedLatency, slotNodes);
 
         ISampleProvider finished = totalHostedLatency > 0 ? new LatencySkipSampleProvider(withGain, totalHostedLatency) : withGain;
-
-        // Re-applies each node's bypass flag from parameters one last time, right before this
-        // chain goes live: a slot power toggle landing on TrySetSlotEnabled between this method
-        // reading `parameters` above and this point would otherwise flip the node by reference --
-        // safe once it's actually wired into the chain, but if that race lands mid-build, the node
-        // it flipped could still get overwritten by the freshly-built one below with its original,
-        // now-stale enabled state. Re-asserting here closes that window.
-        foreach (var slot in FxSlots.All)
-            if (slotNodes.TryGetValue(slot.Stage, out var node)) node.Bypassed = !slot.IsEnabled(parameters);
 
         if (forFreezeRender) return finished;
 
         var layerTap = new MeterTapSampleProvider(finished);
         _layerTaps[layer.LayerId] = layerTap;
-        _slotNodes[layer.LayerId] = slotNodes;
         return layerTap;
     }
 
-    private ISampleProvider InsertSlots(FxSlotPosition position, ISampleProvider source, int layerId, LayerMixParameters parameters, int sampleRate, ref int totalHostedLatency, Dictionary<string, ISlotBypassNode> slotNodes)
+    private ISampleProvider InsertSlots(FxSlotPosition position, ISampleProvider source, int layerId, LayerMixParameters parameters, int sampleRate, ref int totalHostedLatency)
     {
         foreach (var slot in FxSlots.All)
         {
             if (slot.Position != position) continue;
-            var result = slot.Insert(source, layerId, parameters, _hostedService, sampleRate, ref totalHostedLatency);
-            source = result.Provider;
-            if (result.Node is not null) slotNodes[slot.Stage] = result.Node;
+            source = slot.Insert(source, layerId, parameters, _hostedService, sampleRate, ref totalHostedLatency);
         }
         return source;
     }

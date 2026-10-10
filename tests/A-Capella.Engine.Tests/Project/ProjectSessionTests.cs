@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Project;
 using A_Capella.Engine.Tests.Host;
@@ -26,8 +27,10 @@ public class ProjectSessionTests : IDisposable
         foreach (var f in _tempFiles) File.Delete(f);
     }
 
+    private static readonly PresetRef EqChoice = new(FxSlots.Eq.PluginLabel, "", "Bright");
+
     private FakeHostedPlugin OpenEqEditorLiveInstance(LayerModel layer) =>
-        (FakeHostedPlugin)_mixEngine.GetOrCreateHostedInstance(layer.LayerId, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, FxSlots.Eq.GetHostedState(layer.MixParameters), SampleRate);
+        (FakeHostedPlugin)_service.GetOrCreatePresetInstance(layer.LayerId, FxSlots.Eq.Stage, FxSlots.Eq.PluginLabel, layer.MixParameters.EqPreset ?? EqChoice, SampleRate)!;
 
     private string TempProjectPath()
     {
@@ -73,36 +76,6 @@ public class ProjectSessionTests : IDisposable
     }
 
     [Fact]
-    public void Snapshot_CapturesLivePluginEditorTweaks()
-    {
-        var session = new ProjectSession(_mixEngine);
-        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
-        OpenEqEditorLiveInstance(layer).TweakInEditor(new byte[] { 5, 6 });
-
-        var dto = session.Snapshot();
-
-        Assert.Equal(Convert.ToBase64String(new byte[] { 5, 6 }), dto.Layers.Single().MixParameters.EqHostedStateBase64);
-    }
-
-    [Fact]
-    public void Undo_PushesTheRestoredPluginStateIntoTheStillLiveInstance()
-    {
-        var session = new ProjectSession(_mixEngine);
-        var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
-        var plugin = OpenEqEditorLiveInstance(layer);
-
-        plugin.TweakInEditor(new byte[] { 1 });
-        session.CommitEdit();
-        plugin.TweakInEditor(new byte[] { 2 });
-        session.CommitEdit();
-
-        session.Undo();
-
-        Assert.Equal(new byte[] { 1 }, plugin.State);
-        Assert.Equal(new byte[] { 1 }, session.Layers.Layers.Single().MixParameters.EqHostedState);
-    }
-
-    [Fact]
     public void Undo_StillReusesTheSameLiveInstance()
     {
         // Guards against over-fixing bug audit #5 by releasing hosted instances on undo: within one
@@ -113,9 +86,9 @@ public class ProjectSessionTests : IDisposable
         var layer = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
         var plugin = OpenEqEditorLiveInstance(layer);
 
-        plugin.TweakInEditor(new byte[] { 1 });
+        layer.MixParameters.EqPreset = EqChoice;
         session.CommitEdit();
-        plugin.TweakInEditor(new byte[] { 2 });
+        layer.MixParameters.EqPreset = EqChoice with { Name = "Warm" };
         session.CommitEdit();
 
         session.Undo();
@@ -125,39 +98,11 @@ public class ProjectSessionTests : IDisposable
     }
 
     [Fact]
-    public void Open_DoesNotLeakThePreviousProjectsPluginStateIntoTheOpenedProject()
-    {
-        // project B: saved with NO hosted EQ state
-        var saved = new ProjectSession(_mixEngine);
-        saved.Layers.Add(LayerKind.UploadedVideo, "clip.mp4");
-        string path = TempProjectPath();
-        saved.Save(path);
-
-        // project A: live in the session, layer 0, EQ tweaked in its editor
-        var session = new ProjectSession(_mixEngine);
-        var layerA = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
-        OpenEqEditorLiveInstance(layerA).TweakInEditor(new byte[] { 9, 9, 9 });
-        session.CommitEdit();
-
-        session.Open(path);
-
-        Assert.Null(session.Layers.Layers.Single().MixParameters.EqHostedState);
-
-        // The saved file itself must be clean too, not just the in-memory session.
-        string path2 = TempProjectPath();
-        session.Save(path2);
-        var reloaded = new ProjectSession(_mixEngine);
-        reloaded.Open(path2);
-        Assert.Null(reloaded.Layers.Layers.Single().MixParameters.EqHostedState);
-    }
-
-    [Fact]
     public void New_ThenAddLayer_GetsAFreshPluginInstance()
     {
         var session = new ProjectSession(_mixEngine);
         var layerA = session.Layers.Add(LayerKind.UploadedAudioOnly, "a.wav");
         var pluginA = OpenEqEditorLiveInstance(layerA);
-        pluginA.TweakInEditor(new byte[] { 7 });
 
         session.New();
         var layerB = session.Layers.Add(LayerKind.UploadedAudioOnly, "b.wav");
@@ -165,7 +110,7 @@ public class ProjectSessionTests : IDisposable
 
         Assert.NotSame(pluginA, pluginB);
         Assert.True(pluginA.Disposed);
-        Assert.Empty(pluginB.State);
+        Assert.Equal("Bright", System.Text.Encoding.UTF8.GetString(pluginB.State));
     }
 
     [Fact]
@@ -218,7 +163,7 @@ public class ProjectSessionTests : IDisposable
         layer.MixParameters.GainDb = -1f;
         session.MasterVolumeDb = -5f;
 
-        var (layers, masterVolumeDb, songInMs, songOutMs, _) = session.SnapshotForExport();
+        var (layers, masterVolumeDb, songInMs, songOutMs, _, _) = session.SnapshotForExport();
         layer.MixParameters.GainDb = -20f;
         session.MasterVolumeDb = 0f;
 
@@ -395,7 +340,7 @@ public class ProjectSessionTests : IDisposable
         session.CommitEdit();
 
         var plugin = OpenEqEditorLiveInstance(layer);
-        plugin.TweakInEditor(new byte[] { 4, 2 });
+        layer.MixParameters.EqPreset = EqChoice;
         session.CommitEdit();
 
         int layerId = layer.LayerId;
@@ -404,7 +349,7 @@ public class ProjectSessionTests : IDisposable
 
         Assert.Equal(layerId, layer.LayerId);
         Assert.Same(plugin, OpenEqEditorLiveInstance(layer));
-        Assert.Equal(Convert.ToBase64String(new byte[] { 4, 2 }), session.Snapshot().Layers.Single().MixParameters.EqHostedStateBase64);
+        Assert.Equal(EqChoice, session.Snapshot().Layers.Single().MixParameters.EqPreset);
 
         session.Undo();
         var restored = session.Layers.Layers.Single();
@@ -415,7 +360,7 @@ public class ProjectSessionTests : IDisposable
         Assert.Equal(0, restored.CalibratedOffsetMs);
         Assert.False(plugin.Disposed);
         Assert.Same(plugin, OpenEqEditorLiveInstance(restored));
-        Assert.Equal(new byte[] { 4, 2 }, plugin.State);
+        Assert.Equal(EqChoice, restored.MixParameters.EqPreset);
 
         session.Redo();
         var redone = session.Layers.Layers.Single();
@@ -458,7 +403,6 @@ public class ProjectSessionTests : IDisposable
     [InlineData("literal null", "null")]
     [InlineData("unknown layer Kind", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"Bogus\",\"SourcePath\":\"x.wav\"}]}")]
     [InlineData("null Layers", "{\"LayoutId\":\"2x2\",\"Layers\":null}")]
-    [InlineData("bad hosted-state base64", "{\"LayoutId\":\"2x2\",\"Layers\":[{\"LayerId\":0,\"Kind\":\"RecordedAV\",\"SourcePath\":\"x.wav\",\"MixParameters\":{\"EqHostedStateBase64\":\"!!\"}}]}")]
     [InlineData("ten layers", "{\"LayoutId\":\"3x3\",\"Layers\":[" + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}," + "{\"Kind\":\"RecordedAV\"}]}")]
     public void FailedOpen_KeepsTheCurrentProjectsLivePluginInstances(string description, string? fileContent)
     {
@@ -691,7 +635,7 @@ public class ProjectSessionTests : IDisposable
         session.SongInMs = 2000;
         session.SongOutMs = 6000;
 
-        var (_, _, songInMs, songOutMs, _) = session.SnapshotForExport();
+        var (_, _, songInMs, songOutMs, _, _) = session.SnapshotForExport();
 
         Assert.Equal(2000, songInMs);
         Assert.Equal(6000, songOutMs);

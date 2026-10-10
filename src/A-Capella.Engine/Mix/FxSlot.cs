@@ -1,54 +1,44 @@
 using A_Capella.Engine.Host;
+using A_Capella.Engine.Presets;
 using NAudio.Wave;
 
 namespace A_Capella.Engine.Mix;
 
-/// <summary>Where in a layer's chain a slot inserts: mono before pan, or stereo after pan/gain.</summary>
+/// <summary>Where in a layer's chain a slot inserts: mono before pan, or stereo after pan.</summary>
 public enum FxSlotPosition
 {
     PrePan,
     PostPan,
-    PostGain,
 }
 
-/// <summary>What FxSlot.Insert wired into the chain: the provider to read from, and -- if that
-/// provider supports being bypassed in place -- the node MixEngine should register so a later slot
-/// power toggle can flip it without rebuilding anything. Node is null for a slot that wasn't built
-/// at all (disabled and never used).</summary>
-internal readonly record struct SlotInsertResult(NAudio.Wave.ISampleProvider Provider, ISlotBypassNode? Node);
-
 /// <summary>
-/// One FL-style insert slot in a layer's FX rack: its enabled flag, its hosted FabFilter plugin
-/// (with the saved VST3 state blob), and its native fallback when that plugin isn't installed.
-/// Slots are off by default (audit A4). A slot with no native fallback (reverb) is skipped when its
-/// plugin is missing. The stage name keys the shared hosted instance cache, so the UI's editor
-/// launcher and the chain always reach the same live instance (audit A1).
+/// One effect in a layer's rack: a hosted FabFilter plugin driven only by a choice of factory
+/// preset (no preset = off). A missing plugin, or a preset that can't be found, leaves the audio
+/// untouched. The stage name keys the shared hosted instance cache, so the chain always reaches
+/// the same live instance for a layer.
 /// </summary>
 public sealed class FxSlot
 {
-    private readonly Func<LayerMixParameters, bool> _isEnabled;
-    private readonly Func<LayerMixParameters, byte[]?> _getHostedState;
-    private readonly Action<LayerMixParameters, byte[]?> _setHostedState;
-    private readonly Func<ISampleProvider, LayerMixParameters, ISampleProvider>? _buildNative;
+    private readonly Func<LayerMixParameters, PresetRef?> _getPreset;
+    private readonly Action<LayerMixParameters, PresetRef?> _setPreset;
 
     internal FxSlot(
-        string stage, string pluginLabel, FxSlotPosition position, bool extendsTail,
-        Func<LayerMixParameters, bool> isEnabled,
-        Func<LayerMixParameters, byte[]?> getHostedState,
-        Action<LayerMixParameters, byte[]?> setHostedState,
-        Func<ISampleProvider, LayerMixParameters, ISampleProvider>? buildNative)
+        string stage, string title, string pluginLabel, FxSlotPosition position, bool extendsTail,
+        Func<LayerMixParameters, PresetRef?> getPreset, Action<LayerMixParameters, PresetRef?> setPreset)
     {
         Stage = stage;
+        Title = title;
         PluginLabel = pluginLabel;
         Position = position;
         ExtendsTail = extendsTail;
-        _isEnabled = isEnabled;
-        _getHostedState = getHostedState;
-        _setHostedState = setHostedState;
-        _buildNative = buildNative;
+        _getPreset = getPreset;
+        _setPreset = setPreset;
     }
 
     public string Stage { get; }
+
+    /// <summary>What the UI calls this effect, e.g. "Compressor".</summary>
+    public string Title { get; }
     public string PluginLabel { get; }
     public FxSlotPosition Position { get; }
 
@@ -56,83 +46,56 @@ public sealed class FxSlot
     /// lengthens the layer; other slots' tails are flushed but not counted as extra duration.</summary>
     public bool ExtendsTail { get; }
 
-    public bool HasNativeFallback => _buildNative is not null;
+    public PresetRef? GetPreset(LayerMixParameters parameters) => _getPreset(parameters);
+    public void SetPreset(LayerMixParameters parameters, PresetRef? preset) => _setPreset(parameters, preset);
+    public bool IsEnabled(LayerMixParameters parameters) => GetPreset(parameters) is not null;
 
-    public bool IsEnabled(LayerMixParameters parameters) => _isEnabled(parameters);
-    public byte[]? GetHostedState(LayerMixParameters parameters) => _getHostedState(parameters);
-    public void SetHostedState(LayerMixParameters parameters, byte[]? state) => _setHostedState(parameters, state);
-
-    /// <summary>Inserts this slot after source: the hosted plugin if installed (reset first so a
+    /// <summary>Inserts this slot after source: the plugin with its preset loaded (reset first so a
     /// reused instance doesn't replay the last run's buffered audio; its latency added to
-    /// totalLatency for the layer's single trim), else the native fallback, else passthrough. Also
-    /// returns the live bypassable node (if any) so MixEngine can register it for in-place slot
-    /// power toggling later, without a full chain rebuild.
-    ///
-    /// A native-fallback stage is always built, enabled or not (cheap, and lets its power toggle
-    /// flip a live bypass flag instead of rebuilding). A hosted stage is only built when enabled or
-    /// already live for this (layerId, stage) -- building a disabled, never-used hosted stage would
-    /// create a plugin instance nobody asked for. A tail-extending stage (reverb) is excluded from
-    /// that live-but-disabled case: a disabled reverb kept live would still flush its tail past the
-    /// layer's own computed duration, so it stays exactly as before -- built only when enabled.</summary>
-    internal SlotInsertResult Insert(ISampleProvider source, int layerId, LayerMixParameters parameters, HostedPluginService hosted, int sampleRate, ref int totalLatency)
+    /// totalLatency for the layer's single trim), or just source when the slot is off, the plugin
+    /// isn't installed, or the preset isn't found.</summary>
+    internal ISampleProvider Insert(ISampleProvider source, int layerId, LayerMixParameters parameters, HostedPluginService hosted, int sampleRate, ref int totalLatency)
     {
-        bool enabled = IsEnabled(parameters);
+        var preset = GetPreset(parameters);
+        if (preset is null || !hosted.IsAvailable(PluginLabel)) return source;
 
-        if (!hosted.IsAvailable(PluginLabel))
-        {
-            if (_buildNative is null) return new SlotInsertResult(source, null);
-            var processed = _buildNative(source, parameters);
-            var nativeNode = new BypassableSampleProvider(source, processed) { Bypassed = !enabled };
-            return new SlotInsertResult(nativeNode, nativeNode);
-        }
+        var instance = hosted.GetOrCreatePresetInstance(layerId, Stage, PluginLabel, preset, sampleRate);
+        if (instance is null) return source;
 
-        bool keepLiveButDisabled = !ExtendsTail && !enabled && hosted.TryGetLiveInstance(layerId, Stage) is not null;
-        if (!enabled && !keepLiveButDisabled) return new SlotInsertResult(source, null);
-
-        var instance = hosted.GetOrCreateInstance(layerId, Stage, PluginLabel, GetHostedState(parameters), sampleRate);
         hosted.Reset(instance);
         int tailFrames = ExtendsTail ? (int)(instance.TailSeconds * sampleRate) : 0;
-        var provider = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames) { Bypassed = !enabled };
+        var provider = new HostedPluginSampleProvider(source, instance, HostedPluginSampleProvider.DefaultBlockSize, tailFrames);
         totalLatency += provider.LatencySamples;
-        return new SlotInsertResult(provider, provider);
+        return provider;
     }
 
     /// <summary>How far this slot extends the layer past its source, in seconds.</summary>
     internal double TailSeconds(int layerId, LayerMixParameters parameters, HostedPluginService hosted, int sampleRate)
     {
-        if (!ExtendsTail || !IsEnabled(parameters) || !hosted.IsAvailable(PluginLabel)) return 0;
-        return hosted.GetOrCreateInstance(layerId, Stage, PluginLabel, GetHostedState(parameters), sampleRate).TailSeconds;
+        var preset = GetPreset(parameters);
+        if (!ExtendsTail || preset is null || !hosted.IsAvailable(PluginLabel)) return 0;
+        return hosted.GetOrCreatePresetInstance(layerId, Stage, PluginLabel, preset, sampleRate)?.TailSeconds ?? 0;
     }
 }
 
-/// <summary>The fixed FX rack every layer has, in chain order.</summary>
+/// <summary>The fixed effect rack every layer has, in chain order.</summary>
 public static class FxSlots
 {
-    public static readonly FxSlot NoiseGate = new(
-        "NoiseGate", "FabFilter Pro-G", FxSlotPosition.PrePan, extendsTail: false,
-        p => p.NoiseGateEnabled, p => p.NoiseGateHostedState, (p, s) => p.NoiseGateHostedState = s,
-        (source, p) => new NoiseGateSampleProvider(source, p.NoiseGateThresholdDb, p.NoiseGateReleaseMs));
-
     public static readonly FxSlot Compressor = new(
-        "Compressor", "FabFilter Pro-C 3", FxSlotPosition.PrePan, extendsTail: false,
-        p => p.CompressorEnabled, p => p.CompressorHostedState, (p, s) => p.CompressorHostedState = s,
-        (source, p) => new CompressorSampleProvider(source, p.CompressorThresholdDb, p.CompressorRatio));
+        "Compressor", "Compressor", "FabFilter Pro-C 3", FxSlotPosition.PrePan, extendsTail: false,
+        p => p.CompressorPreset, (p, v) => p.CompressorPreset = v);
 
     public static readonly FxSlot Eq = new(
-        "Eq", "FabFilter Pro-Q 4", FxSlotPosition.PrePan, extendsTail: false,
-        p => p.EqEnabled, p => p.EqHostedState, (p, s) => p.EqHostedState = s,
-        (source, p) => new ThreeBandEqSampleProvider(source, p.LowShelfGainDb, p.MidBellGainDb, p.HighShelfGainDb));
+        "Eq", "EQ", "FabFilter Pro-Q 4", FxSlotPosition.PrePan, extendsTail: false,
+        p => p.EqPreset, (p, v) => p.EqPreset = v);
 
-    /// <summary>Hosted-only (Pro-R 2): no native fallback, per the plan's v6 P3 task 5.</summary>
+    public static readonly FxSlot DeEsser = new(
+        "DeEsser", "De-esser", "FabFilter Pro-DS", FxSlotPosition.PrePan, extendsTail: false,
+        p => p.DeEsserPreset, (p, v) => p.DeEsserPreset = v);
+
     public static readonly FxSlot Reverb = new(
-        "Reverb", "FabFilter Pro-R 2", FxSlotPosition.PostPan, extendsTail: true,
-        p => p.ReverbEnabled, p => p.ReverbHostedState, (p, s) => p.ReverbHostedState = s,
-        buildNative: null);
+        "Reverb", "Reverb", "FabFilter Pro-R 2", FxSlotPosition.PostPan, extendsTail: true,
+        p => p.ReverbPreset, (p, v) => p.ReverbPreset = v);
 
-    public static readonly FxSlot Limiter = new(
-        "Limiter", "FabFilter Pro-L 2", FxSlotPosition.PostGain, extendsTail: false,
-        p => p.LimiterEnabled, p => p.LimiterHostedState, (p, s) => p.LimiterHostedState = s,
-        (source, p) => new LimiterSampleProvider(source, p.LimiterCeilingDb, p.LimiterGainDb));
-
-    public static readonly IReadOnlyList<FxSlot> All = new[] { NoiseGate, Compressor, Eq, Reverb, Limiter };
+    public static readonly IReadOnlyList<FxSlot> All = new[] { Compressor, Eq, DeEsser, Reverb };
 }

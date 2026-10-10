@@ -296,6 +296,67 @@ extern "C"
         params[index]->setValueNotifyingHost(value);
     }
 
+    // The plugin's displayed text for a normalized value (e.g. "-18.0 dB"), without changing the
+    // parameter. Lets the caller map between what the plugin shows and its 0..1 range.
+    __declspec(dllexport) int aca_get_parameter_text(void* handle, int index, float value, char* outText, int outTextSize)
+    {
+        if (handle == nullptr) return 0;
+        auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
+        if (index < 0 || index >= params.size()) return 0;
+        copyToBuffer(outText, outTextSize, params[index]->getText(value, 512));
+        return 1;
+    }
+
+    // The normalized value the plugin assigns to a piece of display text (the reverse of the above).
+    __declspec(dllexport) float aca_get_parameter_value_for_text(void* handle, int index, const char* text)
+    {
+        if (handle == nullptr || text == nullptr) return 0.0f;
+        auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
+        if (index < 0 || index >= params.size()) return 0.0f;
+        return params[index]->getValueForText(juce::String::fromUTF8(text));
+    }
+
+    // How many distinct values the parameter has (2 for a switch, N for an N-way choice); a very
+    // large number for a continuous parameter.
+    __declspec(dllexport) int aca_get_parameter_num_steps(void* handle, int index)
+    {
+        if (handle == nullptr) return 0;
+        auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
+        if (index < 0 || index >= params.size()) return 0;
+        return params[index]->getNumSteps();
+    }
+
+    // The plugin's own program (preset) list, when it exposes one. A plugin with no list reports
+    // a count of 0 or 1.
+    __declspec(dllexport) int aca_get_program_count(void* handle)
+    {
+        if (handle == nullptr) return 0;
+        return static_cast<AcaPluginInstance*>(handle)->instance->getNumPrograms();
+    }
+
+    __declspec(dllexport) int aca_get_program_name(void* handle, int index, char* outName, int outNameSize)
+    {
+        if (handle == nullptr) return 0;
+        auto* plugin = static_cast<AcaPluginInstance*>(handle)->instance.get();
+        if (index < 0 || index >= plugin->getNumPrograms()) return 0;
+        copyToBuffer(outName, outNameSize, plugin->getProgramName(index));
+        return 1;
+    }
+
+    __declspec(dllexport) int aca_get_current_program(void* handle)
+    {
+        if (handle == nullptr) return -1;
+        return static_cast<AcaPluginInstance*>(handle)->instance->getCurrentProgram();
+    }
+
+    __declspec(dllexport) void aca_set_current_program(void* handle, int index)
+    {
+        if (handle == nullptr) return;
+        auto* plugin = static_cast<AcaPluginInstance*>(handle)->instance.get();
+        if (index < 0 || index >= plugin->getNumPrograms()) return;
+        plugin->setCurrentProgram(index);
+    }
+
     // v7 Q0 task 5 (audit A5): clears a plugin's internal DSP state (lookahead/delay lines, etc.)
     // without destroying/recreating the instance. The chain builder calls this on every cached
     // instance it wires into a freshly built chain, so a second/subsequent Play doesn't bleed the

@@ -15,6 +15,7 @@ using A_Capella.Engine.Export;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Metronome;
 using A_Capella.Engine.Mix;
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Preview;
 using A_Capella.Engine.Project;
 using A_Capella.Engine.Settings;
@@ -54,7 +55,6 @@ public partial class MainWindow : Window
     // v7 Q0 task 8 (v6 task 9): polls open hosted-plugin editors for state changes at a fixed
     // interval, independent of the (self-resetting) preview-refresh debounce timer above -- a plugin
     // tweak needs to be captured even if the user never triggers another live-param change.
-    private readonly DispatcherTimer _hostedStatePollTimer;
 
     // v7 Q1 task 3: ~30Hz meter refresh, separate timer from the 500ms hosted-state poll above
     // since meters need to feel live even when nothing else is happening.
@@ -114,6 +114,7 @@ public partial class MainWindow : Window
         MetronomeBpmTextBox.Text = _session.MetronomeBpm.ToString("F3");
         foreach (var signature in TimeSignature.Presets) TimeSignatureCombo.Items.Add(signature);
         ShowTimeSignature();
+        SetUpMasterLimiterCombo();
         SelectLane(_tracks[0]);
 
         _session.SaveStateChanged += UpdateWindowTitle;
@@ -121,24 +122,6 @@ public partial class MainWindow : Window
 
         _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _previewDebounceTimer.Tick += (s, e) => { _previewDebounceTimer.Stop(); RefreshPreviewLive(); };
-
-        // v7 Q0 task 8 (v6 task 9): poll the currently open Mixing-screen layer's hosted editors for
-        // state changes every 500ms so a plugin tweak is captured (and the preview refreshed) even
-        // if the user never triggers another live-param change while the editor is open.
-        // v7 Q2 task 2: also pushes an undo snapshot per detected change burst -- previously a
-        // plugin tweak refreshed the live preview but was invisible to undo/redo entirely (every
-        // other mix-parameter edit pushes a snapshot via CommitSlider/CommitCheckBox_Click, but
-        // nothing calls those for a knob dragged inside a plugin's own native editor window).
-        _hostedStatePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-        _hostedStatePollTimer.Tick += (s, e) =>
-        {
-            if (_selectedLayer?.PollEditorChanges() == true)
-            {
-                DebounceRefreshPreview();
-                PushUndoSnapshot();
-            }
-        };
-        _hostedStatePollTimer.Start();
 
         // v7 Q1 task 3: ~30Hz meter poll -- reads GetLayerLevels/GetMasterLevels straight off the
         // live PreviewPlaybackEngine (volatile fields on its meter taps, no command-queue round
@@ -230,7 +213,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _hostedStatePollTimer.Stop();
             _meterPollTimer.Stop();
             _perfPollTimer.Stop();
             _previewEngine.Dispose();
@@ -271,19 +253,7 @@ public partial class MainWindow : Window
             ShowTimeSignature();
             MasterVolumeSlider.Value = _session.MasterVolumeDb;
             RestoreTracksFromLayers();
-            // Bug audit #9: keep polling any FabFilter editor still open across the undo. AFTER
-            // restore() (baseline = post-restore live state), BEFORE RefreshPreviewLive (no chain
-            // build can create an instance in between), synchronous (no poll tick can land in between).
-            LayerRowViewModel.CarryEditorTracking(previousRows, _tracks);
-            // Close editor windows for any layer this restore dropped (e.g. an Undo back past the
-            // point a layer was added) -- only the window, not the live instance underneath it (see
-            // LayerRowViewModel.CloseAllOpenedEditors), so this is safe during playback/export.
-            var survivingLayerIds = _tracks.Where(t => t.Layer is not null).Select(t => t.Layer!.LayerId).ToHashSet();
-            foreach (var old in previousRows)
-            {
-                if (old.Layer is not null && !survivingLayerIds.Contains(old.Layer.LayerId))
-                    old.CloseAllOpenedEditors();
-            }
+            ShowMasterLimiter();
             var stillPresent = _selectedLayer is not null
                 ? _tracks.FirstOrDefault(t => t.Layer?.LayerId == _selectedLayer.Layer?.LayerId)
                 : null;
@@ -598,25 +568,10 @@ public partial class MainWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
-    /// <summary>Besides swapping the restore-button glyph, hides every open hosted-plugin (and
-    /// Melodyne/ARA) editor window while the app window is minimized, and shows them again on
-    /// restore -- a minimized app with its FabFilter/Melodyne editors still floating on screen looks
-    /// broken, and leaving them open also means they outlive the window that owns them (Alt+Tab
-    /// still cycles to Pro-Q even though "A-Capella" is minimized). Only hides/shows
-    /// (LayerRowViewModel.SetOpenedEditorsVisible), never closes -- the user's editor layout survives
-    /// the round-trip exactly as left.</summary>
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
-        RestoreButton.Content = WindowState == WindowState.Maximized ? "🗗" : "🗖";
-
-        bool wasMinimized = _lastWindowState == WindowState.Minimized;
-        bool isMinimized = WindowState == WindowState.Minimized;
+        RestoreButton.Content = WindowState == WindowState.Maximized ? "\U0001F5D7" : "\U0001F5D6";
         _lastWindowState = WindowState;
-        if (isMinimized != wasMinimized)
-        {
-            foreach (var row in _tracks)
-                row.SetOpenedEditorsVisible(!isMinimized);
-        }
     }
 
     /// <summary>v7 Q1 task 3 (v8: per-strip meters). Maps -60..0 dBFS RMS onto the 0..1 range
@@ -976,7 +931,7 @@ public partial class MainWindow : Window
             if (byCellIndex.TryGetValue(cellIndex, out var layer))
                 row.Layer = layer;
             row.LiveParamChanged += DebounceRefreshPreview;
-            row.SlotToggled += (slot, enabled) => OnSlotToggled(row, slot, enabled);
+            row.EffectChosen += PushUndoSnapshot;
             _tracks.Add(row);
         }
         UpdateLaneHeaderCount();
@@ -999,45 +954,124 @@ public partial class MainWindow : Window
         FxHeaderText.Text = row.DisplayName;
     }
 
-    // Bug audit A1/C3/C5: replaces the old stub (a plain dialog explaining itself) with a real
-    // launcher for the layer's persistent ARA session's own Melodyne editor GUI -- mirrors
-    // OpenEqEditor_Click etc. below. Returns false only when the layer's chain has never been built
-    // with Manual2A selected yet (no session exists to show an editor for), which the status bar
-    // message below explains rather than silently no-opping.
-    private void EditMelodyne_Click(object sender, MouseButtonEventArgs e)
+    // ----- Master limiter: one preset dropdown for the whole mix -----
+
+    private bool _syncingMasterLimiter;
+
+    private void SetUpMasterLimiterCombo()
     {
-        // Deliberately not gated on IsMelodyneHosted (unlike the FabFilter handlers below): the
-        // real gate for Melodyne is "has this layer's persistent ARA session been created yet"
-        // (requires a Play with Manual2A selected first), which OpenMelodyneEditor already checks
-        // and reports via the status message -- gating on IsMelodyneHosted too made this silently
-        // no-op whenever the ARA-capability scan's cache hadn't caught up yet, breaking the button.
-        if (_selectedLayer is null) return;
-        if (!_selectedLayer.OpenMelodyneEditor())
-            StatusText.Text = "Play this layer once with Melodyne manual selected before editing.";
+        MasterLimiterCombo.ItemsSource = EffectSlotViewModel.AllChoices(ProjectSession.MasterLimiterPlugin);
+        ShowMasterLimiter();
+        _previewEngine.MasterLimiterPreset = _session.MasterLimiterPreset;
     }
 
-    // ----- Each slot's own checkbox is its enable/disable (not a separate button); clicking the
-    // FX name opens the live hosted plugin instance's own editor window (never embedded);
-    // no-ops when that stage isn't hosted, since there's no plugin editor to open
-    // (the native fallback sliders are what's shown instead). -----
-    private void OpenEqEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Eq);
-    private void OpenNoiseGateEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.NoiseGate);
-    private void OpenCompressorEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Compressor);
-    private void OpenLimiterEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Limiter);
-    private void OpenReverbEditor_Click(object sender, RoutedEventArgs e) => _selectedLayer?.OpenHostedEditor(FxSlots.Reverb);
-
-    private void PitchModeMelodyne_Click(object sender, RoutedEventArgs e)
+    /// <summary>Reflects the session's limiter choice in the toolbar combo without echoing back as an edit.</summary>
+    private void ShowMasterLimiter()
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
-        row.PitchMode = LayerRowViewModel.PitchEngineMode.Melodyne;
+        _syncingMasterLimiter = true;
+        try
+        {
+            var choices = EffectSlotViewModel.AllChoices(ProjectSession.MasterLimiterPlugin);
+            MasterLimiterCombo.SelectedItem = choices.FirstOrDefault(c => Equals(c.Ref, _session.MasterLimiterPreset));
+        }
+        finally
+        {
+            _syncingMasterLimiter = false;
+        }
+        _previewEngine.MasterLimiterPreset = _session.MasterLimiterPreset;
+    }
+
+    private void MasterLimiterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingMasterLimiter || MasterLimiterCombo.SelectedItem is not PresetChoice choice) return;
+        if (Equals(_session.MasterLimiterPreset, choice.Ref)) return;
+        _session.MasterLimiterPreset = choice.Ref;
+        _previewEngine.MasterLimiterPreset = choice.Ref;
+        DebounceRefreshPreview();
         PushUndoSnapshot();
     }
 
-    private void PitchModeAuto_Click(object sender, RoutedEventArgs e)
+    // ----- Packages: a saved set of the four effect presets, applied to a layer in one step -----
+
+    private readonly FxPackageService _packages = new();
+
+    private void PackagesButton_Click(object sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
-        row.PitchMode = LayerRowViewModel.PitchEngineMode.Auto;
-        PushUndoSnapshot();
+        if (_selectedLayer is not { Layer: not null } row) return;
+
+        var menu = new ContextMenu { PlacementTarget = PackagesButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var packages = _packages.List();
+
+        foreach (var package in packages.Where(p => p.IsBuiltIn))
+            menu.Items.Add(PackageMenuItem(package, row));
+        if (packages.Any(p => p.IsBuiltIn) && packages.Any(p => !p.IsBuiltIn)) menu.Items.Add(new Separator());
+        foreach (var package in packages.Where(p => !p.IsBuiltIn))
+            menu.Items.Add(PackageMenuItem(package, row));
+        if (packages.Count == 0)
+            menu.Items.Add(new MenuItem { Header = "No packages yet", IsEnabled = false });
+
+        menu.Items.Add(new Separator());
+        var save = new MenuItem { Header = "Save this layer's effects as a package..." };
+        save.Click += (_, _) => SaveCurrentAsPackage(row);
+        menu.Items.Add(save);
+
+        var mine = packages.Where(p => !p.IsBuiltIn).ToList();
+        if (mine.Count > 0)
+        {
+            var delete = new MenuItem { Header = "Delete a package" };
+            foreach (var package in mine)
+            {
+                var item = new MenuItem { Header = package.Name };
+                item.Click += (_, _) => DeletePackage(package);
+                delete.Items.Add(item);
+            }
+            menu.Items.Add(delete);
+        }
+
+        menu.IsOpen = true;
+    }
+
+    private MenuItem PackageMenuItem(FxPackage package, LayerRowViewModel row)
+    {
+        var item = new MenuItem { Header = package.Name };
+        item.Click += (_, _) =>
+        {
+            row.ApplyPackage(package);
+            StatusText.Text = $"Applied package \"{package.Name}\" to {row.DisplayName}.";
+        };
+        return item;
+    }
+
+    private void SaveCurrentAsPackage(LayerRowViewModel row)
+    {
+        var dialog = new SavePackageWindow(_packages) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+
+        var package = row.ToPackage(dialog.PackageName);
+        if (package is null) return;
+        try
+        {
+            _packages.Save(package);
+            StatusText.Text = $"Saved package \"{package.Name}\".";
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = $"Couldn't save the package: {ex.Message}";
+        }
+    }
+
+    private void DeletePackage(FxPackage package)
+    {
+        if (MessageBox.Show(this, $"Delete the package \"{package.Name}\"?", "Delete package",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        try
+        {
+            if (_packages.Delete(package.Name)) StatusText.Text = $"Deleted package \"{package.Name}\".";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = $"Couldn't delete the package: {ex.Message}";
+        }
     }
 
     // ----- Lane name rename-in-place: inline TextBox in the lane row, committed only
@@ -1100,7 +1134,6 @@ public partial class MainWindow : Window
         if (row is null || !IsLiveRow(row)) return;
 
         string name = row.DisplayName;
-        row.CloseAllOpenedEditors();
         _layers.Remove(row.Layer!);
         row.Layer = null;   // the slot stays, now empty -- no cell compaction (locked product decision)
         UpdateLaneHeaderCount();
@@ -1124,34 +1157,13 @@ public partial class MainWindow : Window
         _previewDebounceTimer.Start();
     }
 
-    /// <summary>A slot power toggle tries to apply in place to the already-running chain first
-    /// (instant, no restart/glitch); only falls back to the usual debounced full refresh when
-    /// there's no live node for it yet (e.g. the slot has never been enabled this session) or it's
-    /// reverb, whose tail extension changes the project's duration and always needs a real
-    /// rebuild.</summary>
-    private void OnSlotToggled(LayerRowViewModel row, FxSlot slot, bool enabled)
-    {
-        if (row.Layer is null || !_previewEngine.TrySetSlotEnabled(row.Layer.LayerId, slot.Stage, enabled))
-            DebounceRefreshPreview();
-    }
-
-    /// <summary>Freeze toggle: bound OneWay (not TwoWay) specifically so this handler runs before
-    /// row.Frozen flips, not after -- turning freeze on has to sync live editor tweaks into
-    /// parameters and close any open editor for this layer BEFORE the chain gets baked, which a
-    /// TwoWay binding's "property already updated when Click fires" ordering (the pattern every
-    /// other FX toggle uses) can't guarantee. Always a full refresh (never TrySetSlotEnabled's
-    /// in-place path): freezing/unfreezing replaces the layer's whole chain shape, not one slot.</summary>
+    /// <summary>Freezing bakes the layer's whole chain into a buffer, or plays it live again, so
+    /// it always needs a full refresh.</summary>
     private void FreezeToggle_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.Layer is null) return;
 
-        bool turningOn = !row.Frozen;
-        if (turningOn)
-        {
-            _mixEngine.SyncLiveStateIntoParameters(row.Layer.LayerId, row.Layer.MixParameters);
-            row.CloseAllOpenedEditors();
-        }
-        row.Frozen = turningOn;
+        row.Frozen = !row.Frozen;
         DebounceRefreshPreview();
         PushUndoSnapshot();
     }
@@ -1543,7 +1555,7 @@ public partial class MainWindow : Window
         await AwaitPreviewCommand(_previewEngine.StopAsync());      // bug audit #8: one audio graph at a time
         StatusText.Text = "Exporting...";                           // after the stop: AwaitPreviewCommand may write "Preview error: ..."
 
-        var (snapshotLayers, snapshotMasterVolumeDb, snapshotSongInMs, snapshotSongOutMs, snapshotVideo) = _session.SnapshotForExport();
+        var (snapshotLayers, snapshotMasterVolumeDb, snapshotSongInMs, snapshotSongOutMs, snapshotVideo, snapshotMasterLimiter) = _session.SnapshotForExport();
 
         // Built on the UI thread (candidate 3 / Improvement_Proposal_2026-09-24): Progress<T>
         // captures the current SynchronizationContext at construction, so every Report() call from
@@ -1562,7 +1574,7 @@ public partial class MainWindow : Window
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
                 exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
-                    rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs, video: snapshotVideo);
+                    rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs, video: snapshotVideo, masterLimiter: snapshotMasterLimiter);
                 Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
             }
             catch (Exception ex)

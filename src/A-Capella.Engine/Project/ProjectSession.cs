@@ -95,6 +95,19 @@ public sealed class ProjectSession
         set { if (_masterVolumeDb == value) return; _masterVolumeDb = value; MarkDirty(); }
     }
 
+    /// <summary>The Pro-L 2 factory preset used for a new project's master limiter.</summary>
+    public const string MasterLimiterPlugin = "FabFilter Pro-L 2";
+    public static readonly Presets.PresetRef DefaultMasterLimiter = new(MasterLimiterPlugin, "_Basic", "Safe");
+
+    private Presets.PresetRef? _masterLimiterPreset = DefaultMasterLimiter;
+
+    /// <summary>The master limiter's factory preset; null = off.</summary>
+    public Presets.PresetRef? MasterLimiterPreset
+    {
+        get => _masterLimiterPreset;
+        set { if (_masterLimiterPreset == value) return; _masterLimiterPreset = value; MarkDirty(); }
+    }
+
     private double? _songInMs;
     private double? _songOutMs;
 
@@ -151,21 +164,19 @@ public sealed class ProjectSession
             ? fileName[..^ProjectFileSuffix.Length]
             : Path.GetFileNameWithoutExtension(fileName);
 
-    /// <summary>The project as it would be saved right now, including live plugin editor tweaks.</summary>
+    /// <summary>The project as it would be saved right now.</summary>
     public ProjectFileDto Snapshot()
     {
-        foreach (var layer in Layers.Layers)
-            _mixEngine.SyncLiveStateIntoParameters(layer.LayerId, layer.MixParameters);
-        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, SongInMs, SongOutMs, Video, MetronomeTimeSignature);
+        return _persistence.ToDto(Layers, MetronomeBpm, LatencyOffsetMsUsed, MasterVolumeDb, SongInMs, SongOutMs, Video, MetronomeTimeSignature, MasterLimiterPreset);
     }
 
     /// <summary>A deep copy of the layers, master volume, song in/out range and video settings,
     /// unaffected by later edits -- for a background export racing the user (M7).</summary>
-    public (LayerCollection Layers, float MasterVolumeDb, double? SongInMs, double? SongOutMs, VideoSettings Video) SnapshotForExport()
+    public (LayerCollection Layers, float MasterVolumeDb, double? SongInMs, double? SongOutMs, VideoSettings Video, Presets.PresetRef? MasterLimiterPreset) SnapshotForExport()
     {
         var dto = Snapshot();
         var (layers, _, _, masterVolumeDb, video, _) = _persistence.FromDto(dto);
-        return (layers, masterVolumeDb, dto.SongInMs, dto.SongOutMs, video);
+        return (layers, masterVolumeDb, dto.SongInMs, dto.SongOutMs, video, dto.MasterLimiterPreset);
     }
 
     /// <summary>Records one completed user-visible edit as an undo step.</summary>
@@ -215,7 +226,7 @@ public sealed class ProjectSession
         var dto = _persistence.LoadFromFile(filePath);
         var loaded = _persistence.FromDto(dto);
         _mixEngine.ReleaseAllHostedInstances();          // still before any layer is replaced
-        Apply(loaded, dto.SongInMs, dto.SongOutMs);
+        Apply(loaded, dto.SongInMs, dto.SongOutMs, dto.MasterLimiterPreset);
         _undoStack.Reset(Snapshot());
         SetSaveState(filePath, dirty: false);            // LAST: Apply() assigns MetronomeBpm/MasterVolumeDb through their dirty-marking setters
     }
@@ -230,6 +241,7 @@ public sealed class ProjectSession
         Layers.Restore(Enumerable.Empty<LayerModel>());
         LatencyOffsetMsUsed = null;
         MasterVolumeDb = 0f;
+        MasterLimiterPreset = DefaultMasterLimiter;
         SongInMs = null;
         SongOutMs = null;
         Video = new VideoSettings();
@@ -240,22 +252,20 @@ public sealed class ProjectSession
     private bool Restore(ProjectFileDto? dto)
     {
         if (dto is null) return false;
-        Apply(_persistence.FromDto(dto), dto.SongInMs, dto.SongOutMs);
+        Apply(_persistence.FromDto(dto), dto.SongInMs, dto.SongOutMs, dto.MasterLimiterPreset);
         return true;
     }
 
-    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video, TimeSignature TimeSignature) loaded, double? songInMs, double? songOutMs)
+    private void Apply((LayerCollection Layers, double MetronomeBpm, double? LatencyOffsetMsUsed, float MasterVolumeDb, VideoSettings Video, TimeSignature TimeSignature) loaded, double? songInMs, double? songOutMs, Presets.PresetRef? masterLimiter)
     {
         Layers.Restore(loaded.Layers.Layers);
         MetronomeBpm = loaded.MetronomeBpm;
         LatencyOffsetMsUsed = loaded.LatencyOffsetMsUsed;
         MasterVolumeDb = loaded.MasterVolumeDb;
+        MasterLimiterPreset = masterLimiter;
         SongInMs = songInMs;
         SongOutMs = songOutMs;
         Video = loaded.Video;
         MetronomeTimeSignature = loaded.TimeSignature;
-
-        foreach (var layer in Layers.Layers)
-            _mixEngine.PushSavedStateIntoLiveInstances(layer.LayerId, layer.MixParameters);
     }
 }

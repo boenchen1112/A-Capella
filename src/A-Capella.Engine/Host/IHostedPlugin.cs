@@ -36,6 +36,22 @@ public interface IHostedPlugin : IDisposable
     float GetParameterValue(int index);
     void SetParameterValue(int index, float value);
 
+    /// <summary>The text the plugin displays for a normalized (0..1) parameter value, e.g. "-18.0 dB".
+    /// Does not change the parameter. Empty when the plugin can't say.</summary>
+    string GetParameterText(int index, float normalizedValue) => "";
+
+    /// <summary>The normalized value the plugin assigns to some display text (the reverse of
+    /// GetParameterText); 0 when it can't parse it.</summary>
+    float GetParameterValueForText(int index, string text) => 0f;
+
+    /// <summary>Distinct values a parameter can take (2 for a switch); int.MaxValue-ish for a continuous one.</summary>
+    int GetParameterNumSteps(int index) => int.MaxValue;
+
+    /// <summary>Number of entries in the plugin's own program (preset) list; 0 or 1 when it has none.</summary>
+    int ProgramCount => 0;
+    string GetProgramName(int index) => "";
+    void SetProgram(int index) { }
+
     /// <summary>Opens the plugin's own editor in its own top-level window; false if it has none.</summary>
     bool ShowEditorWindow(string title);
 

@@ -44,15 +44,15 @@ public class ExportEngine : IDisposable
     /// layer is cut at the same instant regardless of its own trim/shift. Null (the default) exports
     /// the whole song, exactly as before either parameter existed. Both are clamped to
     /// [0, full duration]; an empty resulting span throws.</summary>
-    public void Export(LayerCollection layers, string outputPath, int? width = null, int? height = null, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, double? rangeStartMs = null, double? rangeOutMs = null, VideoSettings? video = null)
+    public void Export(LayerCollection layers, string outputPath, int? width = null, int? height = null, int fps = 30, int sampleRate = 44100, float masterVolumeDb = 0f, IProgress<double>? progress = null, double? rangeStartMs = null, double? rangeOutMs = null, VideoSettings? video = null, Presets.PresetRef? masterLimiter = null)
     {
         // No settings means the pre-layout behavior (2x2, no gap, letterboxed 16:9) so existing callers are unchanged.
         video ??= VideoSettings.Legacy(GridLayoutCatalog.LegacyId);
         var (defaultWidth, defaultHeight) = video.ExportSize;
-        ExportCore(layers, outputPath, width ?? defaultWidth, height ?? defaultHeight, fps, sampleRate, masterVolumeDb, progress, video, rangeStartMs, rangeOutMs);
+        ExportCore(layers, outputPath, width ?? defaultWidth, height ?? defaultHeight, fps, sampleRate, masterVolumeDb, progress, video, rangeStartMs, rangeOutMs, masterLimiter);
     }
 
-    private void ExportCore(LayerCollection layers, string outputPath, int width, int height, int fps, int sampleRate, float masterVolumeDb, IProgress<double>? progress, VideoSettings video, double? rangeStartMs, double? rangeOutMs)
+    private void ExportCore(LayerCollection layers, string outputPath, int width, int height, int fps, int sampleRate, float masterVolumeDb, IProgress<double>? progress, VideoSettings video, double? rangeStartMs, double? rangeOutMs, Presets.PresetRef? masterLimiter)
     {
         var layout = video.Layout;
         double gutterFraction = video.GutterFraction;
@@ -76,7 +76,7 @@ public class ExportEngine : IDisposable
             throw new InvalidOperationException("No decodable media found in any layer.");
 
         var mixInputs = layers.Layers.Select(l => _timeline.AudioInput(l, sampleRate)).ToList();
-        var mix = _mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb);
+        var mix = _mixEngine.BuildMix(mixInputs, sampleRate, masterVolumeDb, masterLimiter);
 
         // Render the mix from its own start, discarding samples before rangeStartMs -- simplest
         // correct way to slice an ISampleProvider, which has no seek.

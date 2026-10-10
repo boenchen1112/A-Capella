@@ -16,8 +16,9 @@ public static class HostedPluginCatalog
         ["FabFilter Pro-Q 4"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-Q 4.vst3",
         ["FabFilter Pro-C 3"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-C 3.vst3",
         ["FabFilter Pro-L 2"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-L 2.vst3",
-        ["FabFilter Pro-G"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-G.vst3",
+        ["FabFilter Pro-DS"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-DS.vst3",
         ["FabFilter Pro-R 2"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-R 2.vst3",
+        // Legacy: only the dormant ARA pitch code reaches Melodyne; nothing in the app wires it up.
         ["Melodyne"] = $@"{Vst3Root}\Celemony\Melodyne\Melodyne.vst3",
     };
 }

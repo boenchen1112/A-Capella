@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using System.Text.Json;
 using A_Capella.Engine.Persistence;
 
@@ -90,19 +91,19 @@ public class ProjectUndoStackTests
         {
             LayerId = 1,
             SourcePath = "layer1.wav",
-            MixParameters = new MixParametersDto { NoiseGateEnabled = false, EqHostedStateBase64 = null }
+            MixParameters = new MixParametersDto { EqPreset = null }
         });
         stack.Reset(state0);
 
         // Edit 1: slot power-button toggle (CommitCheckBox_Click -> PushUndoSnapshot).
         var state1 = Clone(state0);
-        state1.Layers[0].MixParameters.NoiseGateEnabled = true;
+        state1.Layers[0].MixParameters.CompressorPreset = new PresetRef("FabFilter Pro-C 3", "Basic", "Vocal");
         stack.Push(state1);
 
         // Edit 2: a plugin knob move detected by the hosted-state poll (PollHostedStateChanges
         // returning true -> PushUndoSnapshot), captured as a new state blob.
         var state2 = Clone(state1);
-        state2.Layers[0].MixParameters.EqHostedStateBase64 = Convert.ToBase64String(new byte[] { 1, 2, 3, 4 });
+        state2.Layers[0].MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Bright");
         stack.Push(state2);
 
         string state1Json = ToJson(state1);
@@ -111,12 +112,12 @@ public class ProjectUndoStackTests
         var afterFirstUndo = stack.Undo();
         Assert.NotNull(afterFirstUndo);
         Assert.Equal(state1Json, ToJson(afterFirstUndo!));
-        Assert.True(afterFirstUndo!.Layers[0].MixParameters.NoiseGateEnabled, "undo of the plugin-state edit must leave the earlier slot-toggle edit intact");
-        Assert.Null(afterFirstUndo.Layers[0].MixParameters.EqHostedStateBase64);
+        Assert.NotNull(afterFirstUndo!.Layers[0].MixParameters.CompressorPreset);
+        Assert.Null(afterFirstUndo.Layers[0].MixParameters.EqPreset);
 
         var afterSecondUndo = stack.Undo();
         Assert.NotNull(afterSecondUndo);
-        Assert.False(afterSecondUndo!.Layers[0].MixParameters.NoiseGateEnabled, "undo of the slot toggle must restore the pre-toggle state");
+        Assert.Null(afterSecondUndo!.Layers[0].MixParameters.CompressorPreset);
 
         var afterFirstRedo = stack.Redo();
         Assert.NotNull(afterFirstRedo);
@@ -125,6 +126,6 @@ public class ProjectUndoStackTests
         var afterSecondRedo = stack.Redo();
         Assert.NotNull(afterSecondRedo);
         Assert.Equal(state2Json, ToJson(afterSecondRedo!));
-        Assert.Equal(state2.Layers[0].MixParameters.EqHostedStateBase64, afterSecondRedo!.Layers[0].MixParameters.EqHostedStateBase64);
+        Assert.Equal(state2.Layers[0].MixParameters.EqPreset, afterSecondRedo!.Layers[0].MixParameters.EqPreset);
     }
 }

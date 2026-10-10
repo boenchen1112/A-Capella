@@ -1,11 +1,12 @@
 using A_Capella.App.ViewModels;
+using A_Capella.Engine.Mix;
+using A_Capella.Engine.Presets;
 using A_Capella.Engine.Project;
 using Xunit;
 
 namespace A_Capella.App.Tests;
 
-/// <summary>LayerRowViewModel's rename-only-if-changed, the pitch engine
-/// mode switch, and the lane sub-label/trim helper properties.</summary>
+/// <summary>LayerRowViewModel's rename-only-if-changed and the lane sub-label/trim helper properties.</summary>
 public class LayerRowViewModelRedesignTests
 {
     private static LayerRowViewModel RowWithLayer(LayerKind kind = LayerKind.RecordedAV) =>
@@ -30,21 +31,6 @@ public class LayerRowViewModelRedesignTests
     }
 
     [StaFact]
-    public void PitchMode_DefaultsToMelodyne_AndIsRememberedWhileTheSlotIsOff()
-    {
-        var row = RowWithLayer();
-        Assert.Equal(LayerRowViewModel.PitchEngineMode.Melodyne, row.PitchMode);
-
-        row.PitchMode = LayerRowViewModel.PitchEngineMode.Auto;
-        Assert.Equal(LayerRowViewModel.PitchEngineMode.Auto, row.PitchMode);
-        Assert.False(row.MelodyneEnabled);   // switching mode alone must not turn the slot on
-
-        row.MelodyneEnabled = true;
-        Assert.True(row.MelodyneEnabled);
-        Assert.Equal(LayerRowViewModel.PitchEngineMode.Auto, row.PitchMode);   // remembered selection took effect
-    }
-
-    [StaFact]
     public void EffectiveTrimEndMs_FallsBackToSourceDuration_WhenNoExplicitTrimOutIsSet()
     {
         var row = RowWithLayer();
@@ -61,8 +47,8 @@ public class LayerRowViewModelRedesignTests
         var row = RowWithLayer(LayerKind.UploadedVideo);
         Assert.Equal("Uploaded", row.SourceLabel);   // no duration yet (nonexistent file), no effects on
 
-        row.EqEnabled = true;
-        row.CompressorEnabled = true;
+        row.Effects.Single(e => e.Slot == FxSlots.Eq).SelectedChoice = new PresetChoice(new PresetRef("FabFilter Pro-Q 4", "", "Bright"), "General", "Bright");
+        row.Effects.Single(e => e.Slot == FxSlots.Compressor).SelectedChoice = new PresetChoice(new PresetRef("FabFilter Pro-C 3", "Basic", "Vocal"), "Basic", "Vocal");
         Assert.Equal("Uploaded · 2 effects", row.SourceLabel);
     }
 

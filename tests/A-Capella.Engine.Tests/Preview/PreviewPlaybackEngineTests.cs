@@ -663,65 +663,6 @@ public class PreviewPlaybackEngineTests
         }
     }
 
-    /// <summary>Q1 task 2 [auto]: a slot enable/disable flag change (e.g. a rack power button)
-    /// applied via MainWindow's real refresh path -- RefreshAsync, the
-    /// "debounced rebuild" mentioned in the acceptance criterion -- must reach the live audio on
-    /// the next block without ever leaving IsPlaying false, and the position after that rebuild
-    /// must land back at the same point (SeekCore restarts playback at the exact positionMs it was
-    /// given when wasPlaying is true).</summary>
-    [Fact]
-    public async Task SlotEnableToggledMidPlayback_RebuildAppliesItWithoutStoppingTransport_PositionPreserved()
-    {
-        var (path, tempDir) = CreateFixtureClip("red", durationSeconds: 2);
-        try
-        {
-            var layer = new LayerModel { LayerId = 0, Kind = LayerKind.UploadedAudioOnly, SourcePath = path };
-            var layers = new LayerCollection();
-            layers.Restore(new[] { layer });
-
-            var sink = new CapturingAudioSink();
-            using var engine = new PreviewPlaybackEngine(canvasWidth: 64, canvasHeight: 64, fps: 10, audioSink: sink, hostedPluginAvailability: NoHostedPluginsAvailable.Instance);
-            engine.FrameReady += bmp => bmp.Dispose();
-            await engine.SetLayersAsync(layers.Layers);
-            await engine.PlayAsync();
-            Assert.True(engine.IsPlaying);
-
-            Assert.NotNull(sink.LastMix);
-            var buffer = new float[8192];
-            sink.LastMix!.Read(buffer, 0, buffer.Length);
-            float rmsBeforeToggle = ComputeRms(buffer);
-
-            // Flip the EQ slot's power button: a deep mid-band cut centered near the fixture's
-            // 440Hz tone, the same shape a "toggle a slot mid-playback" UI action produces.
-            layer.MixParameters.EqEnabled = true;
-            layer.MixParameters.MidBellGainDb = -24f;
-
-            double positionBeforeRebuild = engine.PositionMs;
-            await engine.RefreshAsync(layers.Layers);
-
-            Assert.True(engine.IsPlaying, "Toggling a slot mid-playback must not leave the transport stopped.");
-            // SeekCore sets PositionMs = positionBeforeRebuild synchronously before restarting
-            // playback, but IsPlaying stays true throughout so the frame-loop thread keeps
-            // advancing PositionMs on its own wall-clock cadence -- some real time elapses between
-            // the Seek call returning and this read, so "position preserved" is checked as "close
-            // to where we asked to land", not bit-exact.
-            Assert.InRange(engine.PositionMs, positionBeforeRebuild - 50, positionBeforeRebuild + 500);
-
-            Assert.NotNull(sink.LastMix);
-            sink.LastMix!.Read(buffer, 0, buffer.Length);
-            float rmsAfterToggle = ComputeRms(buffer);
-
-            await engine.StopAsync();
-
-            Assert.True(rmsAfterToggle < rmsBeforeToggle * 0.7f,
-                $"Expected enabling the EQ slot with a deep mid-band cut to reduce live RMS; got {rmsBeforeToggle} -> {rmsAfterToggle}.");
-        }
-        finally
-        {
-            DeleteWithRetry(tempDir);
-        }
-    }
-
     /// <summary>Q1 task 3: GetLayerLevels/GetMasterLevels must reflect the live playing mix, not
     /// stay stuck at their pre-Play NegativeInfinity default -- these are what a Mixing-screen
     /// meter poll timer reads.</summary>

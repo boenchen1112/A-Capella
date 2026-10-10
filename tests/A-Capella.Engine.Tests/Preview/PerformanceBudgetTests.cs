@@ -1,3 +1,4 @@
+using A_Capella.Engine.Presets;
 using System.Diagnostics;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
@@ -59,7 +60,7 @@ public class PerformanceBudgetTests
         }
 
         var samples = GenerateSineWave(440, SampleRate, SampleRate);
-        var parameters = new LayerMixParameters { EqEnabled = true };
+        var parameters = new LayerMixParameters { EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Default Setting") };
         using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-Q 4"));
 
         // Cold: forces instance creation + first-block processing (JIT, hosted-instance cache
@@ -87,7 +88,7 @@ public class PerformanceBudgetTests
         }
 
         var samples = GenerateSineWave(440, SampleRate, SampleRate);
-        var parameters = new LayerMixParameters { EqEnabled = false };
+        var parameters = new LayerMixParameters();
         using var engine = new MixEngine(new OnlyAvailable("FabFilter Pro-Q 4"));
 
         // Warm up the instance cache with the slot already off once, then time the rebuild that
@@ -95,7 +96,7 @@ public class PerformanceBudgetTests
         var initialChain = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);
         ReadAll(initialChain, 4096);
 
-        parameters.EqEnabled = true;
+        parameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "", "Default Setting");
 
         var stopwatch = Stopwatch.StartNew();
         var toggledChain = engine.BuildLayerChain(new MixLayerInput(0, samples, SampleRate, parameters), anySolo: false, SampleRate);

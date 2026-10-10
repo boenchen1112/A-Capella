@@ -21,12 +21,23 @@ public sealed class HostedPluginService : IDisposable
     private readonly HostedPluginInstanceCache _cache;
     private readonly IHostedPluginAvailability _availability;
     private readonly IHostedPluginDispatcher _dispatcher;
+    private readonly Presets.IPresetStateBuilder _presets;
     private volatile bool _scanned;
+
+    // Per live instance: its untouched state (the base every preset is built on) and the preset
+    // currently loaded into it.
+    private sealed class PresetSlot
+    {
+        public byte[]? DefaultState;
+        public Presets.PresetRef? Applied;
+    }
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IHostedPlugin, PresetSlot> _presetSlots = new();
 
     /// <summary>factory defaults to the native JUCE bridge; tests pass a fake so hosted-chain
     /// behavior runs without the native DLL or installed plugins.</summary>
-    public HostedPluginService(IHostedPluginAvailability? availability = null, IHostedPluginDispatcher? dispatcher = null, IHostedPluginFactory? factory = null)
+    public HostedPluginService(IHostedPluginAvailability? availability = null, IHostedPluginDispatcher? dispatcher = null, IHostedPluginFactory? factory = null, Presets.IPresetStateBuilder? presets = null)
     {
+        _presets = presets ?? Presets.FabFilterPresetLibrary.Default;
         _cache = new HostedPluginInstanceCache(factory ?? NativeHostedPluginFactory.Instance);
         _availability = availability ?? new HostedPluginAvailability();
         _dispatcher = dispatcher ?? InlineHostedPluginDispatcher.Instance;
@@ -83,10 +94,23 @@ public sealed class HostedPluginService : IDisposable
     public void RunOnHostedThread(Action action) => _dispatcher.Invoke(action);
 
     /// <summary>Fetches (lazily creating, on the dispatcher thread) the single live instance for
-    /// (layerId, stage) -- the same object whether the caller is the chain builder or the UI's
-    /// "Open Pro-X..." launcher button.</summary>
-    public IHostedPlugin GetOrCreateInstance(int layerId, string stage, string pluginLabel, byte[]? initialState, int sampleRate = 44100) =>
-        _dispatcher.Invoke(() => _cache.GetOrCreate(layerId, stage, pluginLabel, sampleRate, Mix.HostedPluginSampleProvider.DefaultBlockSize, initialState));
+    /// (layerId, stage) with the given factory preset loaded into it. Reloads only when the preset
+    /// differs from what the instance already holds. Null when the preset can't be found, in which
+    /// case the effect stays off.</summary>
+    public IHostedPlugin? GetOrCreatePresetInstance(int layerId, string stage, string pluginLabel, Presets.PresetRef preset, int sampleRate = 44100) =>
+        _dispatcher.Invoke(() =>
+        {
+            var instance = _cache.GetOrCreate(layerId, stage, pluginLabel, sampleRate, Mix.HostedPluginSampleProvider.DefaultBlockSize, null);
+            var slot = _presetSlots.GetOrCreateValue(instance);
+            slot.DefaultState ??= instance.GetState();
+            if (slot.Applied == preset) return instance;
+
+            var state = _presets.Build(preset, slot.DefaultState);
+            if (state is null) return null;
+            instance.SetState(state);
+            slot.Applied = preset;
+            return instance;
+        });
 
     /// <summary>Non-creating lookup (v7 Q0 task 3, audit B7) -- null if no instance has been
     /// created yet for (layerId, stage) (e.g. the user never opened that stage's editor and it
@@ -99,24 +123,6 @@ public sealed class HostedPluginService : IDisposable
     /// per cached instance wired into a freshly built chain, so a second/subsequent Play doesn't
     /// bleed the previous run's buffered audio into the new one.</summary>
     public void Reset(IHostedPlugin instance) => _dispatcher.Invoke(instance.Reset);
-
-    /// <summary>Pulls the live, current VST3 state chunk (v7 Q0 task 3, audit A2) -- call at the
-    /// moments that matter: editor close, project save, export snapshot, undo snapshot capture.</summary>
-    public byte[] PullLiveState(IHostedPlugin instance) => _dispatcher.Invoke(instance.GetState);
-
-    /// <summary>Pushes a state blob into a live instance (v7 Q0 task 3, audit B7) -- call on
-    /// project load / undo-redo restore so an already-live instance picks up the loaded/restored
-    /// state instead of keeping whatever it had before (GetOrCreateInstance's initialState only
-    /// ever applies at first creation).</summary>
-    public void PushState(IHostedPlugin instance, byte[] state) => _dispatcher.Invoke(() => instance.SetState(state));
-
-    public bool ShowEditor(IHostedPlugin instance, string title) => _dispatcher.Invoke(() => instance.ShowEditorWindow(title));
-
-    public void CloseEditor(IHostedPlugin instance) => _dispatcher.Invoke(instance.CloseEditorWindow);
-
-    /// <summary>Hides/shows an already-open editor window without closing it (app minimize/restore).
-    /// Safe to call when no editor is open.</summary>
-    public void SetEditorVisible(IHostedPlugin instance, bool visible) => _dispatcher.Invoke(() => instance.SetEditorVisible(visible));
 
     /// <summary>Releases and forgets a single (layerId, stage) instance, e.g. on layer removal.</summary>
     public void Release(int layerId, string stage) => _dispatcher.Invoke(() => _cache.Release(layerId, stage));
