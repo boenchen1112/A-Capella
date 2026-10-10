@@ -149,7 +149,7 @@ public class ProjectPersistenceService
         target.EqPreset = dto.EqPreset;
         target.DeEsserPreset = dto.DeEsserPreset;
         target.ReverbPreset = dto.ReverbPreset;
-        target.PitchBackend = Enum.Parse<PitchBackendSelection>(dto.PitchBackend);
+        target.PitchBackend = Enum.TryParse<PitchBackendSelection>(dto.PitchBackend, out var backend) ? backend : PitchBackendSelection.None;
         target.Frozen = dto.Frozen;
     }
 }

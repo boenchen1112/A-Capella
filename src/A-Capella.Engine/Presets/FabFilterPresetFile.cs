@@ -71,5 +71,5 @@ public sealed class FabFilterPresetFile
         return new FabFilterPresetFile(signature, ver, named, Array.Empty<float>());
     }
 
-    private static bool LooksLikeText(byte[] b) => b[0] == (byte)'[' || (b.Length > 2 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF);
+    private static bool LooksLikeText(byte[] b) => b[0] is 0x5B or 0x20 or 0x09 or 0x0D or 0x0A or 0x3B || (b.Length > 2 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF);
 }

@@ -86,11 +86,20 @@ public sealed class FxPackageService
     }
 
     /// <summary>True if a package with this name already exists, built-in or the user's.</summary>
-    public bool Exists(string name) => List().Any(p => string.Equals(p.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+    public bool Exists(string name) => List().Any(p => SameName(p.Name, name));
+
+    private static string Safe(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(name.Trim().Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray()).TrimEnd('.', ' ');
+    }
+
+    /// <summary>Two names are the same package if they'd be saved to the same file.</summary>
+    private static bool SameName(string a, string b) => string.Equals(Safe(a), Safe(b), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>True if the name belongs to a built-in package, which can't be overwritten.</summary>
     public bool IsBuiltInName(string name) =>
-        Read(BuiltInFolder, builtIn: true).Any(p => string.Equals(p.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+        Read(BuiltInFolder, builtIn: true).Any(p => SameName(p.Name, name));
 
     /// <summary>Saves (or overwrites) one of the user's packages. Throws ArgumentException for a blank
     /// name or one that matches a built-in package.</summary>
@@ -116,8 +125,6 @@ public sealed class FxPackageService
 
     private string FileFor(string name)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        string safe = new string(name.Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray());
-        return Path.Combine(UserFolder, safe + ".json");
+        return Path.Combine(UserFolder, Safe(name) + ".json");
     }
 }

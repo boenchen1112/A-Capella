@@ -293,6 +293,13 @@ public class MixEngine : IDisposable
         sb.Append(layer.SourceKey).Append('|').Append(outputSampleRate).Append('|')
           .Append(_hostedService.GetAraEditGeneration(layer.LayerId)).Append('|');
 
+        // What the chain can actually do depends on what is installed and findable right now.
+        foreach (var slot in FxSlots.All)
+        {
+            var preset = slot.GetPreset(layer.Parameters);
+            sb.Append(slot.Stage).Append(preset is null ? "" : _hostedService.IsAvailable(slot.PluginLabel) && FabFilterPresetLibrary.Default.Exists(preset) ? "+" : "-").Append(';');
+        }
+
         foreach (var prop in typeof(LayerMixParameters).GetProperties().OrderBy(p => p.Name))
         {
             if (prop.Name is nameof(LayerMixParameters.Mute) or nameof(LayerMixParameters.Solo) or nameof(LayerMixParameters.Frozen))
