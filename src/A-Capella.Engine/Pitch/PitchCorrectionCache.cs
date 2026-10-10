@@ -3,11 +3,11 @@ using System.Collections.Concurrent;
 namespace A_Capella.Engine.Pitch;
 
 /// <summary>
-/// Caches AutoPitchCorrector's YIN-detect + Rubber Band correction, keyed by (layerId, a caller-
-/// supplied source key covering everything that changes the input samples, backend type). Automatic
-/// pitch correction re-ran over the full track on every mix rebuild -- every debounced FX/trim
-/// slider move (audit B3) -- which is seconds of stall since none of it was cached. FX parameters
-/// downstream of pitch correction in the chain (noise gate, EQ, pan, gain, dynamics) don't affect
+/// Caches a pitch-correction backend's output, keyed by (layerId, a caller-
+/// supplied source key covering everything that changes the input samples, backend type). Pitch
+/// correction would otherwise re-run over the full track on every mix rebuild -- every debounced
+/// effect/trim change -- which is seconds of stall. Effects
+/// downstream of pitch correction in the chain (the preset effects, pan, gain) don't affect
 /// this cache; only a source or trim/shift change (which the caller folds into the source key)
 /// invalidates it.
 ///

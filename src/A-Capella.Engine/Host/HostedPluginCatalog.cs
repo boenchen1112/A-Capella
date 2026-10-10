@@ -21,4 +21,10 @@ public static class HostedPluginCatalog
         // Legacy: only the dormant ARA pitch code reaches Melodyne; nothing in the app wires it up.
         ["Melodyne"] = $@"{Vst3Root}\Celemony\Melodyne\Melodyne.vst3",
     };
+
+    /// <summary>Reserved for the macOS port: Antares Auto-Tune is the only pitch tool, and it exists
+    /// only on the Mac. It has no entry in KnownPluginPaths, so nothing on Windows can host it.</summary>
+    public const string AutoTunePluginLabel = "Antares Auto-Tune";
+
+    public static bool AutoTuneSupported => OperatingSystem.IsMacOS();
 }

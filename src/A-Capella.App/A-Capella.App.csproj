@@ -20,6 +20,12 @@
     <Resource Include="Fonts\*.ttf" />
   </ItemGroup>
 
+  <!-- Built-in effect packages: .json files in Packages\ ship beside the app and show up in the
+       Packages menu. Empty until some are added. -->
+  <ItemGroup>
+    <None Include="Packages\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>

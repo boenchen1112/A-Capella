@@ -4,9 +4,8 @@ using A_Capella.Engine.Host;
 namespace A_Capella.Engine.Pitch;
 
 /// <summary>
-/// v7 2A task 39/A1: the Manual2A pitch backend -- renders a layer's whole buffer through
-/// Melodyne's ARA analyze-then-render pipeline instead of AutoPitchCorrector's automatic
-/// pitch-detect/Rubber-Band-shift math.
+/// Legacy: the Manual2A pitch backend -- renders a layer's whole buffer through Melodyne's ARA
+/// analyze-then-render pipeline. Kept compiling and tested, but nothing in the app selects it.
 ///
 /// Bug audit A1: uses one persistent ARA session per layer (HostedPluginService.
 /// GetOrCreateAraLayerSource), not a fresh session per Correct() call -- a session created and

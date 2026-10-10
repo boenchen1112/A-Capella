@@ -34,7 +34,6 @@ public class MixEngine : IDisposable
 {
     public const string MelodynePluginLabel = "Melodyne";
 
-    private static readonly IPitchCorrectionBackend AutomaticBackend = new AutoPitchCorrector();
 
     // Bug audit A1: one MelodyneAraPitchCorrector per layer (each captures its own layerId, needed
     // to key HostedPluginService's persistent per-layer ARA session) rather than one shared
@@ -83,11 +82,6 @@ public class MixEngine : IDisposable
     /// kicks off the render in the background instead of stalling the caller.</summary>
     public bool NonBlockingPitchCorrection { get; set; }
 
-    /// <summary>Test seam: substituted for AutomaticBackend (the static, shared AutoPitchCorrector)
-    /// when set, so a test can exercise the Automatic2B path against a fake/gated
-    /// IPitchCorrectionBackend without waiting on real YIN detection + Rubber Band. Null in
-    /// production.</summary>
-    internal IPitchCorrectionBackend? AutomaticBackendOverride { get; set; }
 
     /// <summary>True while any layer has a pitch render in flight (BuildLayerChain hasn't yet seen
     /// its cached result) -- for a status-bar "Processing pitch..." indicator.</summary>
@@ -389,7 +383,6 @@ public class MixEngine : IDisposable
         // other hosted stage already uses when its matching plugin isn't detected.
         float[] processedSamples = parameters.PitchBackend switch
         {
-            PitchBackendSelection.Automatic2B => BuildAutomaticCorrectedSamples(layer, forFreezeRender),
             // Bug audit A5 ("stale correction cache"): the edit generation is folded into the cache
             // key so closing Melodyne's editor (HostedPluginService.CloseAraEditor bumps it) forces
             // a fresh Correct() call on the next rebuild instead of replaying PitchCorrectionCache's
@@ -443,13 +436,6 @@ public class MixEngine : IDisposable
             _melodyneBackends[layerId] = backend;
         }
         return backend;
-    }
-
-    private float[] BuildAutomaticCorrectedSamples(MixLayerInput layer, bool forceBlocking = false)
-    {
-        var backend = AutomaticBackendOverride ?? AutomaticBackend;
-        return GetPitchCorrectedSamples(layer.LayerId, layer.SourceKey, backend.GetType().Name, layer.Samples,
-            () => backend.Correct(layer.Samples, layer.SampleRate), forceBlocking);
     }
 
     /// <summary>Trim/Melodyne-edit-survival fix: renders through the layer's persistent ARA session
