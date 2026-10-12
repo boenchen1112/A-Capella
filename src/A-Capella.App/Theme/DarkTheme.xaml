@@ -566,9 +566,14 @@
                                     </Grid.ColumnDefinitions>
                                     <ContentPresenter x:Name="Icon" Grid.Column="0" ContentSource="Icon" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True"/>
-                                    <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" Foreground="{StaticResource MutedTextBrush}" Margin="16,0,0,0" VerticalAlignment="Center"/>
                                     <Path x:Name="Check" Grid.Column="0" Data="M3,8 L7,12 L13,4" Stroke="{StaticResource TextBrush}" StrokeThickness="2"
                                           StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="14" Height="14" Visibility="Collapsed"/>
+                                    <Path Grid.Column="2" Data="M0,0 L4,4 L0,8 Z" Fill="{StaticResource MutedTextBrush}" Margin="16,0,0,0" VerticalAlignment="Center"/>
+                                    <Popup x:Name="Popup" Placement="Right" IsOpen="{TemplateBinding IsSubmenuOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
+                                        <Border Background="{StaticResource RaisedBrush}" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="4" MinWidth="200">
+                                            <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto"><StackPanel IsItemsHost="True"/></ScrollViewer>
+                                        </Border>
+                                    </Popup>
                                 </Grid>
                             </Border>
                             <ControlTemplate.Triggers>
