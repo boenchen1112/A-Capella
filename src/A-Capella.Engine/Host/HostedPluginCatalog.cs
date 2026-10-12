@@ -1,8 +1,8 @@
 namespace A_Capella.Engine.Host;
 
 /// <summary>
-/// The hard vendor limit from the v6 plan: only these FabFilter plugins (and Melodyne, hosted
-/// separately via ARA in Phase 2A) are ever hosted. Paths are the standard shared VST3 install
+/// The hard vendor limit: only these FabFilter plugins (and Melodyne, hosted via ARA for note
+/// analysis only) are ever hosted. Paths are the standard shared VST3 install
 /// location. FabFilter's
 /// installer places each plugin under a `FabFilter\` vendor subfolder (confirmed 2026-07-14 after
 /// a reinstall), matching Melodyne's existing `Celemony\Melodyne\` subfolder pattern.
@@ -18,7 +18,7 @@ public static class HostedPluginCatalog
         ["FabFilter Pro-L 2"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-L 2.vst3",
         ["FabFilter Pro-DS"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-DS.vst3",
         ["FabFilter Pro-R 2"] = $@"{Vst3Root}\FabFilter\FabFilter Pro-R 2.vst3",
-        // Legacy: only the dormant ARA pitch code reaches Melodyne; nothing in the app wires it up.
+        // Analysis only: Melodyne reads note timing for auto-align. It is never used to correct pitch and no editor is opened.
         ["Melodyne"] = $@"{Vst3Root}\Celemony\Melodyne\Melodyne.vst3",
     };
 
