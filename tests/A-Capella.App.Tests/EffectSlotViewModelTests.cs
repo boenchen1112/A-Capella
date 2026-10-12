@@ -1,3 +1,4 @@
+using A_Capella.App;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
@@ -32,6 +33,34 @@ public class EffectSlotViewModelTests
 
         Assert.Equal(new[] { "Compressor", "EQ", "De-esser", "Reverb" }, row.Effects.Select(e => e.Title));
         Assert.All(row.Effects, e => Assert.Equal("Off", e.SelectedChoice?.Label));
+    }
+
+    [StaFact]
+    public void PresetMenu_MirrorsFabFilterFolders_CategoriesThenNestedCategoriesThenPresets()
+    {
+        PresetChoice C(string category, string name) => new(new PresetRef("FabFilter Pro-C 3", category, name), category, name);
+        var choices = new List<PresetChoice>
+        {
+            new(null, "", "Off"),
+            C("Basic", "Vocal"), C("Basic", "Bass"),
+            C("Tempo Synced/110bpm", "Pump"),
+        };
+        PresetChoice? picked = null;
+
+        var menu = PresetPicker.BuildMenu(choices, choices[3], c => picked = c);
+
+        Assert.Equal("Off", ((System.Windows.Controls.MenuItem)menu.Items[0]).Header);
+        Assert.IsType<System.Windows.Controls.Separator>(menu.Items[1]);
+        var basic = (System.Windows.Controls.MenuItem)menu.Items[2];
+        Assert.Equal("Basic", basic.Header);
+        Assert.Equal(new object[] { "Vocal", "Bass" }, basic.Items.Cast<System.Windows.Controls.MenuItem>().Select(i => i.Header).ToArray());
+        var synced = (System.Windows.Controls.MenuItem)menu.Items[3];
+        Assert.True(synced.IsChecked);                                   // the path to the chosen preset is ticked
+        var folder = (System.Windows.Controls.MenuItem)synced.Items[0];
+        var pump = (System.Windows.Controls.MenuItem)folder.Items[0];
+        Assert.True(pump.IsChecked);
+        pump.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+        Assert.Same(choices[3], picked);
     }
 
     [StaFact]

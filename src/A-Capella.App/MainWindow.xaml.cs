@@ -1048,7 +1048,7 @@ public partial class MainWindow : Window
 
     private void SetUpMasterLimiterCombo()
     {
-        MasterLimiterCombo.ItemsSource = EffectSlotViewModel.AllChoices(ProjectSession.MasterLimiterPlugin);
+        MasterLimiterCombo.Choices = EffectSlotViewModel.AllChoices(ProjectSession.MasterLimiterPlugin);
         ShowMasterLimiter();
         _previewEngine.MasterLimiterPreset = _session.MasterLimiterPreset;
     }
@@ -1060,7 +1060,7 @@ public partial class MainWindow : Window
         try
         {
             var choices = EffectSlotViewModel.AllChoices(ProjectSession.MasterLimiterPlugin);
-            MasterLimiterCombo.SelectedItem = choices.FirstOrDefault(c => Equals(c.Ref, _session.MasterLimiterPreset));
+            MasterLimiterCombo.SelectedChoice = choices.FirstOrDefault(c => Equals(c.Ref, _session.MasterLimiterPreset));
         }
         finally
         {
@@ -1069,9 +1069,9 @@ public partial class MainWindow : Window
         _previewEngine.MasterLimiterPreset = _session.MasterLimiterPreset;
     }
 
-    private void MasterLimiterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void MasterLimiterCombo_SelectionChanged(object? sender, EventArgs e)
     {
-        if (_syncingMasterLimiter || MasterLimiterCombo.SelectedItem is not PresetChoice choice) return;
+        if (_syncingMasterLimiter || MasterLimiterCombo.SelectedChoice is not { } choice) return;
         if (Equals(_session.MasterLimiterPreset, choice.Ref)) return;
         _session.MasterLimiterPreset = choice.Ref;
         _previewEngine.MasterLimiterPreset = choice.Ref;
