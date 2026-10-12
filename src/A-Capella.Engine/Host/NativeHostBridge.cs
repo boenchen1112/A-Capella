@@ -129,6 +129,13 @@ internal static class NativeHostBridge
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern float aca_ara_get_analysis_progress(IntPtr sessionHandle, IntPtr audioSourceHandle);
 
+    /// <summary>Reads the notes the plugin detected in an analysed audio source. Returns the note count
+    /// (the arrays are filled up to maxNotes; pass 0 with null arrays to just count), or -1 if the plugin
+    /// offers no note content for the source.</summary>
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int aca_ara_read_notes(IntPtr sessionHandle, IntPtr audioSourceHandle,
+        [Out] double[]? startSeconds, [Out] double[]? durationSeconds, [Out] float[]? frequencyHz, [Out] float[]? volume, int maxNotes);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern int aca_ara_render_block(IntPtr sessionHandle, IntPtr audioSourceHandle,
         long startSampleInRegion, float[] outL, float[] outR, int numSamples);

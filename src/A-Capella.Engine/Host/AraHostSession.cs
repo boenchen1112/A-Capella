@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
+using A_Capella.Engine.Sync;
+
 namespace A_Capella.Engine.Host;
 
 /// <summary>
@@ -111,6 +113,26 @@ public sealed class AraHostSession : IDisposable
                 return false;
             Thread.Sleep(pollIntervalMs);
         }
+    }
+
+    /// <summary>The notes the plugin detected in this source, in start order, or null if it offers no
+    /// note content. Call after WaitForAnalysisComplete.</summary>
+    public IReadOnlyList<DetectedNote>? ReadNotes(IntPtr audioSourceHandle)
+    {
+        int count = NativeHostBridge.aca_ara_read_notes(_handle, audioSourceHandle, null, null, null, null, 0);
+        if (count < 0) return null;
+
+        var starts = new double[count];
+        var durations = new double[count];
+        var frequencies = new float[count];
+        var volumes = new float[count];
+        if (count > 0)
+            NativeHostBridge.aca_ara_read_notes(_handle, audioSourceHandle, starts, durations, frequencies, volumes, count);
+
+        var notes = new DetectedNote[count];
+        for (int i = 0; i < count; i++)
+            notes[i] = new DetectedNote(starts[i], durations[i], frequencies[i], volumes[i]);
+        return notes;
     }
 
     /// <summary>Renders numSamples of stereo output starting at startSampleInRegion (relative to

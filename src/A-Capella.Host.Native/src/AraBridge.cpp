@@ -628,6 +628,41 @@ extern "C"
         return session->modelUpdateController->getProgress(hostRef);
     }
 
+    // Reads the notes the plugin detected in a registered audio source (start and duration in seconds
+    // from the start of the source, frequency in Hz or 0 when unpitched, normalised volume). Call after
+    // analysis has completed. Returns the note count, or -1 if the plugin offers no note content for
+    // this source. Fills at most maxNotes entries into each non-null output array, so a first call
+    // with maxNotes == 0 just counts.
+    __declspec(dllexport) int aca_ara_read_notes(void* sessionHandle, void* audioSourceHandle,
+                                                  double* outStartSeconds, double* outDurationSeconds,
+                                                  float* outFrequencyHz, float* outVolume, int maxNotes)
+    {
+        if (sessionHandle == nullptr || audioSourceHandle == nullptr) return -1;
+        auto* session = static_cast<AcaAraSession*>(sessionHandle);
+        auto* source = static_cast<AcaAraAudioSourceHandle*>(audioSourceHandle);
+        auto& dc = session->documentController->getDocumentController();
+        auto sourceRef = source->araSource->getPluginRef();
+
+        if (!dc.isAudioSourceContentAvailable(sourceRef, ARA::kARAContentTypeNotes))
+            return -1;
+
+        auto reader = dc.createAudioSourceContentReader(sourceRef, ARA::kARAContentTypeNotes, nullptr);
+        if (reader == nullptr) return -1;
+
+        int count = (int) dc.getContentReaderEventCount(reader);
+        for (int i = 0; i < count && i < maxNotes; ++i)
+        {
+            auto* note = static_cast<const ARA::ARAContentNote*>(dc.getContentReaderDataForEvent(reader, (ARA::ARAInt32) i));
+            if (note == nullptr) continue;
+            if (outStartSeconds != nullptr) outStartSeconds[i] = note->startPosition;
+            if (outDurationSeconds != nullptr) outDurationSeconds[i] = note->noteDuration;
+            if (outFrequencyHz != nullptr) outFrequencyHz[i] = (note->frequency == ARA::kARAInvalidFrequency) ? 0.0f : note->frequency;
+            if (outVolume != nullptr) outVolume[i] = note->volume;
+        }
+        dc.destroyContentReader(reader);
+        return count;
+    }
+
     // Task 39: renders numSamples of stereo output starting at startSampleInRegion (region-relative,
     // i.e. 0 is the start of the source) through Melodyne's playback renderer. The plugin ignores
     // whatever's in the input buffer in this role -- output is generated purely from the model
