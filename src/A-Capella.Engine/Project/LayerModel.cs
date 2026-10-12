@@ -20,7 +20,7 @@ public class LayerModel
     public double ManualOffsetMs { get; set; }
 
     /// <summary>How far the manual timing nudge may move a layer either way.</summary>
-    public const double MaxManualOffsetMs = 2000;
+    public const double MaxManualOffsetMs = 30000;
 
     /// <summary>Moves this layer later (positive) or earlier (negative) against the others by deltaMs,
     /// clamped to +/-MaxManualOffsetMs. Rounded to a microsecond-free value so repeated 0.1 ms

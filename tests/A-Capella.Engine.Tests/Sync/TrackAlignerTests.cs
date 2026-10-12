@@ -180,14 +180,15 @@ public class LayerAlignerTests
     };
 
     [Fact]
-    public void Apply_StartsTheTargetWithTheReference_AndDropsTheOldNudge()
+    public void Apply_ShowsTheOffsetAsTheNudge_AndKeepsTheRecordingCalibration()
     {
         var reference = Layer();
-        var target = Layer(manualMs: 40);
+        var target = Layer(calibratedMs: 25, manualMs: 40);
 
         LayerAligner.Apply(reference, target, new AlignmentResult(1234, 0.9, true, AlignMethod.Notes));
 
-        Assert.Equal(0, target.ManualOffsetMs);
+        Assert.Equal(25, target.CalibratedOffsetMs);
+        Assert.Equal(-1209, target.ManualOffsetMs);
         // The target runs 1234 ms late, so its head is trimmed by that much.
         Assert.Equal(-1234, target.GetShiftMs());
     }

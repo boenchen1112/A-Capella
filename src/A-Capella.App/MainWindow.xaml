@@ -299,7 +299,7 @@
                                   shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
 
                     <TextBlock Text="Limiter" FontSize="11" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <local:PresetPicker x:Name="MasterLimiterCombo" Width="130" VerticalAlignment="Center" Margin="0,0,16,0"
+                    <local:PresetPicker x:Name="MasterLimiterCombo" Style="{StaticResource {x:Type Button}}" Width="130" VerticalAlignment="Center" Margin="0,0,16,0"
                               SelectedChoiceChanged="MasterLimiterCombo_SelectionChanged"
                               shell:WindowChrome.IsHitTestVisibleInChrome="True"
                               ToolTip="The one limiter on the whole mix (FabFilter Pro-L 2)."/>
@@ -495,7 +495,7 @@
                                         <StackPanel>
                                             <TextBlock Text="{Binding Title}" FontFamily="{StaticResource PlexSansMedium}"/>
                                             <TextBlock Text="{Binding PluginLabel}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
-                                            <local:PresetPicker Choices="{Binding Choices}" SelectedChoice="{Binding SelectedChoice, Mode=TwoWay}"/>
+                                            <local:PresetPicker Style="{StaticResource {x:Type Button}}" Choices="{Binding Choices}" SelectedChoice="{Binding SelectedChoice, Mode=TwoWay}"/>
                                             <TextBlock Text="{Binding Status}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">

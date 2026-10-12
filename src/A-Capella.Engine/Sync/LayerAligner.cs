@@ -16,12 +16,14 @@ public static class LayerAligner
             Trimmed(reference, ffmpegPath), Trimmed(target, ffmpegPath), SampleRate,
             notes, ContentKey(reference), ContentKey(target));
 
-    /// <summary>Makes the target start together with the reference. Replaces the target's manual nudge,
-    /// which was relative to the old position.</summary>
+    /// <summary>Makes the target start together with the reference by setting its timing nudge, so the
+    /// found offset shows in the strip and can be fine-tuned or reset there. The target's recording
+    /// latency correction is left as it was.</summary>
     public static void Apply(LayerModel reference, LayerModel target, AlignmentResult result)
     {
-        target.ManualOffsetMs = 0;
-        target.CalibratedOffsetMs = result.OffsetMs - reference.GetShiftMs();
+        double wantedShiftMs = reference.GetShiftMs() - result.OffsetMs;
+        target.ManualOffsetMs = Math.Clamp(Math.Round(wantedShiftMs + target.CalibratedOffsetMs, 3),
+            -LayerModel.MaxManualOffsetMs, LayerModel.MaxManualOffsetMs);
     }
 
     /// <summary>Identifies what was analysed: the source file and its trim, but not the sync shift.</summary>

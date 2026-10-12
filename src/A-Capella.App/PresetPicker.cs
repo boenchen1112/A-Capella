@@ -56,13 +56,16 @@ public sealed class PresetPicker : Button
 
     private void ShowLabel() => _label.Text = SelectedChoice?.Label ?? "Off";
 
-    private void OpenMenu()
+    private void OpenMenu() => CreateMenu().IsOpen = true;
+
+    /// <summary>The menu the button opens, wired so picking an entry sets SelectedChoice.</summary>
+    public ContextMenu CreateMenu()
     {
         var menu = BuildMenu(Choices ?? Array.Empty<PresetChoice>(), SelectedChoice, choice => SelectedChoice = choice);
         menu.PlacementTarget = this;
         menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.MinWidth = ActualWidth;
-        menu.IsOpen = true;
+        return menu;
     }
 
     /// <summary>The menu for a list of choices: Off first, then categories as nested submenus.</summary>
