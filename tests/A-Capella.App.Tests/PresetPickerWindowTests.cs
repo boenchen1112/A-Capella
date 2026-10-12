@@ -56,4 +56,23 @@ public class PresetPickerWindowTests
         }
         finally { window.Close(); }
     }
+
+    [StaFact]
+    public void CategoryItems_CanOpenASubmenuOfPresets_InTheThemedMenu()
+    {
+        TestAppHost.EnsureApplicationResourcesLoaded();
+        var window = new MainWindow();
+        try
+        {
+            window.Show();
+            var picker = new PresetPicker { Choices = EffectSlotViewModel.AllChoices("FabFilter Pro-C 3") };
+            var menu = picker.CreateMenu();
+            var category = menu.Items.OfType<MenuItem>().First(m => m.Items.Count > 0);
+            window.Resources.Add("pp", menu);
+            menu.IsOpen = true;
+            category.ApplyTemplate();
+            Assert.NotNull(category.Template.FindName("Popup", category));
+        }
+        finally { window.Close(); }
+    }
 }
