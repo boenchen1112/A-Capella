@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Windows.Data;
 using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Presets;
@@ -27,7 +26,7 @@ public sealed class PresetChoice
 
 /// <summary>
 /// One effect (compressor, EQ, de-esser or reverb) of one layer, as the channel panel shows it: a
-/// single dropdown of that plugin's factory presets grouped by category, plus "Off". There is
+/// single dropdown of that plugin's factory presets by category, plus "Off". There is
 /// nothing else to adjust. Writes straight through to the layer's mix parameters.
 /// </summary>
 public sealed class EffectSlotViewModel : INotifyPropertyChanged
@@ -38,7 +37,6 @@ public sealed class EffectSlotViewModel : INotifyPropertyChanged
 
     private readonly Func<LayerMixParameters?> _getParameters;
     private readonly Action<EffectSlotViewModel> _onChosen;
-    private ListCollectionView? _choices;
 
     public EffectSlotViewModel(FxSlot slot, Func<LayerMixParameters?> getParameters, Action<EffectSlotViewModel> onChosen)
     {
@@ -53,20 +51,8 @@ public sealed class EffectSlotViewModel : INotifyPropertyChanged
     public string Title => Slot.Title;
     public string PluginLabel => Slot.PluginLabel;
 
-    /// <summary>"Off" followed by the plugin's presets, grouped by FabFilter category. Built on first
-    /// use and on the calling thread, since a collection view belongs to the thread that made it.</summary>
-    public ListCollectionView Choices
-    {
-        get
-        {
-            if (_choices is null)
-            {
-                _choices = new ListCollectionView(AllChoices(Slot.PluginLabel).ToList());
-                _choices.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PresetChoice.Group)));
-            }
-            return _choices;
-        }
-    }
+    /// <summary>"Off" followed by the plugin's presets; the picker lays them out by category.</summary>
+    public IReadOnlyList<PresetChoice> Choices => AllChoices(Slot.PluginLabel);
 
     /// <summary>The entries for a plugin: Off first, then each category's presets, in FabFilter's order.</summary>
     public static IReadOnlyList<PresetChoice> AllChoices(string pluginLabel)

@@ -299,8 +299,8 @@
                                   shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
 
                     <TextBlock Text="Limiter" FontSize="11" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <ComboBox x:Name="MasterLimiterCombo" Width="130" VerticalAlignment="Center" Margin="0,0,16,0" DisplayMemberPath="Label"
-                              IsSynchronizedWithCurrentItem="False" SelectionChanged="MasterLimiterCombo_SelectionChanged"
+                    <local:PresetPicker x:Name="MasterLimiterCombo" Width="130" VerticalAlignment="Center" Margin="0,0,16,0"
+                              SelectedChoiceChanged="MasterLimiterCombo_SelectionChanged"
                               shell:WindowChrome.IsHitTestVisibleInChrome="True"
                               ToolTip="The one limiter on the whole mix (FabFilter Pro-L 2)."/>
                     <TextBlock Text="Master" FontSize="11" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -495,25 +495,7 @@
                                         <StackPanel>
                                             <TextBlock Text="{Binding Title}" FontFamily="{StaticResource PlexSansMedium}"/>
                                             <TextBlock Text="{Binding PluginLabel}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,6"/>
-                                            <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
-                                                      DisplayMemberPath="Label" IsSynchronizedWithCurrentItem="False"
-                                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
-                                                <ComboBox.GroupStyle>
-                                                    <GroupStyle>
-                                                        <GroupStyle.HeaderTemplate>
-                                                            <DataTemplate>
-                                                                <TextBlock x:Name="GroupName" Text="{Binding Name}" FontWeight="SemiBold" FontSize="11"
-                                                                           Foreground="{StaticResource MutedTextBrush}" Margin="2,6,0,2"/>
-                                                                <DataTemplate.Triggers>
-                                                                    <DataTrigger Binding="{Binding Name}" Value="">
-                                                                        <Setter TargetName="GroupName" Property="Visibility" Value="Collapsed"/>
-                                                                    </DataTrigger>
-                                                                </DataTemplate.Triggers>
-                                                            </DataTemplate>
-                                                        </GroupStyle.HeaderTemplate>
-                                                    </GroupStyle>
-                                                </ComboBox.GroupStyle>
-                                            </ComboBox>
+                                            <local:PresetPicker Choices="{Binding Choices}" SelectedChoice="{Binding SelectedChoice, Mode=TwoWay}"/>
                                             <TextBlock Text="{Binding Status}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
