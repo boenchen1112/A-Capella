@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     // Dispatcher (A3/B8).
     private readonly HostedPluginService _hostedService = new(new HostedPluginAvailability(), new WpfHostedPluginDispatcher(Dispatcher.CurrentDispatcher));
     private readonly MixEngine _mixEngine;
+    private readonly A_Capella.Engine.Sync.MelodyneNoteSource _noteSource;
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
     private readonly PreviewPlaybackEngine _previewEngine;
     private readonly DispatcherTimer _previewDebounceTimer;
@@ -95,6 +96,7 @@ public partial class MainWindow : Window
         // WpfHostedPluginDispatcher was already built against this same thread's Dispatcher above.
         HostedPluginInstance.Initialize();
         _mixEngine = new MixEngine(_hostedService);
+        _noteSource = new A_Capella.Engine.Sync.MelodyneNoteSource(_hostedService);
         _session = new ProjectSession(_mixEngine);
         // 16:9 to match ExportEngine's 1280x720 default (half-scale, so cell math stays exact
         // integers): a 4:3 preview canvas letterboxed a 16:9 webcam in the preview even though it
@@ -333,6 +335,89 @@ public partial class MainWindow : Window
         row.ResetNudge();
         StatusText.Text = $"{row.DisplayName} timing reset.";
         PushUndoSnapshot();
+    }
+
+    // ----- Auto-align: line an uploaded track up with layer 1 (the guide everyone sings to) -----
+
+    private readonly HashSet<int> _aligning = new();
+    // One alignment at a time: they share layer 1's decode and the single Melodyne analysis.
+    private readonly SemaphoreSlim _alignGate = new(1, 1);
+
+    private async void AutoAlignButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is LayerRowViewModel row)
+            await AutoAlignAsync(row, explicitRequest: true);
+    }
+
+    /// <summary>Measures how far the row's layer runs from layer 1 and, if the match is clear, moves it
+    /// into place (one undo step). Analysis runs off the UI thread; a result for a layer that changed in
+    /// the meantime is dropped. Never throws: problems end up in the status line.</summary>
+    private async Task AutoAlignAsync(LayerRowViewModel row, bool explicitRequest = false)
+    {
+        if (!IsLiveRow(row)) return;
+        var target = row.Layer!;
+        var reference = _layers.Layers.FirstOrDefault(l => l.CellIndex == 0);
+        if (reference is null || ReferenceEquals(reference, target))
+        {
+            if (explicitRequest)
+                StatusText.Text = "Auto-align lines a layer up with layer 1, so there is nothing to align here.";
+            return;
+        }
+        if (!_aligning.Add(target.LayerId)) return;
+
+        string targetKey = A_Capella.Engine.Sync.LayerAligner.ContentKey(target);
+        string referenceKey = A_Capella.Engine.Sync.LayerAligner.ContentKey(reference);
+        StatusText.Text = $"Aligning {row.DisplayName} to layer 1...";
+        double calibratedBefore = target.CalibratedOffsetMs, manualBefore = target.ManualOffsetMs;
+        try
+        {
+            await _alignGate.WaitAsync();
+            var result = await Task.Run(() =>
+            {
+                var notes = _noteSource.IsAvailable ? _noteSource : null;
+                return A_Capella.Engine.Sync.LayerAligner.Measure(reference, target, notes);
+            });
+
+            bool stillCurrent = IsLiveRow(row) && ReferenceEquals(row.Layer, target)
+                && _layers.Layers.Contains(reference)
+                && A_Capella.Engine.Sync.LayerAligner.ContentKey(target) == targetKey
+                && A_Capella.Engine.Sync.LayerAligner.ContentKey(reference) == referenceKey
+                && target.CalibratedOffsetMs == calibratedBefore && target.ManualOffsetMs == manualBefore;
+            if (!stillCurrent)
+            {
+                StatusText.Text = $"Skipped aligning {row.DisplayName}: the layer changed meanwhile. Use Auto-align to try again.";
+                return;
+            }
+
+            string how = result.Method == A_Capella.Engine.Sync.AlignMethod.Notes ? "Melodyne" : "loudness";
+            if (!result.Trusted)
+            {
+                StatusText.Text = $"Couldn't find a confident match for {row.DisplayName} ({how}) - line it up with the timing nudge.";
+                return;
+            }
+
+            A_Capella.Engine.Sync.LayerAligner.Apply(reference, target, result);
+            row.NotifyTimingChanged();
+            RefreshPreviewLive();
+            StatusText.Text = $"Aligned {row.DisplayName} to layer 1 ({result.OffsetMs:+0;-0} ms, {how}).";
+            PushUndoSnapshot();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Couldn't align {row.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            _alignGate.Release();
+            _aligning.Remove(target.LayerId);
+        }
+    }
+
+    /// <summary>After an upload: layers 2 and up are aligned to layer 1 automatically.</summary>
+    private void AutoAlignUploaded(IEnumerable<LayerRowViewModel> rows)
+    {
+        foreach (var row in rows)
+            if (row.Layer is { CellIndex: > 0 }) _ = AutoAlignAsync(row);
     }
 
     private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
@@ -820,6 +905,7 @@ public partial class MainWindow : Window
         RefreshPreviewLive();
         StatusText.Text = $"Replaced {row.DisplayName} with {Path.GetFileName(dialog.FileName)}.";
         PushUndoSnapshot();
+        AutoAlignUploaded(new[] { row });
     }
 
     private int? LowestFreeCell()
@@ -864,6 +950,7 @@ public partial class MainWindow : Window
         RefreshPreviewLive();
         StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
         PushUndoSnapshot();
+        AutoAlignUploaded(new[] { row });
     }
 
     /// <summary>Add > Import files as layers... and the mixer's "+ Import files..." button: one
@@ -896,6 +983,7 @@ public partial class MainWindow : Window
         {
             RefreshPreviewLive();                                        // once per batch, not per file
             PushUndoSnapshot();                                          // ONE undo step + one MarkDirty for the batch
+            AutoAlignUploaded(assignments.Select(x => _tracks[x.CellIndex]).ToList());
         }
 
         StatusText.Text = FormatImportStatus(assignments.Count, skipped);

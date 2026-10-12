@@ -469,6 +469,8 @@
                                            HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand"
                                            MouseLeftButtonDown="NudgeLabel_MouseLeftButtonDown" ToolTip="Click to reset to 0."/>
                             </DockPanel>
+                            <Button Content="Auto-align" Click="AutoAlignButton_Click" Margin="0,6,0,0" Padding="8,3"
+                                    ToolTip="Line this layer up with layer 1 automatically (uses Melodyne's note timing when installed)."/>
                         </StackPanel>
                     </Grid>
 

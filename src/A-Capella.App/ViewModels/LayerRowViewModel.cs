@@ -350,6 +350,13 @@ public class LayerRowViewModel : INotifyPropertyChanged
         LiveParamChanged?.Invoke();
     }
 
+    /// <summary>Call after the layer's timing was changed behind this row's back (auto-align).</summary>
+    public void NotifyTimingChanged()
+    {
+        NotifyManualOffsetChanged();
+        LiveParamChanged?.Invoke();
+    }
+
     private void NotifyManualOffsetChanged()
     {
         OnPropertyChanged(nameof(ManualOffsetMs));

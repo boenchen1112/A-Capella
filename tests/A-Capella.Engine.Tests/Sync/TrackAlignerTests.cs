@@ -170,3 +170,37 @@ public class TrackAlignerTests
         Assert.InRange(Math.Abs(FirstLoud(aligned) - FirstLoud(reference)), 0, SampleRate / 1000 * 2);
     }
 }
+
+public class LayerAlignerTests
+{
+    private static A_Capella.Engine.Project.LayerModel Layer(double calibratedMs = 0, double manualMs = 0) => new()
+    {
+        LayerId = 1, Kind = A_Capella.Engine.Project.LayerKind.UploadedAudioOnly, SourcePath = "x",
+        CalibratedOffsetMs = calibratedMs, ManualOffsetMs = manualMs,
+    };
+
+    [Fact]
+    public void Apply_StartsTheTargetWithTheReference_AndDropsTheOldNudge()
+    {
+        var reference = Layer();
+        var target = Layer(manualMs: 40);
+
+        LayerAligner.Apply(reference, target, new AlignmentResult(1234, 0.9, true, AlignMethod.Notes));
+
+        Assert.Equal(0, target.ManualOffsetMs);
+        // The target runs 1234 ms late, so its head is trimmed by that much.
+        Assert.Equal(-1234, target.GetShiftMs());
+    }
+
+    [Fact]
+    public void Apply_FollowsTheReferencesOwnShift()
+    {
+        var reference = Layer(calibratedMs: 80);   // the reference itself is pulled 80 ms earlier
+        var target = Layer();
+
+        LayerAligner.Apply(reference, target, new AlignmentResult(-500, 0.9, true, AlignMethod.Energy));
+
+        // Target is 500 ms early against the reference, and the reference sits 80 ms early on the timeline.
+        Assert.Equal(reference.GetShiftMs() + 500, target.GetShiftMs());
+    }
+}

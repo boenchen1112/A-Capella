@@ -28,7 +28,10 @@ public static class TrackAligner
         INoteSource? noteSource = null, string referenceKey = "reference", string signalKey = "signal", double maxLagSeconds = 30)
     {
         var referenceNotes = noteSource?.DetectNotes(Window(reference, sampleRate), sampleRate, referenceKey);
-        var signalNotes = noteSource?.DetectNotes(Window(signal, sampleRate), sampleRate, signalKey);
+        // No point analysing the signal when the reference gave nothing usable.
+        var signalNotes = referenceNotes is { Count: >= MinNotes }
+            ? noteSource?.DetectNotes(Window(signal, sampleRate), sampleRate, signalKey)
+            : null;
         bool useNotes = referenceNotes is { Count: >= MinNotes } && signalNotes is { Count: >= MinNotes };
 
         float[] Curve(float[] samples, IReadOnlyList<DetectedNote>? notes, int rate) =>
