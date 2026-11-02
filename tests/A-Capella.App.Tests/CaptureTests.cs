@@ -92,7 +92,7 @@ public class CaptureTests
         env.ModalScript = dialog =>
         {
             Dispatcher.UIThread.RunJobs();
-            if (dialog is Window w) { w.Show(); w.SetRenderScaling(Scale); w.UpdateLayout(); Dispatcher.UIThread.RunJobs(); w.CaptureRenderedFrame()!.Save(NextPath(root!, "04_layout_picker")); }
+            if (dialog is Window w) { w.Show(); w.SetRenderScaling(Scale); w.UpdateLayout(); Dispatcher.UIThread.RunJobs(); w.CaptureRenderedFrame()!.Save(NextPath(root!, "04_layout_picker")); ScrollPickerTo(w, "5 cells", root!); }
             return Task.FromResult<bool?>(false);
         };
         env.Click("ChooseLayoutMenuItem_Click");
@@ -153,6 +153,20 @@ public class CaptureTests
 
         File.WriteAllText(Path.Combine(root!, "frame-counts.txt"),
             string.Join("\n", rec.Counts.OrderBy(k => k.Key).Select(k => $"{k.Key} {k.Value}")) + "\n");
+    }
+
+    // Scrolls the layout picker to a section header so the selectable layouts are on screen, then captures it.
+    private static void ScrollPickerTo(Window w, string header, string root)
+    {
+        var scroll = w.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        var title = w.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text == header);
+        var content = scroll?.Content as Control;
+        if (scroll == null || title == null || content == null) return;
+        var p = title.TranslatePoint(new Point(0, 0), content);
+        if (p == null) return;
+        scroll.Offset = new Vector(0, Math.Max(0, p.Value.Y - 8));
+        Dispatcher.UIThread.RunJobs(); w.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+        w.CaptureRenderedFrame()!.Save(NextPath(root, "04b_layout_picker_5plus"));
     }
 
     private static string NextPath(string root, string scene)
