@@ -44,6 +44,46 @@ internal sealed class AuditEnv : IDisposable
         Window.Show();
     }
 
+    /// <summary>Points recording at a stand-in for ffmpeg that lists one fake camera and microphone and
+    /// captures ffmpeg's synthetic test video and a sine tone instead (no real devices here).</summary>
+    public string InstallFakeCaptureDevices()
+    {
+        string shim = Path.Combine(Dir, "fake-ffmpeg.sh");
+        File.WriteAllText(shim, """
+            #!/bin/bash
+            for a in "$@"; do
+              if [ "$a" = "-list_devices" ]; then
+                {
+                  echo "[AVFoundation indev @ 0x1] AVFoundation video devices:"
+                  echo "[AVFoundation indev @ 0x1] [0] Test Camera"
+                  echo "[AVFoundation indev @ 0x1] [1] Capture screen 0"
+                  echo "[AVFoundation indev @ 0x1] AVFoundation audio devices:"
+                  echo "[AVFoundation indev @ 0x1] [0] Test Mic"
+                } >&2
+                exit 0
+              fi
+            done
+            args=("$@")
+            # Drop the avfoundation input (-f avfoundation -framerate 30 -i dev) and feed synthetic sources.
+            out=()
+            i=0
+            n=${#args[@]}
+            while [ $i -lt $n ]; do
+              a="${args[$i]}"
+              if [ "$a" = "-f" ] && [ "${args[$((i+1))]}" = "avfoundation" ]; then i=$((i+2)); continue; fi
+              if [ "$a" = "-framerate" ]; then i=$((i+2)); continue; fi
+              if [ "$a" = "-i" ]; then i=$((i+2)); continue; fi
+              out+=("$a")
+              i=$((i+1))
+            done
+            exec ffmpeg -re -f lavfi -i testsrc=size=320x180:rate=30 -re -f lavfi -i sine=frequency=440:sample_rate=44100 "${out[@]}"
+            """);
+        System.Diagnostics.Process.Start("chmod", new[] { "+x", shim })!.WaitForExit();
+        Window.DeviceCatalogInUse = new A_Capella.Engine.Devices.DeviceCatalog(shim);
+        Window.CaptureSessionFactory = () => new A_Capella.Engine.Capture.FfmpegCaptureSession(shim);
+        return shim;
+    }
+
     public string Status => Window.StatusText.Text ?? "";
     public ProjectSession Session => Window.Session;
     public IReadOnlyList<LayerRowViewModel> Rows => Window.TrackList.Items.Cast<LayerRowViewModel>().ToList();
