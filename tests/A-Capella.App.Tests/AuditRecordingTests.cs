@@ -142,10 +142,11 @@ public class AuditRecordingTests
         env.ModalScript = _ => { opened = true; return Task.FromResult<bool?>(false); };
 
         env.Click("RecordButton_Click");
+        string status = env.Status;   // read now: background alignments keep rewriting the status line
         env.Settle(200);
 
         Assert.False(opened);
-        Assert.Equal($"Layer cap reached ({LayerCollection.MaxLayers}).", env.Status);
+        Assert.Equal($"Layer cap reached ({LayerCollection.MaxLayers}).", status);
     }
 
     [AvaloniaFact]
