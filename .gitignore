@@ -13,3 +13,4 @@ notes/
 CLAUDE.md
 .claude/settings.local.json
 .DS_Store
+tests/*/TestResults/
