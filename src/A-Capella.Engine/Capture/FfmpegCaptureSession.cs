@@ -4,7 +4,7 @@ using A_Capella.Engine.Ffmpeg;
 namespace A_Capella.Engine.Capture;
 
 /// <summary>
-/// Wraps one ffmpeg process capturing a single dshow input line combining a video device and an
+/// Wraps one ffmpeg process capturing a single dshow (Windows) / avfoundation (macOS) input combining a video device and an
 /// audio device, so both streams share one clock (prevents within-layer lip-sync drift).
 /// </summary>
 public class FfmpegCaptureSession : IDisposable
@@ -51,16 +51,13 @@ public class FfmpegCaptureSession : IDisposable
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-y");
-        // A live dshow feed (720p+ webcam) can outrun the default real-time buffer and encoder
+        // A live camera feed (720p+ webcam) can outrun the default real-time buffer and encoder
         // preset, causing ffmpeg to silently drop frames ("real-time buffer too full") -- with
-        // stderr previously discarded entirely, that would have been invisible. -rtbufsize gives
-        // headroom to absorb bursts; ultrafast/aac keep the encoder ahead of the live feed.
-        psi.ArgumentList.Add("-rtbufsize");
-        psi.ArgumentList.Add("256M");
-        psi.ArgumentList.Add("-f");
-        psi.ArgumentList.Add("dshow");
-        psi.ArgumentList.Add("-i");
-        psi.ArgumentList.Add($"video={videoDeviceName}:audio={audioDeviceName}");
+        // stderr previously discarded entirely, that would have been invisible. The dshow input
+        // gets -rtbufsize headroom to absorb bursts; ultrafast/aac keep the encoder ahead of the
+        // live feed.
+        foreach (var arg in CaptureInputFormat.VideoAudioArguments(videoDeviceName, audioDeviceName))
+            psi.ArgumentList.Add(arg);
         psi.ArgumentList.Add("-c:v");
         psi.ArgumentList.Add("libx264");
         psi.ArgumentList.Add("-preset");
@@ -97,12 +94,8 @@ public class FfmpegCaptureSession : IDisposable
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-y");
-        psi.ArgumentList.Add("-rtbufsize");
-        psi.ArgumentList.Add("256M");
-        psi.ArgumentList.Add("-f");
-        psi.ArgumentList.Add("dshow");
-        psi.ArgumentList.Add("-i");
-        psi.ArgumentList.Add($"audio={audioDeviceName}");
+        foreach (var arg in CaptureInputFormat.AudioOnlyArguments(audioDeviceName))
+            psi.ArgumentList.Add(arg);
         psi.ArgumentList.Add(outputPath);
 
         _process = Process.Start(psi);

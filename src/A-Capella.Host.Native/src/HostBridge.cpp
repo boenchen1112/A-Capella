@@ -12,9 +12,12 @@
 // getTotalNumInputChannels() reported 4 (main + sidechain) -- forcing the layout here means every
 // downstream caller (P3's HostedPluginSampleProvider) can always assume exactly 2-in/2-out and never
 // has to special-case a plugin's bus layout.
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#endif
+#include "Export.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 #include <memory>
@@ -166,7 +169,7 @@ extern "C"
     // aca_process_block is meant to be called from a different, audio-processing thread; JUCE's
     // AudioProcessor::processBlock itself has no message-thread affinity requirement, matching how
     // a real DAW's realtime audio thread is separate from its GUI thread).
-    __declspec(dllexport) void aca_initialize()
+    ACA_EXPORT void aca_initialize()
     {
         juceInit();
 
@@ -180,8 +183,11 @@ extern "C"
         // which defaults to 1.0 regardless of the OS DPI setting. GetDpiForSystem() (effective
         // system DPI, 96 = 100%) gives a reasonable single-monitor approximation to drive that
         // scale factor explicitly.
+        // macOS scales editor windows itself (Retina points), so this is Windows-only.
+#if defined(_WIN32)
         UINT systemDpi = GetDpiForSystem();
         juce::Desktop::getInstance().setGlobalScaleFactor(static_cast<float>(systemDpi) / 96.0f);
+#endif
 
         g_initialized = true;
     }
@@ -189,7 +195,7 @@ extern "C"
     // Task 1: scan. Returns 1 if at least one plugin type was found in pluginPath, else 0.
     // Writes the first found type's name/version into caller-provided buffers (truncated, NUL-terminated).
     // v7 Q0 (audit B8): returns 0 (not-found) if aca_initialize() hasn't run yet -- see g_initialized.
-    __declspec(dllexport) int aca_scan_plugin(const char* pluginPath,
+    ACA_EXPORT int aca_scan_plugin(const char* pluginPath,
                                                char* outName, int outNameSize,
                                                char* outVersion, int outVersionSize)
     {
@@ -211,7 +217,7 @@ extern "C"
     // VST3 plugins need a sample rate/block size at construction time for their own internal setup,
     // so splitting instantiate from prepare would just mean prepare is always called right after).
     // v7 Q0 (audit B8): fails loudly if aca_initialize() hasn't run yet, instead of self-initialising.
-    __declspec(dllexport) void* aca_create_instance(const char* pluginPath,
+    ACA_EXPORT void* aca_create_instance(const char* pluginPath,
                                                      double sampleRate, int maxBlockSize,
                                                      char* outError, int outErrorSize)
     {
@@ -248,26 +254,26 @@ extern "C"
     }
 
     // Task 5: latency + tail queries.
-    __declspec(dllexport) int aca_get_latency_samples(void* handle)
+    ACA_EXPORT int aca_get_latency_samples(void* handle)
     {
         if (handle == nullptr) return 0;
         return static_cast<AcaPluginInstance*>(handle)->instance->getLatencySamples();
     }
 
-    __declspec(dllexport) double aca_get_tail_seconds(void* handle)
+    ACA_EXPORT double aca_get_tail_seconds(void* handle)
     {
         if (handle == nullptr) return 0.0;
         return static_cast<AcaPluginInstance*>(handle)->instance->getTailLengthSeconds();
     }
 
     // Task 4: parameter enumerate/get/set.
-    __declspec(dllexport) int aca_get_parameter_count(void* handle)
+    ACA_EXPORT int aca_get_parameter_count(void* handle)
     {
         if (handle == nullptr) return 0;
         return static_cast<AcaPluginInstance*>(handle)->instance->getParameters().size();
     }
 
-    __declspec(dllexport) int aca_get_parameter_name(void* handle, int index, char* outName, int outNameSize)
+    ACA_EXPORT int aca_get_parameter_name(void* handle, int index, char* outName, int outNameSize)
     {
         if (handle == nullptr) return 0;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -276,7 +282,7 @@ extern "C"
         return 1;
     }
 
-    __declspec(dllexport) float aca_get_parameter_value(void* handle, int index)
+    ACA_EXPORT float aca_get_parameter_value(void* handle, int index)
     {
         if (handle == nullptr) return 0.0f;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -288,7 +294,7 @@ extern "C"
     // bare setValue -- required for the plugin's own editor and internal processor to observe the
     // change coherently. Unused by the UI today, but task 8's state-polling work depends on this
     // being correct for any future automation/UI-driven parameter writes.
-    __declspec(dllexport) void aca_set_parameter_value(void* handle, int index, float value)
+    ACA_EXPORT void aca_set_parameter_value(void* handle, int index, float value)
     {
         if (handle == nullptr) return;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -298,7 +304,7 @@ extern "C"
 
     // The plugin's displayed text for a normalized value (e.g. "-18.0 dB"), without changing the
     // parameter. Lets the caller map between what the plugin shows and its 0..1 range.
-    __declspec(dllexport) int aca_get_parameter_text(void* handle, int index, float value, char* outText, int outTextSize)
+    ACA_EXPORT int aca_get_parameter_text(void* handle, int index, float value, char* outText, int outTextSize)
     {
         if (handle == nullptr) return 0;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -308,7 +314,7 @@ extern "C"
     }
 
     // The normalized value the plugin assigns to a piece of display text (the reverse of the above).
-    __declspec(dllexport) float aca_get_parameter_value_for_text(void* handle, int index, const char* text)
+    ACA_EXPORT float aca_get_parameter_value_for_text(void* handle, int index, const char* text)
     {
         if (handle == nullptr || text == nullptr) return 0.0f;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -318,7 +324,7 @@ extern "C"
 
     // How many distinct values the parameter has (2 for a switch, N for an N-way choice); a very
     // large number for a continuous parameter.
-    __declspec(dllexport) int aca_get_parameter_num_steps(void* handle, int index)
+    ACA_EXPORT int aca_get_parameter_num_steps(void* handle, int index)
     {
         if (handle == nullptr) return 0;
         auto& params = static_cast<AcaPluginInstance*>(handle)->instance->getParameters();
@@ -328,13 +334,13 @@ extern "C"
 
     // The plugin's own program (preset) list, when it exposes one. A plugin with no list reports
     // a count of 0 or 1.
-    __declspec(dllexport) int aca_get_program_count(void* handle)
+    ACA_EXPORT int aca_get_program_count(void* handle)
     {
         if (handle == nullptr) return 0;
         return static_cast<AcaPluginInstance*>(handle)->instance->getNumPrograms();
     }
 
-    __declspec(dllexport) int aca_get_program_name(void* handle, int index, char* outName, int outNameSize)
+    ACA_EXPORT int aca_get_program_name(void* handle, int index, char* outName, int outNameSize)
     {
         if (handle == nullptr) return 0;
         auto* plugin = static_cast<AcaPluginInstance*>(handle)->instance.get();
@@ -343,13 +349,13 @@ extern "C"
         return 1;
     }
 
-    __declspec(dllexport) int aca_get_current_program(void* handle)
+    ACA_EXPORT int aca_get_current_program(void* handle)
     {
         if (handle == nullptr) return -1;
         return static_cast<AcaPluginInstance*>(handle)->instance->getCurrentProgram();
     }
 
-    __declspec(dllexport) void aca_set_current_program(void* handle, int index)
+    ACA_EXPORT void aca_set_current_program(void* handle, int index)
     {
         if (handle == nullptr) return;
         auto* plugin = static_cast<AcaPluginInstance*>(handle)->instance.get();
@@ -361,7 +367,7 @@ extern "C"
     // without destroying/recreating the instance. The chain builder calls this on every cached
     // instance it wires into a freshly built chain, so a second/subsequent Play doesn't bleed the
     // previous run's buffered audio into the new one.
-    __declspec(dllexport) void aca_reset(void* handle)
+    ACA_EXPORT void aca_reset(void* handle)
     {
         if (handle == nullptr) return;
         static_cast<AcaPluginInstance*>(handle)->instance->reset();
@@ -369,7 +375,7 @@ extern "C"
 
     // Task 6: stereo-pair audio processing. inL/inR/outL/outR are caller-allocated, numSamples long.
     // out may alias in (processed in place via the internal scratch buffer).
-    __declspec(dllexport) void aca_process_block(void* handle,
+    ACA_EXPORT void aca_process_block(void* handle,
                                                   const float* inL, const float* inR,
                                                   float* outL, float* outR,
                                                   int numSamples)
@@ -400,7 +406,7 @@ extern "C"
     // (which could observe two different sizes if the state changed in between). Returns the
     // number of bytes written into outBuffer (0 if outBuffer was too small or there's no state --
     // check outRequiredSize to tell "no state" (0) from "buffer too small" (>0)).
-    __declspec(dllexport) int aca_get_state(void* handle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
+    ACA_EXPORT int aca_get_state(void* handle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
     {
         if (handle == nullptr)
         {
@@ -416,7 +422,7 @@ extern "C"
         return n;
     }
 
-    __declspec(dllexport) void aca_set_state(void* handle, const unsigned char* data, int dataSize)
+    ACA_EXPORT void aca_set_state(void* handle, const unsigned char* data, int dataSize)
     {
         if (handle == nullptr || data == nullptr || dataSize <= 0) return;
         static_cast<AcaPluginInstance*>(handle)->instance->setStateInformation(data, dataSize);
@@ -427,7 +433,7 @@ extern "C"
     // audit B9): relaunching "Open Pro-Q 4..." from the rack while its editor is already open
     // (e.g. behind other windows) should surface it, not silently do nothing. Must be called on
     // the same thread as aca_initialize(). Returns 1 on success, 0 if the plugin has no editor.
-    __declspec(dllexport) int aca_show_editor_window(void* handle, const char* title)
+    ACA_EXPORT int aca_show_editor_window(void* handle, const char* title)
     {
         if (handle == nullptr) return 0;
         auto* h = static_cast<AcaPluginInstance*>(handle);
@@ -446,7 +452,7 @@ extern "C"
 
     // Closes the editor window if open. Safe to call when none is open. Must be called on the same
     // thread as aca_initialize().
-    __declspec(dllexport) void aca_close_editor_window(void* handle)
+    ACA_EXPORT void aca_close_editor_window(void* handle)
     {
         if (handle == nullptr) return;
         static_cast<AcaPluginInstance*>(handle)->editorWindow.reset();
@@ -457,7 +463,7 @@ extern "C"
     // bring them back on restore, so the user's editor layout and the plugin's own open-only state
     // survive a minimize round-trip. Safe no-op if no editor is open. Must be called on the same
     // thread as aca_initialize().
-    __declspec(dllexport) void aca_set_editor_visible(void* handle, int visible)
+    ACA_EXPORT void aca_set_editor_visible(void* handle, int visible)
     {
         if (handle == nullptr) return;
         auto* h = static_cast<AcaPluginInstance*>(handle);
@@ -466,7 +472,7 @@ extern "C"
     }
 
     // Task 10: release. Safe to call with nullptr (no-op).
-    __declspec(dllexport) void aca_release_instance(void* handle)
+    ACA_EXPORT void aca_release_instance(void* handle)
     {
         if (handle == nullptr) return;
         auto* h = static_cast<AcaPluginInstance*>(handle);

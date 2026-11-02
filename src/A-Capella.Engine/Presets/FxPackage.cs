@@ -9,6 +9,7 @@ namespace A_Capella.Engine.Presets;
 public sealed class FxPackage
 {
     public string Name { get; set; } = "";
+    public PresetRef? PitchPreset { get; set; }
     public PresetRef? CompressorPreset { get; set; }
     public PresetRef? EqPreset { get; set; }
     public PresetRef? DeEsserPreset { get; set; }
@@ -22,6 +23,7 @@ public sealed class FxPackage
     public static FxPackage FromParameters(string name, LayerMixParameters parameters) => new()
     {
         Name = name.Trim(),
+        PitchPreset = parameters.PitchPreset,
         CompressorPreset = parameters.CompressorPreset,
         EqPreset = parameters.EqPreset,
         DeEsserPreset = parameters.DeEsserPreset,
@@ -32,6 +34,7 @@ public sealed class FxPackage
     /// leaves out is switched off).</summary>
     public void ApplyTo(LayerMixParameters parameters)
     {
+        parameters.PitchPreset = PitchPreset;
         parameters.CompressorPreset = CompressorPreset;
         parameters.EqPreset = EqPreset;
         parameters.DeEsserPreset = DeEsserPreset;

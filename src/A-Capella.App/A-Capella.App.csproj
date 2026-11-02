@@ -1,4 +1,15 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>A_Capella.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <!-- The same UI runs on Windows and macOS (Avalonia). -->
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\A-Capella.Engine\A-Capella.Engine.csproj" />
@@ -9,15 +20,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0" />
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
   </ItemGroup>
 
   <!-- Bundled IBM Plex fonts (SIL OFL license, see Fonts/OFL.txt) used by the redesigned UI: Plex
-       Sans for body text, Plex Mono for times/dB readouts. Built as Resource so they're embedded in
-       the assembly and reachable via the pack://application:,,,/ family-name syntax without needing
-       to be installed on the machine. -->
+       Sans for body text, Plex Mono for times/dB readouts. Embedded in the assembly and reached via
+       the avares://A-Capella.App/Fonts#<family> syntax, so they needn't be installed on the machine. -->
   <ItemGroup>
-    <Resource Include="Fonts\*.ttf" />
+    <AvaloniaResource Include="Fonts\*.ttf" />
   </ItemGroup>
 
   <!-- Built-in effect packages: .json files in Packages\ ship beside the app and show up in the
@@ -26,22 +38,13 @@
     <None Include="Packages\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
-    <RootNamespace>A_Capella.App</RootNamespace>
-  </PropertyGroup>
-
-  <!-- v6 P3a task 0: the native VST3 hosting module (src/A-Capella.Host.Native) is built
-       separately; run its build.ps1 (or, once the VS install's toolset version props file is
-       repaired, cmake build directly) whenever native code changes, and its DLL is copied into
-       this project's output here on every dotnet build, per the documented two-step workflow. -->
+  <!-- The native VST3 hosting module (src/A-Capella.Host.Native) is built separately (build.ps1 on
+       Windows, build.sh on macOS); its DLL/dylib is copied into this project's output on every
+       dotnet build, per the documented two-step workflow. -->
   <Target Name="CopyA_CapellaHostNative" AfterTargets="Build">
     <ItemGroup>
       <A_CapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\A-Capella.Host.Native\build\bin\$(Configuration)\A-CapellaHostNative.dll" />
+      <A_CapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\A-Capella.Host.Native\build\bin\$(Configuration)\libA-CapellaHostNative.dylib" />
     </ItemGroup>
     <Copy SourceFiles="@(A_CapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(A_CapellaHostNativeDll.Identity)')" />
   </Target>

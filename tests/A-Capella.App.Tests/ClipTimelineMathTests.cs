@@ -1,9 +1,10 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.App.Layout;
 using Xunit;
 
 namespace A_Capella.App.Tests;
 
-/// <summary>Pure math, no WPF objects involved -- an ordinary [Fact], not [StaFact].</summary>
+/// <summary>Pure math, no WPF objects involved -- an ordinary [Fact], not [AvaloniaFact].</summary>
 public class ClipTimelineMathTests
 {
     [Fact]

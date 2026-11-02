@@ -1,6 +1,6 @@
-<Window x:Class="A_Capella.App.LayoutPickerWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="A_Capella.App.LayoutPickerWindow"
         Title="Choose layout" Height="520" Width="560" MinHeight="300" MinWidth="360"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <Grid Margin="16">
@@ -10,12 +10,12 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <TextBlock x:Name="HintText" Grid.Row="0" Margin="0,0,0,10" TextWrapping="Wrap"
-                   Foreground="{StaticResource MutedTextBrush}"/>
+                   Foreground="{DynamicResource MutedTextBrush}"/>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="GroupsPanel"/>
         </ScrollViewer>
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <Button Content="Cancel" IsCancel="True" Width="80" Margin="0,0,8,0"/>
+            <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Width="80" Margin="0,0,8,0"/>
         </StackPanel>
     </Grid>
 </Window>

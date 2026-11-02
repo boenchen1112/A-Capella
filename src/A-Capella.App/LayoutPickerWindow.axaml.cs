@@ -1,7 +1,8 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Shapes;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
+using Avalonia.Interactivity;
+using Avalonia.Media;
 using A_Capella.Engine.Composite;
 
 namespace A_Capella.App;
@@ -15,6 +16,8 @@ public partial class LayoutPickerWindow : Window
 
     public string? SelectedLayoutId { get; private set; }
 
+    public LayoutPickerWindow() : this("", 1) { }
+
     public LayoutPickerWindow(string currentLayoutId, int requiredCells)
     {
         InitializeComponent();
@@ -27,7 +30,7 @@ public partial class LayoutPickerWindow : Window
             GroupsPanel.Children.Add(new TextBlock
             {
                 Text = group.Key == 1 ? "1 cell" : $"{group.Key} cells",
-                FontWeight = FontWeights.SemiBold,
+                FontWeight = FontWeight.SemiBold,
                 Margin = new Thickness(0, 8, 0, 4),
             });
             var wrap = new WrapPanel();
@@ -47,7 +50,7 @@ public partial class LayoutPickerWindow : Window
             {
                 Width = Math.Max(1, r.Width),
                 Height = Math.Max(1, r.Height),
-                Fill = new SolidColorBrush(ToWpf(LayerColorPalette.GetColor(i))),
+                Fill = new SolidColorBrush(ToAvalonia(LayerColorPalette.GetColor(i))),
                 Opacity = enabled ? 0.9 : 0.35,
             };
             Canvas.SetLeft(rect, r.Left);
@@ -61,17 +64,19 @@ public partial class LayoutPickerWindow : Window
             Margin = new Thickness(0, 0, 8, 8),
             Padding = new Thickness(3),
             IsEnabled = enabled,
-            ToolTip = enabled ? $"{layout.Cells.Count} cells" : "Too few cells for the layers in this project",
             BorderThickness = new Thickness(2),
-            BorderBrush = isCurrent ? (Brush)FindResource("LayerAccent2Brush") : (Brush)FindResource("LineBrush"),
+            BorderBrush = (IBrush)this.FindResource(isCurrent ? "LayerAccent2Brush" : "LineBrush")!,
         };
+        ToolTip.SetTip(button, enabled ? $"{layout.Cells.Count} cells" : "Too few cells for the layers in this project");
         button.Click += (_, _) =>
         {
             SelectedLayoutId = layout.Id;
-            DialogResult = true;
+            Close(true);
         };
         return button;
     }
 
-    private static Color ToWpf(SkiaSharp.SKColor c) => Color.FromRgb(c.Red, c.Green, c.Blue);
+    private void Cancel_Click(object? sender, RoutedEventArgs e) => Close(false);
+
+    private static Color ToAvalonia(SkiaSharp.SKColor c) => Color.FromRgb(c.Red, c.Green, c.Blue);
 }

@@ -1,4 +1,4 @@
-using NAudio.CoreAudioApi;
+using A_Capella.Engine.Audio;
 using NAudio.Wave;
 using A_Capella.Engine.Settings;
 
@@ -27,16 +27,12 @@ public class LatencyCalibrator
 
     public double Calibrate(string outputDeviceId, string loopbackInputDeviceId, int sampleRate = 44100)
     {
-        using var enumerator = new MMDeviceEnumerator();
-        using var outputDevice = enumerator.GetDevice(outputDeviceId);
-        using var inputDevice = enumerator.GetDevice(loopbackInputDeviceId);
-
         var click = ToneGenerator.GenerateClick(sampleRate);
         var reference = new float[sampleRate * 2];
         Array.Copy(click, reference, Math.Min(click.Length, reference.Length));
 
         var captured = new List<float>();
-        using var capture = new WasapiCapture(inputDevice);
+        using var capture = AudioBackend.CreateInput(loopbackInputDeviceId);
         var captureFormat = capture.WaveFormat;
 
         // A fixed 200ms sleep before Play() previously stood in for "capture has actually
@@ -62,7 +58,7 @@ public class LatencyCalibrator
             captured.AddRange(samples);
         };
 
-        using var output = new WasapiOut(outputDevice, AudioClientShareMode.Shared, false, 50);
+        using var output = AudioBackend.CreateOutput(outputDeviceId);
         output.Init(ToneGenerator.ToSampleProvider(click, sampleRate));
 
         capture.StartRecording();

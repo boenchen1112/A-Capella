@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Project;
 using Xunit;
@@ -11,7 +12,7 @@ public class LayerRowNudgeTests
     private static LayerRowViewModel RowWithLayer() =>
         new(1) { Layer = new LayerCollection().Add(LayerKind.UploadedVideo, "a.mp4") };
 
-    [StaFact]
+    [AvaloniaFact]
     public void Nudge_MovesTheOffset_RefreshesThePreview_AndUpdatesTheLabel()
     {
         var row = RowWithLayer();
@@ -30,7 +31,7 @@ public class LayerRowNudgeTests
         Assert.Contains(nameof(LayerRowViewModel.ManualOffsetDisplay), raised);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void ResetNudge_ClearsTheOffset_AndIsANoOpAtZero()
     {
         var row = RowWithLayer();
@@ -47,7 +48,7 @@ public class LayerRowNudgeTests
         Assert.Equal(2, refreshes);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void AnEmptyRow_IgnoresNudges()
     {
         var row = new LayerRowViewModel(1);
@@ -55,7 +56,7 @@ public class LayerRowNudgeTests
         Assert.Equal(0, row.ManualOffsetMs);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void Retake_ResetsTheNudge_AndNotifiesTheLabel()
     {
         var row = RowWithLayer();

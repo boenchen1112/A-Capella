@@ -1,0 +1,339 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Styles.Resources>
+        <!-- ===================== Palette ===================== -->
+        <SolidColorBrush x:Key="GroundBrush" Color="#131518"/>
+        <SolidColorBrush x:Key="PanelBrush" Color="#1B1E22"/>
+        <SolidColorBrush x:Key="RaisedBrush" Color="#23272C"/>
+        <SolidColorBrush x:Key="ControlBrush" Color="#2B3036"/>
+        <SolidColorBrush x:Key="LineBrush" Color="#30353C"/>
+        <SolidColorBrush x:Key="SubtleLineBrush" Color="#262A2F"/>
+        <SolidColorBrush x:Key="StrongBorderBrush" Color="#4A5059"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#ECEAE6"/>
+        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#C9CDD2"/>
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#A2A8B0"/>
+        <SolidColorBrush x:Key="RecordRedBrush" Color="#E5484D"/>
+        <SolidColorBrush x:Key="RecordTintBgBrush" Color="#2A1C1E"/>
+        <SolidColorBrush x:Key="RecordTintBorderBrush" Color="#5A2A2C"/>
+        <SolidColorBrush x:Key="RecordTintTextBrush" Color="#FFB4B6"/>
+        <SolidColorBrush x:Key="MeterGreenBrush" Color="#5CC489"/>
+        <SolidColorBrush x:Key="SoloAmberBrush" Color="#E2B54A"/>
+
+        <!-- Per-cell layer accents (keep in sync with A_Capella.Engine.Composite.LayerColorPalette). -->
+        <SolidColorBrush x:Key="LayerAccent1Brush" Color="#E26D6D"/>
+        <SolidColorBrush x:Key="LayerAccent2Brush" Color="#5EA2E6"/>
+        <SolidColorBrush x:Key="LayerAccent3Brush" Color="#5CC489"/>
+        <SolidColorBrush x:Key="LayerAccent4Brush" Color="#E2B54A"/>
+
+        <!-- Interaction states layered over the palette above. -->
+        <SolidColorBrush x:Key="HoverBrush" Color="#2F343B"/>
+        <SolidColorBrush x:Key="PressedBrush" Color="#3A4048"/>
+
+        <!-- ===================== Fonts ===================== -->
+        <!-- Each IBM Plex weight ships as its own font-family name (a TrueType naming-table fact),
+             so there is no single "IBM Plex Sans" family selectable by FontWeight; each weight below
+             is its own FontFamily resource. -->
+        <FontFamily x:Key="PlexSansRegular">avares://A-Capella.App/Fonts#IBM Plex Sans</FontFamily>
+        <FontFamily x:Key="PlexSansMedium">avares://A-Capella.App/Fonts#IBM Plex Sans Medm</FontFamily>
+        <FontFamily x:Key="PlexSansSemiBold">avares://A-Capella.App/Fonts#IBM Plex Sans SmBld</FontFamily>
+        <FontFamily x:Key="PlexMonoRegular">avares://A-Capella.App/Fonts#IBM Plex Mono</FontFamily>
+        <FontFamily x:Key="PlexMonoMedium">avares://A-Capella.App/Fonts#IBM Plex Mono Medium</FontFamily>
+
+        <!-- Slider / scrollbar / menu colours the Fluent templates read. -->
+        <SolidColorBrush x:Key="SliderTrackFill" Color="#2B3036"/>
+        <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#2B3036"/>
+        <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#2B3036"/>
+        <SolidColorBrush x:Key="SliderTrackValueFill" Color="#ECEAE6"/>
+        <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#ECEAE6"/>
+        <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#ECEAE6"/>
+        <SolidColorBrush x:Key="SliderThumbBackground" Color="#ECEAE6"/>
+        <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#23272C"/>
+        <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#4A5059"/>
+        <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#23272C"/>
+        <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#4A5059"/>
+    </Styles.Resources>
+
+    <!-- ===================== Base element styles ===================== -->
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="FontFamily" Value="{StaticResource PlexSansRegular}"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style Selector="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+
+    <!-- — Buttons — -->
+    <Style Selector="Button">
+        <Setter Property="Background" Value="{DynamicResource RaisedBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="MinHeight" Value="34"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource PressedBrush}"/>
+    </Style>
+    <Style Selector="Button:disabled">
+        <Setter Property="Opacity" Value="0.45"/>
+    </Style>
+
+    <!-- Flat, borderless button for the title bar / transport icon row. -->
+    <Style Selector="Button.flat">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Width" Value="36"/>
+        <Setter Property="Height" Value="36"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+    </Style>
+    <Style Selector="Button.flat:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+    </Style>
+
+    <!-- The 48px circular transport Play/Stop button. -->
+    <Style Selector="Button.circle">
+        <Setter Property="Width" Value="48"/>
+        <Setter Property="Height" Value="48"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="CornerRadius" Value="24"/>
+        <Setter Property="Background" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{DynamicResource GroundBrush}"/>
+    </Style>
+    <Style Selector="Button.circle:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="Opacity" Value="0.9"/>
+    </Style>
+
+    <!-- Tinted red "record" affordance (transport Record button, dialog's record/empty-cell buttons). -->
+    <Style Selector="Button.record">
+        <Setter Property="Background" Value="{DynamicResource RecordTintBgBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RecordTintBorderBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RecordTintTextBrush}"/>
+        <Setter Property="FontFamily" Value="{StaticResource PlexSansMedium}"/>
+    </Style>
+    <Style Selector="Button.record:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource RecordTintBorderBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource RecordTintBorderBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource RecordTintTextBrush}"/>
+    </Style>
+
+    <!-- Solid "Start recording" call to action in the record dialog. -->
+    <Style Selector="Button.solidrecord">
+        <Setter Property="Background" Value="{DynamicResource RecordRedBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontFamily" Value="{StaticResource PlexSansSemiBold}"/>
+    </Style>
+    <Style Selector="Button.solidrecord:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource RecordRedBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Opacity" Value="0.9"/>
+    </Style>
+
+    <Style Selector="Button.strong">
+        <Setter Property="Background" Value="{DynamicResource ControlBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+    <Style Selector="Button.strong:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource PressedBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+
+    <!-- Toggle "pill" (Monitor in the transport bar): outlined, filled control-colour when checked. -->
+    <Style Selector="ToggleButton.pill">
+        <Setter Property="Background" Value="{DynamicResource RaisedBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Height" Value="40"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="ToggleButton.pill:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+    <Style Selector="ToggleButton.pill:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource ControlBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+
+    <!-- Segmented toggle (the Freeze switch). -->
+    <Style Selector="ToggleButton.segment">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Height" Value="28"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Padding" Value="10,0"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="ToggleButton.segment:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+    <Style Selector="ToggleButton.segment:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource PressedBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+
+    <!-- Small square M/S buttons on each lane. -->
+    <Style Selector="ToggleButton.lane">
+        <Setter Property="Width" Value="28"/>
+        <Setter Property="Height" Value="28"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="FontFamily" Value="{StaticResource PlexSansSemiBold}"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource RaisedBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="ToggleButton.lane:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+    </Style>
+    <Style Selector="ToggleButton.lane:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SoloAmberBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{DynamicResource GroundBrush}"/>
+    </Style>
+
+    <!-- — Text input — -->
+    <Style Selector="TextBox">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="CaretBrush" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="SelectionBrush" Value="{DynamicResource StrongBorderBrush}"/>
+        <Setter Property="MinHeight" Value="0"/>
+    </Style>
+    <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+    <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+
+    <!-- A TextBox styled to read as inline label text (the lane name) - borderless until focused. -->
+    <Style Selector="TextBox.inline">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+    </Style>
+    <Style Selector="TextBox.inline /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="TextBox.inline:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+
+    <!-- — ComboBox — -->
+    <Style Selector="ComboBox">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="10,0"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="CornerRadius" Value="6"/>
+    </Style>
+    <Style Selector="ComboBox:pointerover /template/ Border#Background">
+        <Setter Property="Background" Value="{DynamicResource GroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+    </Style>
+    <Style Selector="ComboBoxItem">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="Padding" Value="10,6"/>
+    </Style>
+    <Style Selector="ComboBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBrush}"/>
+    </Style>
+
+    <!-- — CheckBox — -->
+    <Style Selector="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+
+    <!-- — Slider — -->
+    <Style Selector="Slider">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource ControlBrush}"/>
+    </Style>
+
+    <!-- — Progress bars: thin meter bars — -->
+    <Style Selector="ProgressBar">
+        <Setter Property="Foreground" Value="{DynamicResource MeterGreenBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource ControlBrush}"/>
+        <Setter Property="CornerRadius" Value="3"/>
+    </Style>
+
+    <!-- — Menus — -->
+    <Style Selector="Menu">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+    <Style Selector="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource RaisedBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    </Style>
+    <Style Selector="Separator">
+        <Setter Property="Background" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Height" Value="1"/>
+        <Setter Property="Margin" Value="4,4"/>
+    </Style>
+
+    <!-- A lane's drag-to-trim handle: a plain filled bar, no chrome beyond that; it's small and only
+         ever seen hovering over the lane's own accent-colored clip bars. -->
+    <Style Selector="Border.trimhandle">
+        <Setter Property="Background" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Opacity" Value="0.85"/>
+        <Setter Property="Cursor" Value="SizeWestEast"/>
+    </Style>
+</Styles>

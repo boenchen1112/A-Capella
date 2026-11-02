@@ -2,7 +2,7 @@ namespace A_Capella.App.Layout;
 
 /// <summary>Pure pixel&lt;-&gt;millisecond math for a lane's clip bar (the dashed full-source bar
 /// and the solid trimmed-span bar drawn on top of it) and for dragging its trim handles. Kept free
-/// of any WPF types so it's unit-testable without an STA thread, and so MainWindow's drag-handle
+/// of any UI-framework types so it's unit-testable without an STA thread, and so MainWindow's drag-handle
 /// code and the lane-rendering code share exactly one definition of "where does this trim point
 /// land on screen" / "what trim value does this screen position mean".</summary>
 public static class ClipTimelineMath

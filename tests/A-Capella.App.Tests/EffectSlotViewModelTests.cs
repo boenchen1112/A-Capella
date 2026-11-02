@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.App;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Host;
@@ -21,21 +22,29 @@ public class EffectSlotViewModelTests
         public bool IsAvailable(string pluginLabel) => false;
     }
 
+    private sealed class EverythingInstalled : IHostedPluginAvailability
+    {
+        public bool IsAvailable(string pluginLabel) => true;
+    }
+
     private static LayerRowViewModel RowWithLayer() =>
         new(1) { Layer = new LayerCollection().Add(LayerKind.UploadedAudioOnly, "does-not-exist.wav") };
 
     private static PresetChoice Choice(string plugin, string name) => new(new PresetRef(plugin, "Basic", name), "Basic", name);
 
-    [StaFact]
+    [AvaloniaFact]
     public void EveryLayerHasTheFourEffects_InChainOrder_AllStartingOff()
     {
         var row = RowWithLayer();
 
-        Assert.Equal(new[] { "Compressor", "EQ", "De-esser", "Reverb" }, row.Effects.Select(e => e.Title));
+        var expected = OperatingSystem.IsMacOS()
+            ? new[] { "Pitch", "Compressor", "EQ", "De-esser", "Reverb" }
+            : new[] { "Compressor", "EQ", "De-esser", "Reverb" };
+        Assert.Equal(expected, row.Effects.Select(e => e.Title));
         Assert.All(row.Effects, e => Assert.Equal("Off", e.SelectedChoice?.Label));
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void PresetMenu_MirrorsFabFilterFolders_CategoriesThenNestedCategoriesThenPresets()
     {
         PresetChoice C(string category, string name) => new(new PresetRef("FabFilter Pro-C 3", category, name), category, name);
@@ -49,21 +58,21 @@ public class EffectSlotViewModelTests
 
         var menu = PresetPicker.BuildMenu(choices, choices[3], c => picked = c);
 
-        Assert.Equal("Off", ((System.Windows.Controls.MenuItem)menu.Items[0]).Header);
-        Assert.IsType<System.Windows.Controls.Separator>(menu.Items[1]);
-        var basic = (System.Windows.Controls.MenuItem)menu.Items[2];
+        Assert.Equal("Off", ((Avalonia.Controls.MenuItem)menu.Items[0]).Header);
+        Assert.IsType<Avalonia.Controls.Separator>(menu.Items[1]);
+        var basic = (Avalonia.Controls.MenuItem)menu.Items[2];
         Assert.Equal("Basic", basic.Header);
-        Assert.Equal(new object[] { "Vocal", "Bass" }, basic.Items.Cast<System.Windows.Controls.MenuItem>().Select(i => i.Header).ToArray());
-        var synced = (System.Windows.Controls.MenuItem)menu.Items[3];
+        Assert.Equal(new object[] { "Vocal", "Bass" }, basic.Items.Cast<Avalonia.Controls.MenuItem>().Select(i => i.Header).ToArray());
+        var synced = (Avalonia.Controls.MenuItem)menu.Items[3];
         Assert.True(synced.IsChecked);                                   // the path to the chosen preset is ticked
-        var folder = (System.Windows.Controls.MenuItem)synced.Items[0];
-        var pump = (System.Windows.Controls.MenuItem)folder.Items[0];
+        var folder = (Avalonia.Controls.MenuItem)synced.Items[0];
+        var pump = (Avalonia.Controls.MenuItem)folder.Items[0];
         Assert.True(pump.IsChecked);
-        pump.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+        pump.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
         Assert.Same(choices[3], picked);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void ChoicesAlwaysStartWithOff()
     {
         var choices = EffectSlotViewModel.AllChoices(FxSlots.Compressor.PluginLabel);
@@ -73,7 +82,7 @@ public class EffectSlotViewModelTests
         Assert.All(choices.Skip(1), c => Assert.Equal(FxSlots.Compressor.PluginLabel, c.Ref!.Plugin));
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void PickingAPreset_WritesItToTheLayer_AndRaisesTheChangeEvents()
     {
         var row = RowWithLayer();
@@ -82,42 +91,42 @@ public class EffectSlotViewModelTests
         row.EffectChosen += () => chosen++;
         var choice = Choice("FabFilter Pro-C 3", "Vocal");
 
-        row.Effects[0].SelectedChoice = choice;
+        row.Effects.First(e => e.Title == "Compressor").SelectedChoice = choice;
 
         Assert.Equal(choice.Ref, row.Layer!.MixParameters.CompressorPreset);
         Assert.Equal((1, 1), (live, chosen));
         Assert.Contains("1 effect", row.SourceLabel);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void PickingTheSamePresetAgain_ChangesNothing()
     {
         var row = RowWithLayer();
-        row.Effects[1].SelectedChoice = Choice("FabFilter Pro-Q 4", "Bright");
+        row.Effects.First(e => e.Title == "EQ").SelectedChoice = Choice("FabFilter Pro-Q 4", "Bright");
         int chosen = 0;
         row.EffectChosen += () => chosen++;
 
-        row.Effects[1].SelectedChoice = Choice("FabFilter Pro-Q 4", "Bright");
+        row.Effects.First(e => e.Title == "EQ").SelectedChoice = Choice("FabFilter Pro-Q 4", "Bright");
 
         Assert.Equal(0, chosen);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void PickingOff_ClearsTheEffect()
     {
         var row = RowWithLayer();
-        row.Effects[3].SelectedChoice = Choice("FabFilter Pro-R 2", "Studio A");
+        row.Effects.First(e => e.Title == "Reverb").SelectedChoice = Choice("FabFilter Pro-R 2", "Studio A");
 
-        row.Effects[3].SelectedChoice = new PresetChoice(null, "", "Off");
+        row.Effects.First(e => e.Title == "Reverb").SelectedChoice = new PresetChoice(null, "", "Off");
 
         Assert.Null(row.Layer!.MixParameters.ReverbPreset);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void ApplyingAPackage_SetsAllFourEffects_AndTheRowReadsThemBack()
     {
         var row = RowWithLayer();
-        row.Effects[2].SelectedChoice = Choice("FabFilter Pro-DS", "Old");
+        row.Effects.First(e => e.Title == "De-esser").SelectedChoice = Choice("FabFilter Pro-DS", "Old");
         var package = new FxPackage
         {
             Name = "Warm",
@@ -133,14 +142,14 @@ public class EffectSlotViewModelTests
         Assert.Null(row.Layer.MixParameters.DeEsserPreset);
         Assert.Equal(package.ReverbPreset, row.Layer.MixParameters.ReverbPreset);
         Assert.Equal(1, chosen);
-        Assert.Equal("Off", row.Effects[2].SelectedChoice?.Label);
+        Assert.Equal("Off", row.Effects.First(e => e.Title == "De-esser").SelectedChoice?.Label);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void ToPackage_CapturesTheLayersEffects()
     {
         var row = RowWithLayer();
-        row.Effects[0].SelectedChoice = Choice("FabFilter Pro-C 3", "Vocal");
+        row.Effects.First(e => e.Title == "Compressor").SelectedChoice = Choice("FabFilter Pro-C 3", "Vocal");
 
         var package = row.ToPackage("Mine");
 
@@ -148,7 +157,7 @@ public class EffectSlotViewModelTests
         Assert.Equal(row.Layer!.MixParameters.CompressorPreset, package.CompressorPreset);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void MissingPlugin_ShowsNotInstalled_AndAMissingPreset_ShowsPresetNotFound()
     {
         var saved = LayerRowViewModel.SharedHostedService;
@@ -157,22 +166,30 @@ public class EffectSlotViewModelTests
         try
         {
             var row = RowWithLayer();
-            Assert.Equal("FabFilter Pro-C 3 not installed", row.Effects[0].Status);
+            Assert.Equal("FabFilter Pro-C 3 not installed", row.Effects.First(e => e.Title == "Compressor").Status);
         }
         finally { LayerRowViewModel.SharedHostedService = saved; }
 
-        var row2 = RowWithLayer();
-        row2.Layer!.MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "Nope", "Does not exist");
-        Assert.Equal("Preset not found: Does not exist", row2.Effects[1].Status);
+        // With the plugin installed, a preset whose file has gone is reported by name. (Pinned to an
+        // all-installed service so the result doesn't depend on what this machine has.)
+        using var installed = new HostedPluginService(new EverythingInstalled());
+        LayerRowViewModel.SharedHostedService = installed;
+        try
+        {
+            var row2 = RowWithLayer();
+            row2.Layer!.MixParameters.EqPreset = new PresetRef("FabFilter Pro-Q 4", "Nope", "Does not exist");
+            Assert.Equal("Preset not found: Does not exist", row2.Effects.First(e => e.Title == "EQ").Status);
+        }
+        finally { LayerRowViewModel.SharedHostedService = saved; }
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void AnEmptyRow_HasNothingToSelectOrReport()
     {
         var row = new LayerRowViewModel(1);
 
-        Assert.Null(row.Effects[0].SelectedChoice?.Ref);
-        Assert.Equal("", row.Effects[0].Status);
+        Assert.Null(row.Effects.First(e => e.Title == "Compressor").SelectedChoice?.Ref);
+        Assert.Equal("", row.Effects.First(e => e.Title == "Compressor").Status);
         row.ApplyPackage(new FxPackage { Name = "x" });   // no layer: nothing to apply to, and no throw
     }
 }

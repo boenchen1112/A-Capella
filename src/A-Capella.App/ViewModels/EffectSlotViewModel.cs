@@ -61,7 +61,7 @@ public sealed class EffectSlotViewModel : INotifyPropertyChanged
         {
             if (ChoiceCache.TryGetValue(pluginLabel, out var cached)) return cached;
             var list = new List<PresetChoice> { new(null, OffGroup, "Off") };
-            foreach (var category in FabFilterPresetLibrary.Default.GetCategories(pluginLabel))
+            foreach (var category in PresetLibraries.GetCategories(pluginLabel))
                 foreach (var preset in category.Presets)
                     list.Add(new PresetChoice(preset, category.Title, preset.Name));
             ChoiceCache[pluginLabel] = list;
@@ -73,7 +73,7 @@ public sealed class EffectSlotViewModel : INotifyPropertyChanged
     public static void ResetChoiceCache()
     {
         lock (ChoiceCache) ChoiceCache.Clear();
-        FabFilterPresetLibrary.Default.Refresh();
+        PresetLibraries.Refresh();
     }
 
     private PresetRef? CurrentPreset => _getParameters() is { } p ? Slot.GetPreset(p) : null;
@@ -106,7 +106,7 @@ public sealed class EffectSlotViewModel : INotifyPropertyChanged
             if (LayerRowViewModel.SharedHostedService is { } service && !service.IsAvailable(Slot.PluginLabel))
                 return $"{Slot.PluginLabel} not installed";
             var current = CurrentPreset;
-            if (current is not null && !FabFilterPresetLibrary.Default.Exists(current))
+            if (current is not null && !PresetLibraries.Exists(current))
                 return $"Preset not found: {current.Name}";
             if (AllChoices(Slot.PluginLabel).Count == 1) return "No presets found";
             return "";

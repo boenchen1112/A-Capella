@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.Engine.Project;
 using Xunit;
 
@@ -12,15 +13,14 @@ namespace A_Capella.App.Tests;
 /// this suite avoids that for the same reason, see ExportPlaybackGateTests' early-return gates.
 /// Delete now asks for confirmation first (MainWindow.ConfirmAndDeleteLayer) -- also untestable
 /// headlessly, since MessageBox.Show blocks the STA test thread with no way to dismiss it in a
-/// [StaFact] test; DeleteLayer itself stays a separate, dialog-free method so the delete logic
+/// [AvaloniaFact] test; DeleteLayer itself stays a separate, dialog-free method so the delete logic
 /// doesn't depend on that dialog.)</summary>
 public class MainWindowDeleteLayerTests
 {
-    [StaFact]
+    [AvaloniaFact]
     public void TrackList_AlwaysHasExactlyFourRows_ForABrandNewProject()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
-        var window = new MainWindow();
+                var window = new MainWindow();
         try
         {
             Assert.Equal(LayerCollection.MaxLayers, window.TrackList.Items.Count);

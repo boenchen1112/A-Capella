@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="A_Capella.App.RecordSetupWindow"
+        Title="Recording setup" Height="620" Width="480"
+        WindowStartupLocation="CenterOwner" CanResize="False" ShowInTaskbar="False"
+        Background="{DynamicResource PanelBrush}">
+    <DockPanel LastChildFill="True">
+        <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="24,20,24,16">
+            <DockPanel LastChildFill="True">
+                <Border Width="12" Height="12" CornerRadius="3" Background="{DynamicResource SoloAmberBrush}" VerticalAlignment="Top" Margin="0,6,12,0"/>
+                <StackPanel>
+                    <TextBlock x:Name="HeaderText" Text="Record layer" FontFamily="{DynamicResource PlexSansSemiBold}" FontSize="18"/>
+                    <TextBlock x:Name="SubHeaderText" Text="Other layers play in your headphones while you record." Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="24,16">
+            <DockPanel LastChildFill="True">
+                <Button x:Name="CancelButton" DockPanel.Dock="Left" Content="Cancel" Click="CancelButton_Click" Classes="strong" Height="40" Padding="16,0" HorizontalAlignment="Left"/>
+                <Button x:Name="RecordButton" DockPanel.Dock="Right" Content="● Start recording" Click="RecordButton_Click" Classes="solidrecord" Height="40" Padding="14,0" HorizontalAlignment="Right"/>
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,20">
+                <Border Height="150" CornerRadius="8" Background="{DynamicResource GroundBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" Margin="0,0,0,18">
+                    <TextBlock Text="Camera preview not shown here" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}" FontSize="11"/>
+                </Border>
+
+                <TextBlock Text="Camera" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,6"/>
+                <ComboBox x:Name="CameraCombo" Height="36" Margin="0,0,0,14" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Microphone" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,6"/>
+                <ComboBox x:Name="MicCombo" Height="36" Margin="0,0,0,18" HorizontalAlignment="Stretch"/>
+
+                <Border Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,18">
+                    <DockPanel LastChildFill="True">
+                        <Button x:Name="CalibrateButton" DockPanel.Dock="Right" Content="Calibrate" Click="CalibrateButton_Click" Classes="strong" Padding="10,6"/>
+                        <TextBlock x:Name="CalibrationResultText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Text="Latency not calibrated yet."/>
+                    </DockPanel>
+                </Border>
+
+                <StackPanel Orientation="Horizontal">
+                    <CheckBox x:Name="MetronomeToggle" Content="Click track while recording" VerticalAlignment="Center" IsCheckedChanged="MetronomeToggle_Changed"/>
+                    <TextBlock Text="BPM" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="16,0,6,0"/>
+                    <TextBox x:Name="BpmTextBox" Width="64" Text="120" FontFamily="{DynamicResource PlexMonoRegular}" TextAlignment="Right"/>
+                    <ComboBox x:Name="TimeSignatureCombo" Width="72" Margin="8,0,0,0" VerticalAlignment="Center" SelectionChanged="TimeSignatureCombo_SelectionChanged"
+                              ToolTip.Tip="Time signature: the first beat of each bar is accented."/>
+                </StackPanel>
+
+                <TextBlock x:Name="StatusText" Margin="0,14,0,0" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" FontSize="12"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

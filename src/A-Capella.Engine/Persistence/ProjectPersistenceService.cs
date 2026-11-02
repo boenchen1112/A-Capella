@@ -131,6 +131,7 @@ public class ProjectPersistenceService
         Mute = p.Mute,
         Solo = p.Solo,
         Pan = p.Pan,
+        PitchPreset = p.PitchPreset,
         CompressorPreset = p.CompressorPreset,
         EqPreset = p.EqPreset,
         DeEsserPreset = p.DeEsserPreset,
@@ -145,6 +146,7 @@ public class ProjectPersistenceService
         target.Mute = dto.Mute;
         target.Solo = dto.Solo;
         target.Pan = dto.Pan;
+        target.PitchPreset = dto.PitchPreset;
         target.CompressorPreset = dto.CompressorPreset;
         target.EqPreset = dto.EqPreset;
         target.DeEsserPreset = dto.DeEsserPreset;

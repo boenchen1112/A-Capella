@@ -10,9 +10,12 @@
 // of the plugin's factory classes (PluginDescription::hasARAExtension) independently of whether
 // JUCE_PLUGINHOST_ARA is even defined -- so this check works even before the Document Controller
 // bridge (task 38) exists.
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#endif
+#include "Export.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
 #include <vector>
@@ -343,7 +346,7 @@ extern "C"
     // plugin or touch JUCE's MessageManager, so it's safe to call from any thread at any time. This
     // matters for Q3 task 32's off-critical-path scanning: the app can know whether Melodyne's ARA
     // tier is available before deciding whether to route a layer's pitch stage through it.
-    __declspec(dllexport) int aca_scan_ara_capability(const char* pluginPath,
+    ACA_EXPORT int aca_scan_ara_capability(const char* pluginPath,
                                                         char* outName, int outNameSize,
                                                         char* outVersion, int outVersionSize)
     {
@@ -367,7 +370,7 @@ extern "C"
     // ever needs playback rendering; editor-renderer is requested too since Melodyne's own editor
     // window may expect it). Requires aca_initialize() to have already run on this thread, same as
     // aca_create_instance.
-    __declspec(dllexport) void* aca_ara_create_session(const char* pluginPath,
+    ACA_EXPORT void* aca_ara_create_session(const char* pluginPath,
                                                         double sampleRate, int maxBlockSize,
                                                         char* outError, int outErrorSize)
     {
@@ -458,7 +461,7 @@ extern "C"
     // must keep the buffers alive for as long as the returned handle is live). Returns nullptr on
     // failure. persistentId must be unique within the session's document (task 40 will derive it
     // from (layerId, sourceAudioHash); this bridge just forwards whatever string it's given).
-    __declspec(dllexport) void* aca_ara_register_audio_source(void* sessionHandle,
+    ACA_EXPORT void* aca_ara_register_audio_source(void* sessionHandle,
                                                                 const float* const* channelBuffers, int numChannels,
                                                                 int64 numSamples, double sourceSampleRate,
                                                                 const char* persistentId,
@@ -513,7 +516,7 @@ extern "C"
     // Adding a region must happen while the instance is unprepared (ARA's documented requirement --
     // see PlaybackRegionRegistry's doc comment), so this also does the session's one-time
     // prepareToPlay *after* the region is added, not before.
-    __declspec(dllexport) int aca_ara_add_playback_region(void* sessionHandle, void* audioSourceHandle, char* outError, int outErrorSize)
+    ACA_EXPORT int aca_ara_add_playback_region(void* sessionHandle, void* audioSourceHandle, char* outError, int outErrorSize)
     {
         if (sessionHandle == nullptr || audioSourceHandle == nullptr)
         {
@@ -603,7 +606,7 @@ extern "C"
     // observe anything (confirmed: it always returned -1 in every test before this fix). Callers
     // must invoke this periodically (e.g. once per poll-loop iteration) on the hosted thread while
     // waiting for analysis, matching how a real DAW's UI timer works.
-    __declspec(dllexport) void aca_ara_pump_model_updates(void* sessionHandle)
+    ACA_EXPORT void aca_ara_pump_model_updates(void* sessionHandle)
     {
         if (sessionHandle == nullptr) return;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -617,7 +620,7 @@ extern "C"
     // attached via aca_ara_add_playback_region is what Melodyne needs to begin). Progress only ever
     // updates if the caller also calls aca_ara_pump_model_updates (A3) -- without it, this always
     // returns whatever it last returned (-1 if never pumped).
-    __declspec(dllexport) float aca_ara_get_analysis_progress(void* sessionHandle, void* audioSourceHandle)
+    ACA_EXPORT float aca_ara_get_analysis_progress(void* sessionHandle, void* audioSourceHandle)
     {
         if (sessionHandle == nullptr || audioSourceHandle == nullptr) return -1.0f;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -633,7 +636,7 @@ extern "C"
     // analysis has completed. Returns the note count, or -1 if the plugin offers no note content for
     // this source. Fills at most maxNotes entries into each non-null output array, so a first call
     // with maxNotes == 0 just counts.
-    __declspec(dllexport) int aca_ara_read_notes(void* sessionHandle, void* audioSourceHandle,
+    ACA_EXPORT int aca_ara_read_notes(void* sessionHandle, void* audioSourceHandle,
                                                   double* outStartSeconds, double* outDurationSeconds,
                                                   float* outFrequencyHz, float* outVolume, int maxNotes)
     {
@@ -668,7 +671,7 @@ extern "C"
     // whatever's in the input buffer in this role -- output is generated purely from the model
     // driven by the play head this bridge sets just before each call. Requires
     // aca_ara_add_playback_region to have already run for this source (prepareToPlay happens there).
-    __declspec(dllexport) int aca_ara_render_block(void* sessionHandle, void* audioSourceHandle,
+    ACA_EXPORT int aca_ara_render_block(void* sessionHandle, void* audioSourceHandle,
                                                     int64 startSampleInRegion,
                                                     float* outL, float* outR, int numSamples)
     {
@@ -694,7 +697,7 @@ extern "C"
     // Two-call convention matches HostBridge.cpp's aca_get_state exactly: outRequiredSize is always
     // set; the return value is the actual byte count written (0 if outBuffer is null/too small --
     // call again with a buffer of at least outRequiredSize bytes).
-    __declspec(dllexport) int aca_ara_export_state(void* sessionHandle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
+    ACA_EXPORT int aca_ara_export_state(void* sessionHandle, unsigned char* outBuffer, int bufferSize, int* outRequiredSize)
     {
         if (sessionHandle == nullptr)
         {
@@ -723,7 +726,7 @@ extern "C"
     // registered (via aca_ara_register_audio_source with the same persistentId used when it was
     // exported) before calling this -- restoreObjectsFromArchive matches archived objects to the
     // current graph by persistent ID, it doesn't create new audio sources itself.
-    __declspec(dllexport) int aca_ara_import_state(void* sessionHandle, const unsigned char* data, int dataSize)
+    ACA_EXPORT int aca_ara_import_state(void* sessionHandle, const unsigned char* data, int dataSize)
     {
         if (sessionHandle == nullptr || data == nullptr || dataSize <= 0) return 0;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -742,7 +745,7 @@ extern "C"
     // aca_show_editor_window -- brings an already-open window to front instead of no-opping on a
     // second call). Must be called on the same thread as aca_initialize(). Returns 1 on success, 0
     // if the plugin has no editor.
-    __declspec(dllexport) int aca_ara_show_editor_window(void* sessionHandle, const char* title)
+    ACA_EXPORT int aca_ara_show_editor_window(void* sessionHandle, const char* title)
     {
         if (sessionHandle == nullptr) return 0;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -761,7 +764,7 @@ extern "C"
 
     // Closes the editor window if open. Safe to call when none is open. Must be called on the same
     // thread as aca_initialize().
-    __declspec(dllexport) void aca_ara_close_editor_window(void* sessionHandle)
+    ACA_EXPORT void aca_ara_close_editor_window(void* sessionHandle)
     {
         if (sessionHandle == nullptr) return;
         static_cast<AcaAraSession*>(sessionHandle)->editorWindow.reset();
@@ -769,7 +772,7 @@ extern "C"
 
     // Mirrors HostBridge.cpp's aca_set_editor_visible: hides or shows an already-open editor window
     // without destroying it, for the same app-minimize/restore use. Safe no-op if no editor is open.
-    __declspec(dllexport) void aca_ara_set_editor_visible(void* sessionHandle, int visible)
+    ACA_EXPORT void aca_ara_set_editor_visible(void* sessionHandle, int visible)
     {
         if (sessionHandle == nullptr) return;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -779,7 +782,7 @@ extern "C"
 
     // Task 38: deregisters and frees one audio source. Safe to call with a handle from a different
     // session (no-op) since it only searches this session's own list.
-    __declspec(dllexport) void aca_ara_release_audio_source(void* sessionHandle, void* audioSourceHandle)
+    ACA_EXPORT void aca_ara_release_audio_source(void* sessionHandle, void* audioSourceHandle)
     {
         if (sessionHandle == nullptr || audioSourceHandle == nullptr) return;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);
@@ -795,7 +798,7 @@ extern "C"
     // in the safe order -- see AcaAraSession's member-order comment. A1: flips `alive` false and
     // closes any open editor window first, same reasoning as HostBridge.cpp's aca_release_instance
     // (a queued closeButtonPressed callback must not touch a session that's mid-teardown).
-    __declspec(dllexport) void aca_ara_destroy_session(void* sessionHandle)
+    ACA_EXPORT void aca_ara_destroy_session(void* sessionHandle)
     {
         if (sessionHandle == nullptr) return;
         auto* session = static_cast<AcaAraSession*>(sessionHandle);

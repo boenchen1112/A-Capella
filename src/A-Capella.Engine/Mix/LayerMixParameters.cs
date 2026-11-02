@@ -22,6 +22,7 @@ public class LayerMixParameters
     /// <summary>-1 (full left) to +1 (full right), 0 = center.</summary>
     public float Pan { get; set; } = 0f;
 
+    public PresetRef? PitchPreset { get; set; }
     public PresetRef? CompressorPreset { get; set; }
     public PresetRef? EqPreset { get; set; }
     public PresetRef? DeEsserPreset { get; set; }

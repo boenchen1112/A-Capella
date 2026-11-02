@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using Xunit;
 
 namespace A_Capella.App.Tests;
@@ -8,11 +9,10 @@ namespace A_Capella.App.Tests;
 /// editing didn't match what you got in the MP4.</summary>
 public class PreviewCanvasAspectRatioTests
 {
-    [StaFact]
+    [AvaloniaFact]
     public void CompositeCanvas_MatchesExportDefaultAspectRatio()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
-        var window = new MainWindow();
+                var window = new MainWindow();
         try
         {
             window.Show();

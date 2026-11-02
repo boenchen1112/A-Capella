@@ -81,6 +81,11 @@ public sealed class FxSlot
 /// <summary>The fixed effect rack every layer has, in chain order.</summary>
 public static class FxSlots
 {
+    /// <summary>Auto-Tune, first in the chain; only part of the rack on macOS.</summary>
+    public static readonly FxSlot Pitch = new(
+        "Pitch", "Pitch", HostedPluginCatalog.AutoTunePluginLabel, FxSlotPosition.PrePan, extendsTail: false,
+        p => p.PitchPreset, (p, v) => p.PitchPreset = v);
+
     public static readonly FxSlot Compressor = new(
         "Compressor", "Compressor", "FabFilter Pro-C 3", FxSlotPosition.PrePan, extendsTail: false,
         p => p.CompressorPreset, (p, v) => p.CompressorPreset = v);
@@ -97,5 +102,7 @@ public static class FxSlots
         "Reverb", "Reverb", "FabFilter Pro-R 2", FxSlotPosition.PostPan, extendsTail: true,
         p => p.ReverbPreset, (p, v) => p.ReverbPreset = v);
 
-    public static readonly IReadOnlyList<FxSlot> All = new[] { Compressor, Eq, DeEsser, Reverb };
+    public static readonly IReadOnlyList<FxSlot> All = HostedPluginCatalog.AutoTuneSupported
+        ? new[] { Pitch, Compressor, Eq, DeEsser, Reverb }
+        : new[] { Compressor, Eq, DeEsser, Reverb };
 }

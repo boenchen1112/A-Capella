@@ -3,17 +3,17 @@ using A_Capella.Engine.GuideTrack;
 using A_Capella.Engine.Metronome;
 using A_Capella.Engine.Settings;
 using A_Capella.Engine.Sync;
-using NAudio.CoreAudioApi;
+using A_Capella.Engine.Audio;
 using NAudio.Wave;
 
 var catalog = new DeviceCatalog();
 
-Console.WriteLine("=== WASAPI Render (output) devices ===");
-var renderDevices = catalog.GetWasapiRenderDevices();
+Console.WriteLine("=== Render (output) devices ===");
+var renderDevices = catalog.GetRenderDevices();
 foreach (var d in renderDevices) Console.WriteLine($"  {d.Id} :: {d.Name}");
 
-Console.WriteLine("=== WASAPI Capture (input) devices ===");
-var captureDevices = catalog.GetWasapiCaptureDevices();
+Console.WriteLine("=== Capture (input) devices ===");
+var captureDevices = catalog.GetCaptureDevices();
 foreach (var d in captureDevices) Console.WriteLine($"  {d.Id} :: {d.Name}");
 
 if (args.Length > 0 && args[0] == "listonly")
@@ -21,11 +21,16 @@ if (args.Length > 0 && args[0] == "listonly")
 
 var outputDevice = renderDevices.FirstOrDefault(d => d.Name.Contains("Realtek", StringComparison.OrdinalIgnoreCase))
     ?? renderDevices.FirstOrDefault();
-var loopbackDevice = captureDevices.FirstOrDefault(d => d.Name.Contains("Stereo Mix", StringComparison.OrdinalIgnoreCase));
+// The checks need the output fed back into an input. Windows: "Stereo Mix". macOS has no built-in
+// loopback; use a virtual loopback driver (BlackHole, Loopback) routed from the default output.
+var loopbackDevice = captureDevices.FirstOrDefault(d =>
+    d.Name.Contains("Stereo Mix", StringComparison.OrdinalIgnoreCase)
+    || d.Name.Contains("BlackHole", StringComparison.OrdinalIgnoreCase)
+    || d.Name.Contains("Loopback", StringComparison.OrdinalIgnoreCase));
 
 if (outputDevice is null || loopbackDevice is null)
 {
-    Console.WriteLine("Could not find output device or Stereo Mix loopback device. Aborting.");
+    Console.WriteLine("Could not find an output device or a loopback input (Stereo Mix on Windows; BlackHole/Loopback on macOS). Aborting.");
     return;
 }
 
@@ -43,7 +48,7 @@ Console.WriteLine($"Run 1 offset: {offset1:F1} ms");
 double offset2 = calibrator.CalibrateAndSave(outputDevice.Id, loopbackDevice.Id);
 Console.WriteLine($"Run 2 offset: {offset2:F1} ms");
 double consistency = Math.Abs(offset1 - offset2);
-// WASAPI shared-mode buffer quantization is itself ~20ms, so run-to-run jitter of up to
+// Shared-mode audio buffer quantization is itself ~20ms, so run-to-run jitter of up to
 // one buffer is expected, not a calibration bug. Threshold set above that floor.
 Console.WriteLine($"Consistency delta: {consistency:F1} ms -> {(consistency < 40 ? "PASS" : "FAIL")}");
 
@@ -74,14 +79,12 @@ Console.WriteLine("\n--- Check 4: Guide-track playback starts promptly with no a
     // output+input latency already delays what lands in the recording. The round-trip is instead
     // captured as CalibratedOffsetMs and trimmed from the recorded layer's head at mix/export
     // time (LayerModel.GetShiftMs / AudioShiftHelper) -- not simulated here. This check just
-    // verifies onset is prompt (bounded by normal WasapiOut init + I/O latency), which guards
+    // verifies onset is prompt (bounded by normal output init + I/O latency), which guards
     // against a delay creeping back in.
     const int sampleRate = 44100;
 
-    using var enumerator = new MMDeviceEnumerator();
-    var loopback = enumerator.GetDevice(loopbackDevice.Id);
     var captured = new List<float>();
-    using var capture = new WasapiCapture(loopback);
+    using var capture = AudioBackend.CreateInput(loopbackDevice.Id);
     var captureFormat = capture.WaveFormat;
     capture.DataAvailable += (s, e) =>
     {
@@ -112,8 +115,8 @@ Console.WriteLine("\n--- Check 5: Metronome isolation from recording pipeline (s
     var metronome = new MetronomeEngine();
     metronome.Enabled = true;
     metronome.Bpm = 120;
-    // MetronomeEngine only ever gets wired to a WasapiOut monitoring path (see MainWindow /
-    // GuideTrackPlayer); FfmpegCaptureSession.Start/StartAudioOnly build their dshow command
+    // MetronomeEngine only ever gets wired to a audio-output monitoring path (see MainWindow /
+    // GuideTrackPlayer); FfmpegCaptureSession.Start/StartAudioOnly build their capture command
     // line purely from the caller-supplied device name string, with no reference to the
     // metronome or its output device anywhere in the call chain. There is therefore no code
     // path by which metronome samples can reach a recorded layer's audio -- verified here by

@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using Xunit;
 
 namespace A_Capella.App.Tests;
@@ -8,11 +9,10 @@ namespace A_Capella.App.Tests;
 /// killing the export thread and leaving a truncated MP4.</summary>
 public class ExportCloseGateTests
 {
-    [StaFact]
+    [AvaloniaFact]
     public void Close_WhileExportInFlight_IsCancelledWithStatus()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
-        var window = new MainWindow();
+                var window = new MainWindow();
         try
         {
             window.Show();
@@ -30,12 +30,11 @@ public class ExportCloseGateTests
         }
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void Close_WithNoExportInFlight_StillCloses()
     {
         // Regression guard: the gate must only refuse while the flag is down.
-        TestAppHost.EnsureApplicationResourcesLoaded();
-        var window = new MainWindow();
+                var window = new MainWindow();
         window.Show();
 
         window.Close();

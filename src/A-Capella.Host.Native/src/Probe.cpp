@@ -2,7 +2,9 @@
 // pipeline works before any JUCE/VST3 hosting code is added. Once probe 2 (JUCE hosting a real
 // plugin headlessly) is confirmed, this file is superseded by the real hosting bridge.
 
-extern "C" __declspec(dllexport) int aca_probe()
+#include "Export.h"
+
+extern "C" ACA_EXPORT int aca_probe()
 {
     return 42;
 }

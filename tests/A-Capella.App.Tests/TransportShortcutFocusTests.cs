@@ -1,35 +1,30 @@
-using System.Windows;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Reflection;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Xunit;
 
 namespace A_Capella.App.Tests;
 
 /// <summary>Bug audit #14: MainWindow_PreviewKeyDown must not steal Space from a focused
-/// Button/CheckBox/ToggleButton -- Space is ButtonBase's own activation key, and this handler
-/// runs during the tunnel phase, before the focused control's own bubble-phase KeyDown handling
-/// (which is what "e.Handled" suppresses -- see the doc's root cause 2). Invokes the private
+/// Button/CheckBox/ToggleButton -- Space is Button's own activation key, and this handler runs
+/// during the tunnel phase, before the focused control's own handling. Invokes the private
 /// handler directly with a synthetic KeyEventArgs and a real focused control, rather than
-/// attempting a full OS-level keyboard input simulation (no precedent for that in this suite --
-/// see Bug Audit #13's own CommitSliderKeyboardTests, which took the same "test the mechanism,
-/// not the full routed-event pipeline" approach for the identical reason).</summary>
+/// attempting a full OS-level keyboard input simulation.</summary>
 public class TransportShortcutFocusTests
 {
-    [StaFact]
-    public void MainWindow_PreviewKeyDown_Space_WithToggleButtonFocused_IsSuppressed()
+    [AvaloniaFact]
+    public void MainWindow_PreviewKeyDown_Space_WithToggleButtonFocused_IsLeftAlone()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
         var window = new MainWindow();
         try
         {
             window.Show();
-            Keyboard.Focus(window.MonitorToggle);
-            bool checkedBefore = window.MonitorToggle.IsChecked == true;
+            window.MonitorToggle.Focus();
+            Assert.Same(window.MonitorToggle, window.FocusManager!.GetFocusedElement());
 
-            RaisePreviewKeyDown(window, Key.Space);
+            var handled = RaisePreviewKeyDown(window, Key.Space);
 
-            Assert.Equal(checkedBefore, window.MonitorToggle.IsChecked == true); // handler didn't consume it wrongly and MonitorToggle wasn't left to WPF's own routing to flip it via this call
+            Assert.False(handled, "Space on a focused toggle button must be left to the button, not used as Play/Stop.");
         }
         finally
         {
@@ -37,17 +32,16 @@ public class TransportShortcutFocusTests
         }
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void MainWindow_PreviewKeyDown_Space_WithTextBoxFocused_StillWorksAsTransport()
     {
-        // Regression guard: the pre-existing TextBox exclusion (:290) must keep working --
+        // Regression guard: the pre-existing TextBox exclusion must keep working --
         // this fix only adds a second, narrower exclusion, it must not replace the first.
-        TestAppHost.EnsureApplicationResourcesLoaded();
         var window = new MainWindow();
         try
         {
             window.Show();
-            Keyboard.Focus(window.MetronomeBpmTextBox);
+            window.MetronomeBpmTextBox.Focus();
 
             var handled = RaisePreviewKeyDown(window, Key.Space);
 
@@ -62,8 +56,7 @@ public class TransportShortcutFocusTests
     private static bool RaisePreviewKeyDown(MainWindow window, Key key)
     {
         var method = typeof(MainWindow).GetMethod("MainWindow_PreviewKeyDown", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var source = PresentationSource.FromVisual(window)!;
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        var args = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key, Source = window };
         method.Invoke(window, new object[] { window, args });
         return args.Handled;
     }

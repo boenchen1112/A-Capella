@@ -4,7 +4,7 @@ using A_Capella.Engine.Host;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Project;
 using A_Capella.Engine.Timeline;
-using NAudio.CoreAudioApi;
+using A_Capella.Engine.Audio;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using SkiaSharp;
@@ -12,7 +12,7 @@ using SkiaSharp;
 namespace A_Capella.Engine.Preview;
 
 /// <summary>Plays a built mix through some audio output. Abstracted so tests can exercise the
-/// frame-loop/lifecycle logic without opening a real WASAPI device (this suite runs every
+/// frame-loop/lifecycle logic without opening a real audio device (this suite runs every
 /// session and stays hardware-independent by convention -- see tools/HardwareChecks for the
 /// project's actual hardware-in-the-loop checks).</summary>
 public interface IPreviewAudioSink : IDisposable
@@ -29,23 +29,20 @@ public interface IPreviewAudioSink : IDisposable
     bool DrivesRealtime => false;
 }
 
-/// <summary>Default sink: the system's default render device via WasapiOut.</summary>
-public class WasapiPreviewAudioSink : IPreviewAudioSink
+/// <summary>Default sink: the system's default render device (or <c>deviceId</c>) via the
+/// platform audio backend (WASAPI on Windows, OpenAL on macOS).</summary>
+public class SystemPreviewAudioSink : IPreviewAudioSink
 {
-    private WasapiOut? _output;
+    private IAudioOutput? _output;
     private readonly string? _deviceId;
 
-    public WasapiPreviewAudioSink(string? deviceId = null) => _deviceId = deviceId;
+    public SystemPreviewAudioSink(string? deviceId = null) => _deviceId = deviceId;
 
     public bool DrivesRealtime => true;
 
     public void Play(ISampleProvider mix)
     {
-        using var enumerator = new MMDeviceEnumerator();
-        var device = _deviceId is not null
-            ? enumerator.GetDevice(_deviceId)
-            : enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-        _output = new WasapiOut(device, AudioClientShareMode.Shared, false, 50);
+        _output = AudioBackend.CreateOutput(_deviceId);
         _output.Init(mix);
         _output.Play();
     }
@@ -217,7 +214,7 @@ public class PreviewPlaybackEngine : IDisposable
         _canvasHeight = canvasHeight;
         _fps = fps;
         _sampleRate = sampleRate;
-        _audioSink = audioSink ?? new WasapiPreviewAudioSink();
+        _audioSink = audioSink ?? new SystemPreviewAudioSink();
         _mixEngine = hostedService is not null ? new MixEngine(hostedService) : new MixEngine(hostedPluginAvailability);
         _timeline = new LayerTimeline(_mixEngine, ffmpegPath, ffprobePath);
 

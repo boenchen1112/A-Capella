@@ -1,32 +1,33 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Xunit.StaFact" Version="1.1.11" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <!-- Avalonia.Headless.XUnit is built on xunit v3. -->
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.4" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\A-Capella.App\A-Capella.App.csproj" />
   </ItemGroup>
 
-  <!-- v7 Q2: this project's own test host process needs A-CapellaHostNative.dll alongside its
-       binaries too; MainWindow's constructor unconditionally calls HostedPluginInstance.
-       Initialize(), and A-Capella.App.csproj's matching copy target only lands the DLL in that
-       project's own output folder, not a referencing project's. Discovered when this whole test
-       project turned out to have been silently failing on DllNotFoundException. -->
+  <!-- The test host process needs the native plugin host library alongside its binaries too;
+       MainWindow's constructor calls HostedPluginInstance.Initialize(), and A-Capella.App.csproj's
+       matching copy target only lands the library in that project's own output folder, not a
+       referencing project's. -->
   <Target Name="CopyA_CapellaHostNative" AfterTargets="Build">
     <ItemGroup>
       <A_CapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\..\src\A-Capella.Host.Native\build\bin\$(Configuration)\A-CapellaHostNative.dll" />
+      <A_CapellaHostNativeDll Include="$(MSBuildThisFileDirectory)..\..\src\A-Capella.Host.Native\build\bin\$(Configuration)\libA-CapellaHostNative.dylib" />
     </ItemGroup>
     <Copy SourceFiles="@(A_CapellaHostNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(A_CapellaHostNativeDll.Identity)')" />
   </Target>

@@ -1,5 +1,4 @@
-using System.IO;
-using System.Windows;
+using A_Capella.Engine.Audio;
 using A_Capella.Engine.Capture;
 using A_Capella.Engine.Devices;
 using A_Capella.Engine.Ffmpeg;
@@ -10,6 +9,8 @@ using A_Capella.Engine.Project;
 using A_Capella.Engine.Settings;
 using A_Capella.Engine.Sync;
 using A_Capella.Engine.Timeline;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
 using NAudio.Wave;
 
 namespace A_Capella.App;
@@ -34,13 +35,13 @@ public partial class RecordSetupWindow : Window
     private readonly MetronomeEngine _metronome = new();
 
     private List<AudioDeviceInfo> _captureDevices = new();
-    private List<DshowDeviceInfo> _dshowVideoDevices = new();
-    private List<DshowDeviceInfo> _dshowAudioDevices = new();
+    private List<CaptureDeviceInfo> _videoDevices = new();
+    private List<CaptureDeviceInfo> _audioDevices = new();
     private AudioDeviceInfo _outputDevice;
 
     private FfmpegCaptureSession? _activeCapture;
     private GuideTrackPlayer? _guideTrackPlayer;
-    private WasapiOut? _metronomeOutput;
+    private IAudioOutput? _metronomeOutput;
     private bool _isRecording;
     private bool _closing;
 
@@ -62,6 +63,8 @@ public partial class RecordSetupWindow : Window
 
     /// <summary>The meter chosen in the dialog, carried back to the project like Bpm.</summary>
     public TimeSignature TimeSignature => _metronome.TimeSignature;
+
+    public RecordSetupWindow() : this(new DeviceCatalog(), new SettingsService(), new LayerCollection(), null!, "", 120) { }
 
     public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null, TimeSignature? initialTimeSignature = null)
     {
@@ -87,6 +90,8 @@ public partial class RecordSetupWindow : Window
         (_lastCameraName, _lastMicName, bool lastMetronomeEnabled) = _settingsService.GetLastRecordingSetup();
         MetronomeToggle.IsChecked = lastMetronomeEnabled;
         _metronome.Enabled = lastMetronomeEnabled;
+        BpmTextBox.TextChanged += BpmTextBox_TextChanged;
+        Closing += Window_Closing;
 
         RefreshDevices();
         Closed += (_, _) => _settingsService.SetLastRecordingSetup(
@@ -98,34 +103,47 @@ public partial class RecordSetupWindow : Window
 
     private void RefreshDevices()
     {
-        _captureDevices = _deviceCatalog.GetWasapiCaptureDevices();
-        var dshow = _deviceCatalog.GetDshowDevices();
-        _dshowVideoDevices = dshow.Where(d => d.IsVideo).ToList();
-        _dshowAudioDevices = dshow.Where(d => !d.IsVideo).ToList();
+        _captureDevices = _deviceCatalog.GetCaptureDevices();
+        List<CaptureDeviceInfo> inputs;
+        try { inputs = _deviceCatalog.GetCaptureInputDevices(); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
+        {
+            // ffmpeg isn't installed / isn't on PATH.
+            inputs = new List<CaptureDeviceInfo>();
+            StatusText.Text = "Couldn't run ffmpeg to list cameras and microphones. Install FFmpeg and make sure `ffmpeg` is on your PATH.";
+        }
+        _videoDevices = inputs.Where(d => d.IsVideo).ToList();
+        _audioDevices = inputs.Where(d => !d.IsVideo).ToList();
 
-        CameraCombo.ItemsSource = _dshowVideoDevices.Select(d => d.Name).ToList();
-        MicCombo.ItemsSource = _dshowAudioDevices.Select(d => d.Name).ToList();
+        CameraCombo.ItemsSource = _videoDevices.Select(d => d.Name).ToList();
+        MicCombo.ItemsSource = _audioDevices.Select(d => d.Name).ToList();
 
-        int cameraIndex = _lastCameraName is null ? -1 : _dshowVideoDevices.FindIndex(d => d.Name == _lastCameraName);
+        int cameraIndex = _lastCameraName is null ? -1 : _videoDevices.FindIndex(d => d.Name == _lastCameraName);
         CameraCombo.SelectedIndex = cameraIndex >= 0 ? cameraIndex : (CameraCombo.Items.Count > 0 ? 0 : -1);
 
-        int micIndex = _lastMicName is null ? -1 : _dshowAudioDevices.FindIndex(d => d.Name == _lastMicName);
+        int micIndex = _lastMicName is null ? -1 : _audioDevices.FindIndex(d => d.Name == _lastMicName);
         MicCombo.SelectedIndex = micIndex >= 0 ? micIndex : (MicCombo.Items.Count > 0 ? 0 : -1);
     }
 
     /// <summary>The spec's dialog has no separate loopback-device picker -- Windows' built-in
     /// Stereo Mix (see Phase 1 plan) is the app's fixed calibration loopback input, matched by
-    /// name from the WASAPI capture list rather than exposed as a choice.</summary>
+    /// name from the audio capture list rather than exposed as a choice. macOS has no built-in
+    /// loopback: a virtual one (BlackHole, Loopback) is used when installed, otherwise the default
+    /// microphone hears the click through the speakers, which measures the same round trip.</summary>
     private AudioDeviceInfo? FindLoopbackDevice() =>
-        _captureDevices.FirstOrDefault(d => d.Name.Contains("Stereo Mix", StringComparison.OrdinalIgnoreCase))
+        _captureDevices.FirstOrDefault(d => d.Name.Contains("Stereo Mix", StringComparison.OrdinalIgnoreCase)
+                                            || d.Name.Contains("BlackHole", StringComparison.OrdinalIgnoreCase)
+                                            || d.Name.Contains("Loopback", StringComparison.OrdinalIgnoreCase))
         ?? _captureDevices.FirstOrDefault();
 
-    private void CalibrateButton_Click(object sender, RoutedEventArgs e)
+    private void CalibrateButton_Click(object? sender, RoutedEventArgs e)
     {
         var loopbackDevice = FindLoopbackDevice();
         if (loopbackDevice is null)
         {
-            CalibrationResultText.Text = "No loopback capture device found (enable Stereo Mix).";
+            CalibrationResultText.Text = OperatingSystem.IsMacOS()
+                ? "No audio input found to measure latency with."
+                : "No loopback capture device found (enable Stereo Mix).";
             return;
         }
 
@@ -140,22 +158,22 @@ public partial class RecordSetupWindow : Window
         }
     }
 
-    private void MetronomeToggle_Changed(object sender, RoutedEventArgs e) =>
+    private void MetronomeToggle_Changed(object? sender, RoutedEventArgs e) =>
         _metronome.Enabled = MetronomeToggle.IsChecked == true;
 
-    private void TimeSignatureCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void TimeSignatureCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (TimeSignatureCombo.SelectedItem is TimeSignature chosen)
             _metronome.TimeSignature = chosen;
     }
 
-    private void BpmTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    private void BpmTextBox_TextChanged(object? sender, TextChangedEventArgs e)
     {
         if (double.TryParse(BpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm))
             _metronome.Bpm = bpm;
     }
 
-    private async void RecordButton_Click(object sender, RoutedEventArgs e)
+    private async void RecordButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_isRecording)
         {
@@ -175,8 +193,8 @@ public partial class RecordSetupWindow : Window
             return;
         }
 
-        var videoDevice = _dshowVideoDevices[CameraCombo.SelectedIndex];
-        var dshowAudioDevice = _dshowAudioDevices[MicCombo.SelectedIndex];
+        var videoDevice = _videoDevices[CameraCombo.SelectedIndex];
+        var captureAudioDevice = _audioDevices[MicCombo.SelectedIndex];
         // TODO(polish): status text uses the zero-based LayerId ("layer 0"); switch new takes and
         // retakes to 1-based together (retake spec, Known limitations: "Status numbering in the dialog").
         int takeLayerId = _retakeLayerId ?? _layers.Layers.Count;           // status text only (+ the unused _pendingLayerId)
@@ -253,11 +271,11 @@ public partial class RecordSetupWindow : Window
             _pendingGuideReferenceMono = guideReference;
 
             // C4: capture starts first so the guide is never delayed by it; but the guide must
-            // not start until dshow capture is actually producing frames (audit B4) -- otherwise
-            // the recorded file's t=0 begins at an unmeasured, variable point (0.5-2s, dshow
+            // not start until camera capture is actually producing frames (audit B4) -- otherwise
+            // the recorded file's t=0 begins at an unmeasured, variable point (0.5-2s, camera
             // device init) after the guide already started, and CalibratedOffsetMs (measured over
             // a WASAPI Stereo-Mix loopback, a different path) can't account for that.
-            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
+            _activeCapture.Start(videoDevice.Name, captureAudioDevice.Name, outputPath);
             _activeCapture.WaitForCaptureStarted(TimeSpan.FromSeconds(3));
 
             // Bug audit #12: _outputDevice (:72) is a one-time snapshot of one specific render
@@ -296,7 +314,7 @@ public partial class RecordSetupWindow : Window
         }
         else
         {
-            _activeCapture.Start(videoDevice.Name, dshowAudioDevice.Name, outputPath);
+            _activeCapture.Start(videoDevice.Name, captureAudioDevice.Name, outputPath);
             StatusText.Text = $"{takeVerb} layer {takeLayerId}...";
         }
 
@@ -316,9 +334,7 @@ public partial class RecordSetupWindow : Window
         _metronome.Reset();
         try
         {
-            using var metronomeEnumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
-            var metronomeDevice = metronomeEnumerator.GetDevice(_outputDevice.Id);
-            _metronomeOutput = new WasapiOut(metronomeDevice, NAudio.CoreAudioApi.AudioClientShareMode.Shared, false, 50);
+            _metronomeOutput = AudioBackend.CreateOutput(_outputDevice.Id);
             _metronomeOutput.Init(_metronome);
             _metronomeOutput.Play();
         }
@@ -327,7 +343,7 @@ public partial class RecordSetupWindow : Window
             // The take itself (capture, and the guide track if any) already started above and must
             // not be aborted over a monitoring-only nicety. Losing the click for this take is far
             // cheaper than losing the take -- fall back to no metronome output, same as if the
-            // user had left the box unchecked the whole time. Dispose first: if `new WasapiOut(...)`
+            // user had left the box unchecked the whole time. Dispose first: if creating the output
             // succeeded but Init or Play threw, a bare null-out would leak that WasapiOut.
             _metronomeOutput?.Dispose();
             _metronomeOutput = null;
@@ -456,17 +472,12 @@ public partial class RecordSetupWindow : Window
             // this to the existing layer and pushes the undo step in one synchronous block.
             RetakeResult = (_pendingOutputPath, MeasureCalibratedOffsetMs(_pendingOutputPath, _pendingCalibratedOffsetMs));
         }
-        DialogResult = true;
-        Close();
+        Close(true);
     }
 
-    private void CancelButton_Click(object sender, RoutedEventArgs e)
-    {
-        DialogResult = false;
-        Close();
-    }
+    private void CancelButton_Click(object? sender, RoutedEventArgs e) => Close(false);
 
-    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+    private void Window_Closing(object? sender, WindowClosingEventArgs e)
     {
         _closing = true;
         // Don't leave an orphaned ffmpeg process running if the user closes the dialog mid-record.

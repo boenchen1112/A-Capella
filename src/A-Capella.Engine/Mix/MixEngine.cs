@@ -297,7 +297,7 @@ public class MixEngine : IDisposable
         foreach (var slot in FxSlots.All)
         {
             var preset = slot.GetPreset(layer.Parameters);
-            sb.Append(slot.Stage).Append(preset is null ? "" : _hostedService.IsAvailable(slot.PluginLabel) && FabFilterPresetLibrary.Default.Exists(preset) ? "+" : "-").Append(';');
+            sb.Append(slot.Stage).Append(preset is null ? "" : _hostedService.IsAvailable(slot.PluginLabel) && PresetLibraries.Exists(preset) ? "+" : "-").Append(';');
         }
 
         foreach (var prop in typeof(LayerMixParameters).GetProperties().OrderBy(p => p.Name))

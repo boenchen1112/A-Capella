@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Project;
 using Xunit;
@@ -8,7 +9,7 @@ namespace A_Capella.App.Tests;
 /// properties, and never Layer/HasSource.</summary>
 public class LayerRowRetakeTests
 {
-    [StaFact]
+    [AvaloniaFact]
     public void NotifySourceReplaced_RaisesTheSourceAndTrimProperties_ButNotLayer()
     {
         var row = new LayerRowViewModel(1) { Layer = new LayerCollection().Add(LayerKind.UploadedVideo, "a.mp4") };

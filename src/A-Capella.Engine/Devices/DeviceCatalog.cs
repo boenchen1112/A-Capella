@@ -1,11 +1,15 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
-using NAudio.CoreAudioApi;
+using A_Capella.Engine.Audio;
+using A_Capella.Engine.Capture;
 
 namespace A_Capella.Engine.Devices;
 
 public record AudioDeviceInfo(string Id, string Name);
-public record DshowDeviceInfo(string Name, bool IsVideo);
+
+/// <summary>A camera or microphone as ffmpeg's capture input names it (dshow on Windows,
+/// avfoundation on macOS). The name is what gets passed back to ffmpeg.</summary>
+public record CaptureDeviceInfo(string Name, bool IsVideo);
 
 public class DeviceCatalog
 {
@@ -16,21 +20,9 @@ public class DeviceCatalog
         _ffmpegPath = ffmpegPath;
     }
 
-    public List<AudioDeviceInfo> GetWasapiRenderDevices()
-    {
-        using var enumerator = new MMDeviceEnumerator();
-        return enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
-            .Select(d => new AudioDeviceInfo(d.ID, d.FriendlyName))
-            .ToList();
-    }
+    public List<AudioDeviceInfo> GetRenderDevices() => AudioBackend.GetRenderDevices();
 
-    public List<AudioDeviceInfo> GetWasapiCaptureDevices()
-    {
-        using var enumerator = new MMDeviceEnumerator();
-        return enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-            .Select(d => new AudioDeviceInfo(d.ID, d.FriendlyName))
-            .ToList();
-    }
+    public List<AudioDeviceInfo> GetCaptureDevices() => AudioBackend.GetCaptureDevices();
 
     /// <summary>
     /// The UI has no output-device picker anywhere -- the
@@ -38,37 +30,60 @@ public class DeviceCatalog
     /// playback, latency calibration, and audio preview all resolve to the system's default
     /// render endpoint instead of a user-chosen one.
     /// </summary>
-    public AudioDeviceInfo GetDefaultRenderDevice()
-    {
-        using var enumerator = new MMDeviceEnumerator();
-        var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-        return new AudioDeviceInfo(device.ID, device.FriendlyName);
-    }
+    public AudioDeviceInfo GetDefaultRenderDevice() => AudioBackend.GetDefaultRenderDevice();
 
     /// <summary>
-    /// Lists dshow devices (video and audio) by parsing `ffmpeg -f dshow -list_devices true -i dummy` stderr output.
+    /// Lists cameras and microphones by parsing ffmpeg's device-listing stderr output
+    /// (`-f dshow -list_devices true -i dummy` on Windows, `-f avfoundation -list_devices true -i ""`
+    /// on macOS).
     /// </summary>
-    public List<DshowDeviceInfo> GetDshowDevices()
+    public List<CaptureDeviceInfo> GetCaptureInputDevices()
     {
         var psi = new ProcessStartInfo
         {
             FileName = _ffmpegPath,
-            ArgumentList = { "-f", "dshow", "-list_devices", "true", "-i", "dummy" },
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        foreach (var arg in CaptureInputFormat.ListDevicesArguments())
+            psi.ArgumentList.Add(arg);
 
         using var process = Process.Start(psi)!;
         string stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        return ParseDeviceList(stderr);
+    }
 
-        var devices = new List<DshowDeviceInfo>();
+    internal static List<CaptureDeviceInfo> ParseDeviceList(string stderr)
+    {
+        var devices = new List<CaptureDeviceInfo>();
+
+        if (OperatingSystem.IsMacOS())
+        {
+            // "[AVFoundation indev @ 0x...] AVFoundation video devices:" then "... [0] FaceTime HD Camera",
+            // then the same for audio. Screen captures are listed among the video devices; not cameras.
+            bool? isVideo = null;
+            var item = new Regex(@"\]\s*\[(?<index>\d+)\]\s*(?<name>.+?)\s*$");
+            foreach (var line in stderr.Split('\n'))
+            {
+                if (line.Contains("AVFoundation video devices", StringComparison.OrdinalIgnoreCase)) { isVideo = true; continue; }
+                if (line.Contains("AVFoundation audio devices", StringComparison.OrdinalIgnoreCase)) { isVideo = false; continue; }
+                if (isVideo is null) continue;
+                var m = item.Match(line);
+                if (!m.Success) continue;
+                string name = m.Groups["name"].Value;
+                if (isVideo.Value && name.StartsWith("Capture screen", StringComparison.OrdinalIgnoreCase)) continue;
+                devices.Add(new CaptureDeviceInfo(name, isVideo.Value));
+            }
+            return devices;
+        }
+
         var regex = new Regex("\"(?<name>[^\"]+)\"\\s*\\((?<kind>video|audio)\\)");
         foreach (Match match in regex.Matches(stderr))
         {
-            devices.Add(new DshowDeviceInfo(
+            devices.Add(new CaptureDeviceInfo(
                 match.Groups["name"].Value,
                 match.Groups["kind"].Value == "video"));
         }

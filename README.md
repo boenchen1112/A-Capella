@@ -1,6 +1,6 @@
 # A-Capella
 
-A Windows desktop app for recording and mixing multi-layer acapella videos: one singer records up to nine layers (melody, harmony, bass, beatbox…), and A-Capella combines them into a single grid video with all layers singing in sync.
+A Windows and macOS desktop app for recording and mixing multi-layer acapella videos: one singer records up to nine layers (melody, harmony, bass, beatbox…), and A-Capella combines them into a single grid video with all layers singing in sync.
 
 ## Features
 
@@ -13,21 +13,22 @@ A Windows desktop app for recording and mixing multi-layer acapella videos: one 
 - **Trim with a live preview.** The composited preview updates as trims, mixes and effects change; there's no render-to-see step.
 - **Per-layer effects chain:** noise gate, EQ, compressor, limiter, reverb, pan and pitch correction, each switchable per layer, with level meters on the mixing screen.
 - **VST3 plugin hosting.** If FabFilter Pro-Q 4, Pro-C 3, Pro-L 2, Pro-G or Pro-R 2 is installed, it is used for its slot and opened in its own editor window. Otherwise A-Capella falls back to its built-in processing.
+- **Auto-Tune on macOS.** If Antares Auto-Tune (`AutoTune Advanced.vst3`) is installed, every layer gets a Pitch effect first in its chain, chosen from built-in presets (chromatic styles from Transparent to Hard Tune, or any major/minor key).
 - **Melodyne pitch editing via ARA**, alongside a built-in automatic pitch-correction mode.
 - **Undo/redo and project save/load**, including live plugin edits.
 - **MP4 export.** Up to nine synced video feeds in the chosen grid layout with one mixed audio track. What you hear while editing is what gets exported.
 
 ## How it's built
 
-- C# / .NET 8, WPF UI
-- NAudio for audio I/O, plus a custom mixing engine
+- C# / .NET 8, [Avalonia](https://avaloniaui.net) UI (Windows and macOS)
+- NAudio for the mixing/DSP engine; audio I/O is WASAPI on Windows and OpenAL on macOS
 - FFmpeg (run as a subprocess over raw pipes) for capture, decode, encode and mux
 - SkiaSharp for real-time grid compositing
 - Rubber Band for the built-in pitch correction
 - A native C++ module (`src/A-Capella.Host.Native`) built on JUCE that hosts VST3/ARA plugins and exposes a plain C ABI, called from C# via P/Invoke
 
 ```
-src/A-Capella.App           WPF application
+src/A-Capella.App           Avalonia application
 src/A-Capella.Engine        Audio, video, project, export and plugin-hosting logic
 src/A-Capella.Host.Native   JUCE-based VST3/ARA host (C++)
 tests/                     xUnit test suites for the engine and the app
@@ -36,45 +37,44 @@ tools/HardwareChecks       Manual real-hardware checks (devices, sync, throughpu
 
 ## Requirements
 
-- Windows 10/11 (x64)
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [FFmpeg](https://ffmpeg.org/) with `ffmpeg` and `ffprobe` on `PATH`
+- Windows 10/11 (x64) or macOS 11+ (Apple silicon or Intel)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) (the projects target .NET 8; Avalonia 12's code generators need the newer compiler that ships with the 10 SDK)
+- [FFmpeg](https://ffmpeg.org/) with `ffmpeg` and `ffprobe` on `PATH` (macOS: `brew install ffmpeg`)
 - To build the native plugin host:
-  - Visual Studio Build Tools with the C++ workload (MSVC + Windows 10/11 SDK)
-  - [CMake](https://cmake.org/) 3.22+
-  - [Ninja](https://ninja-build.org/) (`winget install Ninja-build.Ninja`)
-- Optional: FabFilter and/or Melodyne VST3 installs in `C:\Program Files\Common Files\VST3`. The app works without them using its built-in effects.
+  - Windows: Visual Studio Build Tools with the C++ workload (MSVC + Windows 10/11 SDK), [CMake](https://cmake.org/) 3.22+, [Ninja](https://ninja-build.org/) (`winget install Ninja-build.Ninja`)
+  - macOS: Xcode Command Line Tools, CMake 3.22+ and Ninja (`brew install cmake ninja`)
+- Optional: FabFilter and/or Melodyne VST3 installs (`C:\Program Files\Common Files\VST3` on Windows, `/Library/Audio/Plug-Ins/VST3` on macOS). The app works without them using its built-in effects.
+- macOS: grant the terminal/app Camera and Microphone access when asked (System Settings > Privacy & Security). There is no built-in loopback device, so latency calibration listens to the speakers through the microphone unless a virtual loopback driver such as BlackHole is installed.
 
 ## Building
 
-1. Clone the plugin SDKs into the native module folder. Both folders are gitignored.
+1. Build the native module (optional; needed only for VST3/ARA plugin hosting). It fetches JUCE and the ARA SDK itself on macOS:
+
+   ```bash
+   src/A-Capella.Host.Native/build.sh            # Debug (macOS)
+   src/A-Capella.Host.Native/build.sh Release
+   ```
+
+   On Windows, clone the SDKs and use the PowerShell script instead:
 
    ```powershell
    cd src/A-Capella.Host.Native
    git clone --branch 8.0.6 --depth 1 https://github.com/juce-framework/JUCE.git JUCE
-   git clone --recursive https://github.com/Celemony/ARA_SDK.git ARA_SDK
+   git clone --recursive --branch releases/2.2.0 --depth 1 https://github.com/Celemony/ARA_SDK.git ARA_SDK
+   powershell -File build.ps1            # or -Configuration Release
    ```
 
-   JUCE bundles its own VST3 SDK, so Steinberg's VST3 SDK doesn't need to be cloned separately.
+   `build.ps1` looks for MSVC under `D:\Tools\VisualStudio\BuildTools`, then `C:\Program Files\Microsoft Visual Studio\18\Community`; edit `$msvcRoot` at the top of the script if yours is elsewhere. On macOS, if the linker rejects the newest SDK ("unknown architecture" in a `.tbd`), set `SDKROOT` to an older one under `/Library/Developer/CommandLineTools/SDKs`. Re-run the script whenever `src/A-Capella.Host.Native` changes, *before* `dotnet build`: the app and test projects copy the library into their output.
 
-2. Build the native module:
+2. Build, test and run the app:
 
-   ```powershell
-   powershell -File src/A-Capella.Host.Native/build.ps1            # Debug
-   powershell -File src/A-Capella.Host.Native/build.ps1 -Configuration Release
-   ```
-
-   `build.ps1` sets the MSVC/SDK environment by hand and uses CMake's Ninja generator instead of the Visual Studio generator. It looks for MSVC under `D:\Tools\VisualStudio\BuildTools`, then `C:\Program Files\Microsoft Visual Studio\18\Community`; edit `$msvcRoot` at the top of the script if yours is elsewhere. Re-run it whenever `src/A-Capella.Host.Native` changes, *before* `dotnet build`: the app and test projects copy `A-CapellaHostNative.dll` into their output.
-
-3. Build, test and run the app:
-
-   ```powershell
+   ```bash
    dotnet build A-Capella.sln
    dotnet test A-Capella.sln
    dotnet run --project src/A-Capella.App
    ```
 
-   Tests that need a specific FabFilter or Melodyne plugin are skipped, with a message, when that plugin isn't installed.
+   Tests that need a specific FabFilter or Melodyne plugin fail (Engine tests) or skip (App tests) when that plugin isn't installed. The App tests run headless; set `ACAPELLA_SCREENSHOT_DIR` to have them also write PNGs of the main window and dialogs.
 
 ## Roadmap (not built yet)
 

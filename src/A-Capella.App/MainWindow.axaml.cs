@@ -1,13 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
-using System.Windows.Shell;
-using System.Windows.Threading;
 using A_Capella.App.Layout;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Devices;
@@ -19,20 +11,22 @@ using A_Capella.Engine.Presets;
 using A_Capella.Engine.Preview;
 using A_Capella.Engine.Project;
 using A_Capella.Engine.Settings;
-using Microsoft.Win32;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using SkiaSharp;
-using SkiaSharp.Views.Desktop;
 
 namespace A_Capella.App;
 
 public partial class MainWindow : Window
 {
-    public static readonly RoutedCommand UndoCommand = new();
-    public static readonly RoutedCommand RedoCommand = new();
-    public static readonly RoutedCommand SaveCommand = new();
-    public static readonly RoutedCommand SaveAsCommand = new();
-
-    private const string MediaFileFilter = "Media files|*.mp4;*.mov;*.mkv;*.wav;*.mp3;*.m4a|All files|*.*";
+    /// <summary>Command on macOS, Ctrl elsewhere.</summary>
+    private static readonly KeyModifiers ShortcutModifier = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
     private readonly DeviceCatalog _deviceCatalog = new();
     private readonly SettingsService _settingsService = new();
@@ -45,20 +39,16 @@ public partial class MainWindow : Window
     // MixEngine, PreviewPlaybackEngine, ExportEngine, and (via LayerRowViewModel.SharedHostedService)
     // the Mixing screen's launcher buttons -- fixes the "three disconnected plugin-instance caches"
     // defect where editing a plugin was inaudible and export matched neither the editor nor the
-    // preview. All lifecycle calls marshal through WpfHostedPluginDispatcher onto this window's
-    // Dispatcher (A3/B8).
-    private readonly HostedPluginService _hostedService = new(new HostedPluginAvailability(), new WpfHostedPluginDispatcher(Dispatcher.CurrentDispatcher));
+    // preview. All lifecycle calls marshal through UiHostedPluginDispatcher onto the UI thread
+    // (A3/B8).
+    private readonly HostedPluginService _hostedService = new(new HostedPluginAvailability(), new UiHostedPluginDispatcher(Dispatcher.UIThread));
     private readonly MixEngine _mixEngine;
     private readonly A_Capella.Engine.Sync.MelodyneNoteSource _noteSource;
     private readonly ObservableCollection<LayerRowViewModel> _tracks = new();
     private readonly PreviewPlaybackEngine _previewEngine;
     private readonly DispatcherTimer _previewDebounceTimer;
-    // v7 Q0 task 8 (v6 task 9): polls open hosted-plugin editors for state changes at a fixed
-    // interval, independent of the (self-resetting) preview-refresh debounce timer above -- a plugin
-    // tweak needs to be captured even if the user never triggers another live-param change.
 
-    // v7 Q1 task 3: ~30Hz meter refresh, separate timer from the 500ms hosted-state poll above
-    // since meters need to feel live even when nothing else is happening.
+    // v7 Q1 task 3: ~30Hz meter refresh.
     private readonly DispatcherTimer _meterPollTimer;
 
     // 1Hz CPU/memory readout in the toolbar. Separate from the 33ms meter timer since
@@ -67,7 +57,6 @@ public partial class MainWindow : Window
     private TimeSpan _lastCpuTime;
     private DateTime _lastCpuSampleAt;
 
-    private SKBitmap? _compositedFrame;
     private readonly object _frameMailboxLock = new();
     private SKBitmap? _pendingFrame;
     private bool _framePumpQueued;
@@ -88,13 +77,20 @@ public partial class MainWindow : Window
     // pitch..." for as long as any of them are still running, and only then.
     private int _pendingPitchRenderCount;
 
+    // Set once the unsaved-changes prompt has been answered, so the close that follows isn't asked again.
+    private bool _closeConfirmed;
+
+    // The modifier keys of the latest key/pointer event, for click handlers (which carry none).
+    private KeyModifiers _lastModifiers;
+
     public MainWindow()
     {
-        // Must happen before any other bridge call, on this (the WPF UI) thread -- all hosted
+        // Must happen before any other bridge call, on this (the UI) thread -- all hosted
         // plugin lifecycle/editor calls are required to run on the thread that initialized JUCE's
         // MessageManager (see HostedPluginInstance.Initialize's doc comment). _hostedService's
-        // WpfHostedPluginDispatcher was already built against this same thread's Dispatcher above.
-        HostedPluginInstance.Initialize();
+        // UiHostedPluginDispatcher was already built against this same thread's Dispatcher above.
+        try { HostedPluginInstance.Initialize(); }
+        catch (DllNotFoundException) { /* native plugin host not built: the built-in effects still work */ }
         _mixEngine = new MixEngine(_hostedService);
         _noteSource = new A_Capella.Engine.Sync.MelodyneNoteSource(_hostedService);
         _session = new ProjectSession(_mixEngine);
@@ -107,9 +103,10 @@ public partial class MainWindow : Window
 
         // Scan for installed FabFilter plugins off the critical Play path (audit B2) -- the first
         // real chain build should never stall on loading six plugin binaries.
-        Task.Run(() => _hostedService.EnsureScanned());
+        Task.Run(() => { try { _hostedService.EnsureScanned(); } catch { /* no native host: nothing to scan */ } });
 
         InitializeComponent();
+        ConfigurePlatformChrome();
         TrackList.ItemsSource = _tracks;
         EmptyCellOverlay.ItemsSource = _tracks;
         RestoreTracksFromLayers();   // Fixed 4-lane model: rows exist from app start, not grown on demand
@@ -119,6 +116,18 @@ public partial class MainWindow : Window
         SetUpMasterLimiterCombo();
         SelectLane(_tracks[0]);
 
+        MasterVolumeSlider.ValueChanged += MasterVolumeSlider_ValueChanged;
+        MasterVolumeSlider.AddHandler(PointerReleasedEvent, MasterVolumeSlider_PointerReleased, RoutingStrategies.Bubble | RoutingStrategies.Tunnel, handledEventsToo: true);
+        TimelineSlider.ValueChanged += TimelineSlider_ValueChanged;
+        TimelineSlider.AddHandler(PointerPressedEvent, TimelineSlider_PointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        TimelineSlider.AddHandler(PointerReleasedEvent, TimelineSlider_PointerReleased, RoutingStrategies.Bubble | RoutingStrategies.Tunnel, handledEventsToo: true);
+        RulerCanvas.SizeChanged += (_, _) => RedrawRulerCanvas();
+        AddHandler(PointerReleasedEvent, CommitSlider_PointerReleased, RoutingStrategies.Bubble | RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(KeyUpEvent, CommitSlider_KeyUp, RoutingStrategies.Bubble | RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(PointerPressedEvent, (_, e) => _lastModifiers = e.KeyModifiers, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(KeyDownEvent, (_, e) => _lastModifiers = e.KeyModifiers, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(KeyDownEvent, MainWindow_PreviewKeyDown, RoutingStrategies.Tunnel);
+
         _session.SaveStateChanged += UpdateWindowTitle;
         UpdateWindowTitle();
 
@@ -127,9 +136,7 @@ public partial class MainWindow : Window
 
         // v7 Q1 task 3: ~30Hz meter poll -- reads GetLayerLevels/GetMasterLevels straight off the
         // live PreviewPlaybackEngine (volatile fields on its meter taps, no command-queue round
-        // trip) and drives the two ProgressBars. Only meaningful on the Mixing screen; runs
-        // regardless of screen since it's cheap and DrainFrameMailbox-style always-on polling
-        // already exists elsewhere in this file (audit consistency, not a new pattern).
+        // trip) and drives the ProgressBar and per-lane meters.
         _meterPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _meterPollTimer.Tick += (s, e) => UpdateMeters();
         _meterPollTimer.Start();
@@ -141,7 +148,7 @@ public partial class MainWindow : Window
         _perfPollTimer.Start();
 
         // Latest-frame-wins mailbox (audit A2/B14): FrameReady fires on the frame-loop thread, and
-        // that thread must never block on the UI thread (a blocking Dispatcher.Invoke here used to
+        // that thread must never block on the UI thread (a blocking Invoke here used to
         // throttle the render loop by UI-thread availability -- slider updates, layout passes --
         // turning UI jank into permanent video lag). InvokeAsync queues at most one pending pump;
         // frames that arrive while a pump is already queued just overwrite the mailbox slot and
@@ -158,26 +165,26 @@ public partial class MainWindow : Window
                 _framePumpQueued = true;
             }
             overwritten?.Dispose();
-            if (!alreadyQueued) Dispatcher.InvokeAsync(DrainFrameMailbox);
+            if (!alreadyQueued) Dispatcher.UIThread.InvokeAsync(DrainFrameMailbox);
         };
         // Queued, never blocking: this fires from the frame-loop thread as it exits, and closing the
         // window waits on that thread from the UI thread -- a blocking Invoke here would deadlock.
-        _previewEngine.PlaybackStopped += () => Dispatcher.InvokeAsync(() => SetPlayStopContent(false));
+        _previewEngine.PlaybackStopped += () => Dispatcher.UIThread.InvokeAsync(() => SetPlayStopContent(false));
 
         // Background pitch rendering: these fire from a worker thread/thread-pool continuation, so
         // always InvokeAsync, never a blocking Invoke -- same deadlock hazard as PlaybackStopped
         // above if this ever landed while the UI thread is waiting inside Dispose/Closing.
-        _previewEngine.PitchRenderStarted += _ => Dispatcher.InvokeAsync(() =>
+        _previewEngine.PitchRenderStarted += _ => Dispatcher.UIThread.InvokeAsync(() =>
         {
             _pendingPitchRenderCount++;
             StatusText.Text = "Processing pitch...";
         });
-        _previewEngine.PitchRenderCompleted += (_, _) => Dispatcher.InvokeAsync(() =>
+        _previewEngine.PitchRenderCompleted += (_, _) => Dispatcher.UIThread.InvokeAsync(() =>
         {
             _pendingPitchRenderCount = Math.Max(0, _pendingPitchRenderCount - 1);
             if (_pendingPitchRenderCount == 0) StatusText.Text = "Pitch correction updated.";
         });
-        _previewEngine.PitchRenderFailed += (_, message) => Dispatcher.InvokeAsync(() =>
+        _previewEngine.PitchRenderFailed += (_, message) => Dispatcher.UIThread.InvokeAsync(() =>
         {
             _pendingPitchRenderCount = Math.Max(0, _pendingPitchRenderCount - 1);
             StatusText.Text = $"Pitch correction failed: {message}";
@@ -186,48 +193,91 @@ public partial class MainWindow : Window
         // Freeze: BuildLayerChain blocks the command/export thread for the whole render, so unlike
         // the pitch events above these just bracket a status message -- there's no "stillCurrent"
         // refresh to do, the chain just built already reflects it.
-        _previewEngine.FreezeRenderStarted += layerId => Dispatcher.InvokeAsync(() =>
+        _previewEngine.FreezeRenderStarted += layerId => Dispatcher.UIThread.InvokeAsync(() =>
         {
             var row = _tracks.FirstOrDefault(t => t.Layer?.LayerId == layerId);
             StatusText.Text = row is not null ? $"Freezing {row.DisplayName}..." : "Freezing layer...";
         });
-        _previewEngine.FreezeRenderCompleted += _ => Dispatcher.InvokeAsync(() =>
+        _previewEngine.FreezeRenderCompleted += _ => Dispatcher.UIThread.InvokeAsync(() =>
         {
             StatusText.Text = "Layer frozen.";
         });
 
-        Closing += (s, e) =>
-        {
-            // Refuse close mid-export: the teardown below would dispose the hosted service under the
-            // export and exit, truncating the MP4 (bug audit #15).
-            if (!ExportMenuItem.IsEnabled)
-            {
-                StatusText.Text = "Finish the export first.";
-                e.Cancel = true;
-                return;
-            }
-
-            // Save-affordances spec: prompt FIRST, before anything is stopped or disposed -- a cancelled
-            // close (Cancel, or Yes followed by a cancelled/failed save) must leave the app fully running.
-            if (!ConfirmDiscardUnsavedChanges())
-            {
-                e.Cancel = true;
-                return;
-            }
-
-            _meterPollTimer.Stop();
-            _perfPollTimer.Stop();
-            _previewEngine.Dispose();
-            _mixEngine.Dispose();
-            _hostedService.Dispose();
-            _compositedFrame?.Dispose();
-            _pendingFrame?.Dispose();
-        };
-
-        PreviewKeyDown += MainWindow_PreviewKeyDown;
+        Closing += MainWindow_Closing;
     }
 
-    private WindowState _lastWindowState = WindowState.Normal;
+    /// <summary>The title band extends into the system caption area: leave room for macOS's traffic
+    /// lights at the left, or the Windows/Linux caption buttons at the right, and show the platform's
+    /// own shortcut keys in the menus.</summary>
+    private void ConfigurePlatformChrome()
+    {
+        if (OperatingSystem.IsMacOS()) TitleGrid.ColumnDefinitions[0].Width = new GridLength(72);
+        else TitleGrid.ColumnDefinitions[4].Width = new GridLength(140);
+
+        SaveMenuItem.InputGesture = new KeyGesture(Key.S, ShortcutModifier);
+        SaveAsMenuItem.InputGesture = new KeyGesture(Key.S, ShortcutModifier | KeyModifiers.Shift);
+        UndoMenuItem.InputGesture = new KeyGesture(Key.Z, ShortcutModifier);
+        RedoMenuItem.InputGesture = OperatingSystem.IsMacOS()
+            ? new KeyGesture(Key.Z, ShortcutModifier | KeyModifiers.Shift)
+            : new KeyGesture(Key.Y, ShortcutModifier);
+
+        // The empty part of the band drags the window.
+        TitleBar.PointerPressed += (_, e) =>
+        {
+            if (e.Source is Visual v && v.FindAncestorOfType<Menu>() is null && v.FindAncestorOfType<Button>() is null
+                && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                BeginMoveDrag(e);
+        };
+    }
+
+    private void MainWindow_Closing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_closeConfirmed)
+        {
+            TearDown();
+            return;
+        }
+
+        // Refuse close mid-export: the teardown below would dispose the hosted service under the
+        // export and exit, truncating the MP4 (bug audit #15).
+        if (!ExportMenuItem.IsEnabled)
+        {
+            StatusText.Text = "Finish the export first.";
+            e.Cancel = true;
+            return;
+        }
+
+        if (!_session.IsDirty)
+        {
+            TearDown();
+            return;
+        }
+
+        // Save-affordances spec: prompt FIRST, before anything is stopped or disposed -- a cancelled
+        // close (Cancel, or Yes followed by a cancelled/failed save) must leave the app fully running.
+        // The prompt is asynchronous, so this close is cancelled and repeated once it's been answered.
+        e.Cancel = true;
+        _ = ConfirmAndCloseAsync();
+    }
+
+    private async Task ConfirmAndCloseAsync()
+    {
+        if (!await ConfirmDiscardUnsavedChangesAsync()) return;
+
+        _closeConfirmed = true;
+        Close();
+    }
+
+    private void TearDown()
+    {
+        _meterPollTimer.Stop();
+        _perfPollTimer.Stop();
+        _previewDebounceTimer.Stop();
+        _previewEngine.Dispose();
+        _mixEngine.Dispose();
+        _hostedService.Dispose();
+        _pendingFrame?.Dispose();
+    }
 
     // ----- Undo/redo (v5 P1 task 2) -----
 
@@ -270,10 +320,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UndoMenuItem_Click(object sender, RoutedEventArgs e) => PerformUndo();
-    private void RedoMenuItem_Click(object sender, RoutedEventArgs e) => PerformRedo();
-    private void UndoCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => PerformUndo();
-    private void RedoCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => PerformRedo();
+    private void UndoMenuItem_Click(object? sender, RoutedEventArgs e) => PerformUndo();
+    private void RedoMenuItem_Click(object? sender, RoutedEventArgs e) => PerformRedo();
 
     private void PerformUndo()
     {
@@ -287,51 +335,57 @@ public partial class MainWindow : Window
             StatusText.Text = "Redo.";
     }
 
-    /// <summary>Commit-style handler shared by every FX/mix-parameter slider (Style="{StaticResource
-    /// CommitSlider}"): pushes an undo snapshot once the drag ends, not per-tick.</summary>
-    private void CommitSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+    private static bool IsCommitSlider(object? source) =>
+        source is Visual v && (v as Slider ?? v.FindAncestorOfType<Slider>()) is { } slider && slider.Classes.Contains("commit");
+
+    /// <summary>Commit-style handler shared by every FX/mix-parameter slider (Classes="commit"):
+    /// pushes an undo snapshot once the drag ends, not per-tick.</summary>
+    private void CommitSlider_PointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (IsCommitSlider(e.Source)) PushUndoSnapshot();
+    }
 
     /// <summary>Bug audit #13: Slider.Value binds TwoWay with the framework-default
     /// UpdateSourceTrigger (PropertyChanged), unlike TextBox.Text -- so a keyboard-driven edit on a
-    /// focused CommitSlider already applies live, with nothing to fire PreviewMouseUp. Commits on
+    /// focused commit slider already applies live, with nothing to fire a pointer release. Commits on
     /// key-release (not key-down -- see the doc's ordering subtleties) for the same reason the mouse
     /// handler commits on release, not per-tick: one undo step per discrete edit. Filtered to
     /// Up/Down/PageUp/PageDown/End only -- Left/Right/Home are deliberately excluded: MainWindow's
-    /// own transport shortcut (MainWindow_PreviewKeyDown, :267-291) already consumes those three for
+    /// own transport shortcut (MainWindow_PreviewKeyDown) already consumes those three for
     /// seek/restart before they ever reach a focused Slider's Value (root cause fact 3), so including
     /// them here would fire a commit on every seek performed while any FX slider happens to be
     /// focused -- not just a harmless no-op step, but one that clears the redo stack
-    /// (ProjectUndoStack.Push, :52) on every such seek, silently destroying whatever the user could
+    /// (ProjectUndoStack.Push) on every such seek, silently destroying whatever the user could
     /// otherwise have redone.</summary>
     private static readonly Key[] SliderCommitKeys =
         { Key.Up, Key.Down, Key.PageUp, Key.PageDown, Key.End };
 
-    private void CommitSlider_PreviewKeyUp(object sender, KeyEventArgs e)
+    private void CommitSlider_KeyUp(object? sender, KeyEventArgs e)
     {
-        if (Array.IndexOf(SliderCommitKeys, e.Key) >= 0) PushUndoSnapshot();
+        if (IsCommitSlider(e.Source) && Array.IndexOf(SliderCommitKeys, e.Key) >= 0) PushUndoSnapshot();
     }
 
-    private void CommitCheckBox_Click(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+    private void CommitCheckBox_Click(object? sender, RoutedEventArgs e) => PushUndoSnapshot();
 
     // ----- Per-layer timing nudge: -/+ on the strip (one undo step per click) -----
 
-    private static double NudgeStepMs() => (Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? 1 : 10;
+    private double NudgeStepMs() => (_lastModifiers & KeyModifiers.Shift) != 0 ? 1 : 10;
 
-    private void NudgeEarlierButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, -NudgeStepMs());
+    private void NudgeEarlierButton_Click(object? sender, RoutedEventArgs e) => NudgeRow(sender, -NudgeStepMs());
 
-    private void NudgeLaterButton_Click(object sender, RoutedEventArgs e) => NudgeRow(sender, NudgeStepMs());
+    private void NudgeLaterButton_Click(object? sender, RoutedEventArgs e) => NudgeRow(sender, NudgeStepMs());
 
-    private void NudgeRow(object sender, double deltaMs)
+    private void NudgeRow(object? sender, double deltaMs)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row) return;
         row.Nudge(deltaMs);
         StatusText.Text = $"{row.DisplayName} timing: {row.ManualOffsetDisplay}.";
         PushUndoSnapshot();
     }
 
-    private void NudgeLabel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void NudgeLabel_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.ManualOffsetMs == 0) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row || row.ManualOffsetMs == 0) return;
         row.ResetNudge();
         StatusText.Text = $"{row.DisplayName} timing reset.";
         PushUndoSnapshot();
@@ -343,9 +397,9 @@ public partial class MainWindow : Window
     // One alignment at a time: they share layer 1's decode and the single Melodyne analysis.
     private readonly SemaphoreSlim _alignGate = new(1, 1);
 
-    private async void AutoAlignButton_Click(object sender, RoutedEventArgs e)
+    private async void AutoAlignButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is LayerRowViewModel row)
+        if (((StyledElement)sender!).DataContext is LayerRowViewModel row)
             await AutoAlignAsync(row, explicitRequest: true);
     }
 
@@ -420,82 +474,130 @@ public partial class MainWindow : Window
             if (row.Layer is { CellIndex: > 0 }) _ = AutoAlignAsync(row);
     }
 
-    private void TrimTextBox_LostFocus(object sender, RoutedEventArgs e) => PushUndoSnapshot();
+    // ----- Trim text boxes: the In/Out fields commit on Enter / focus loss -----
+
+    private void TrimTextBox_LostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox box || ChannelPanel.DataContext is not LayerRowViewModel row || row.Layer is null) return;
+
+        bool isIn = (string?)box.Tag == "In";
+        string before = isIn ? row.TrimStartMs.ToString() : row.TrimEndText;
+        string text = box.Text?.Trim() ?? "";
+        if (isIn)
+        {
+            if (double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms))
+                row.TrimStartMs = ms;
+            box.Text = row.TrimStartMs.ToString();
+        }
+        else
+        {
+            row.TrimEndText = text;
+            box.Text = row.TrimEndText;
+        }
+        if (box.Text != before) PushUndoSnapshot();
+    }
+
+    private void TrimTextBox_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        Focus();
+        e.Handled = true;
+    }
 
     // ----- Lane clip-bar drag-to-trim -----
 
     private ClipTrimDrag? _activeTrimDrag;
     private LayerRowViewModel? _activeTrimDragRow;
-    private Point _trimDragStartMousePos;
-    private Canvas? _trimDragCanvas;
-
-    private static bool IsInHandle(Thumb thumb) => (string)thumb.Tag == "In";
 
     /// <summary>Snapshots the handle's starting value and the track's current scale. No-ops (leaves
     /// _activeTrimDrag null) when the source duration or timeline duration isn't known yet, so a
     /// drag started before MediaProbe returns has no effect rather than clamping against a bogus 0.</summary>
-    private void TrimHandle_DragStarted(object sender, DragStartedEventArgs e)
+    private void TrimHandle_DragStarted(object? sender, TrimDragEventArgs e)
     {
-        if (sender is not Thumb thumb || thumb.DataContext is not LayerRowViewModel row || thumb.Parent is not Canvas canvas)
-            return;
+        var row = e.Row;
+        _activeTrimDrag = null;
+        _activeTrimDragRow = null;
         if (row.TimelineDurationMs <= 0 || row.SourceDurationMs <= 0)
             return;
 
-        _trimDragCanvas = canvas;
-        _trimDragStartMousePos = Mouse.GetPosition(canvas);
         _activeTrimDragRow = row;
-        _activeTrimDrag = IsInHandle(thumb)
-            ? new ClipTrimDrag(ClipTrimDrag.Handle.In, row.TrimStartMs, row.EffectiveTrimEndMs, row.SourceDurationMs, row.TimelineDurationMs, canvas.ActualWidth)
-            : new ClipTrimDrag(ClipTrimDrag.Handle.Out, row.EffectiveTrimEndMs, row.TrimStartMs, row.SourceDurationMs, row.TimelineDurationMs, canvas.ActualWidth);
+        _activeTrimDrag = e.IsInHandle
+            ? new ClipTrimDrag(ClipTrimDrag.Handle.In, row.TrimStartMs, row.EffectiveTrimEndMs, row.SourceDurationMs, row.TimelineDurationMs, e.TrackWidthPx)
+            : new ClipTrimDrag(ClipTrimDrag.Handle.Out, row.EffectiveTrimEndMs, row.TrimStartMs, row.SourceDurationMs, row.TimelineDurationMs, e.TrackWidthPx);
     }
 
     /// <summary>Applies the drag's clamped value live, for immediate visual feedback on the clip
     /// bar -- the actual commit (PushUndoSnapshot) happens once, on release, in DragCompleted.</summary>
-    private void TrimHandle_DragDelta(object sender, DragDeltaEventArgs e)
+    private void TrimHandle_DragDelta(object? sender, TrimDragEventArgs e)
     {
-        if (_activeTrimDrag is null || _activeTrimDragRow is null || _trimDragCanvas is null || sender is not Thumb thumb)
-            return;
+        if (_activeTrimDrag is null || _activeTrimDragRow is null) return;
 
-        double totalDeltaPx = Mouse.GetPosition(_trimDragCanvas).X - _trimDragStartMousePos.X;
-        double newValueMs = _activeTrimDrag.ValueAt(totalDeltaPx);
-        if (IsInHandle(thumb)) _activeTrimDragRow.TrimStartMs = newValueMs;
+        double newValueMs = _activeTrimDrag.ValueAt(e.TotalDeltaPx);
+        if (e.IsInHandle) _activeTrimDragRow.TrimStartMs = newValueMs;
         else _activeTrimDragRow.TrimEndMs = newValueMs;
     }
 
     /// <summary>One undo step per completed drag -- none at all if the pointer never actually moved
     /// the value (same no-op-skip rule as CommitNameIfChanged).</summary>
-    private void TrimHandle_DragCompleted(object sender, DragCompletedEventArgs e)
+    private void TrimHandle_DragCompleted(object? sender, TrimDragEventArgs e)
     {
-        if (_activeTrimDrag is not null && _activeTrimDragRow is not null && sender is Thumb thumb)
+        if (_activeTrimDrag is not null && _activeTrimDragRow is not null)
         {
-            double currentValueMs = IsInHandle(thumb) ? _activeTrimDragRow.TrimStartMs : _activeTrimDragRow.EffectiveTrimEndMs;
+            double currentValueMs = e.IsInHandle ? _activeTrimDragRow.TrimStartMs : _activeTrimDragRow.EffectiveTrimEndMs;
             if (_activeTrimDrag.HasChangedFrom(currentValueMs))
                 PushUndoSnapshot();
         }
 
         _activeTrimDrag = null;
         _activeTrimDragRow = null;
-        _trimDragCanvas = null;
     }
 
-    // ----- Keyboard transport shortcuts (v5 P1 task 6) -----
+    // ----- Keyboard shortcuts (v5 P1 task 6) -----
 
-    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    private object? FocusedElement => TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+
+    private async void MainWindow_PreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        // Project shortcuts: Command/Ctrl+S saves even from a text box; undo/redo leave a text box's
+        // own undo alone.
+        if ((e.KeyModifiers & ShortcutModifier) != 0)
+        {
+            bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
+            if (e.Key == Key.S)
+            {
+                e.Handled = true;
+                await SaveProjectAsync(forceDialog: shift);
+                return;
+            }
+            if (FocusedElement is TextBox) return;
+            if (e.Key == Key.Z)
+            {
+                if (shift) PerformRedo(); else PerformUndo();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Y && !OperatingSystem.IsMacOS())
+            {
+                PerformRedo();
+                e.Handled = true;
+            }
+            return;
+        }
+        if (e.KeyModifiers != KeyModifiers.None) return;
+
         // Don't hijack typing in a trim/rename textbox.
-        if (Keyboard.FocusedElement is TextBox) return;
+        if (FocusedElement is TextBox) return;
 
         switch (e.Key)
         {
             case Key.Space:
-                // Bug audit #14: Space is ButtonBase's own activation key (Button/CheckBox/
+                // Bug audit #14: Space is Button's own activation key (Button/CheckBox/
                 // ToggleButton/RadioButton all invoke Click on Space) -- don't steal it from a
                 // focused one of those, or it silently fails to toggle/click and fires Play/Stop
                 // instead (see doc's root cause 2-3). Checked here, not added to the TextBox
                 // exclusion above, because Left/Right/Home have no such conflict for these
                 // controls (root cause fact 3's table lists none) -- see Ordering subtleties for
                 // why broadening the exclusion is a regression, not a simplification.
-                if (Keyboard.FocusedElement is ButtonBase) return;
+                if (FocusedElement is Button) return;
                 // PlayButton is a single Play/Stop toggle (PlayButton_Click
                 // itself branches on _previewEngine.IsPlaying), so Space just clicks it once.
                 PlayButton_Click(this, new RoutedEventArgs());
@@ -524,14 +626,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SeekBackButton_Click(object sender, RoutedEventArgs e) => SeekRelative(-5000);
-    private void SeekForwardButton_Click(object sender, RoutedEventArgs e) => SeekRelative(5000);
+    private void SeekBackButton_Click(object? sender, RoutedEventArgs e) => SeekRelative(-5000);
+    private void SeekForwardButton_Click(object? sender, RoutedEventArgs e) => SeekRelative(5000);
 
     private void SeekRelative(double deltaMs) => RunPreviewCommand(_previewEngine.SeekByAsync(deltaMs));
 
     /// <summary>MasterVolumeSlider is the single master-volume control (there is no separate
     /// mixer-strip fader).</summary>
-    private void MasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void MasterVolumeSlider_ValueChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         _session.MasterVolumeDb = (float)e.NewValue;
         ApplyMasterVolume();
@@ -542,13 +644,13 @@ public partial class MainWindow : Window
     /// still show.</summary>
     private void ApplyMasterVolume() => _previewEngine.MasterVolumeDb = _monitorMuted ? -96f : _session.MasterVolumeDb;
 
-    private void MonitorToggle_Changed(object sender, RoutedEventArgs e)
+    private void MonitorToggle_Changed(object? sender, RoutedEventArgs e)
     {
         _monitorMuted = MonitorToggle.IsChecked != true;
         ApplyMasterVolume();
     }
 
-    private void MasterVolumeSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) => PushUndoSnapshot();
+    private void MasterVolumeSlider_PointerReleased(object? sender, PointerReleasedEventArgs e) => PushUndoSnapshot();
 
     private bool _syncingTimeSignature;
 
@@ -565,7 +667,7 @@ public partial class MainWindow : Window
         finally { _syncingTimeSignature = false; }
     }
 
-    private void TimeSignatureCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void TimeSignatureCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_syncingTimeSignature || _applyingHistory || TimeSignatureCombo.SelectedItem is not TimeSignature chosen) return;
         if (chosen == _session.MetronomeTimeSignature) return;
@@ -574,7 +676,7 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
     }
 
-    private void MetronomeBpmTextBox_LostFocus(object sender, RoutedEventArgs e)
+    private void MetronomeBpmTextBox_LostFocus(object? sender, RoutedEventArgs e)
     {
         if (double.TryParse(MetronomeBpmTextBox.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double bpm) && bpm > 0)
             _session.MetronomeBpm = bpm;
@@ -616,10 +718,8 @@ public partial class MainWindow : Window
         }
         if (frame is null) return;
 
-        var old = _compositedFrame;
-        _compositedFrame = frame;
-        CompositeCanvas.InvalidateVisual();
-        old?.Dispose();
+        CompositeCanvas.SetFrame(frame);   // copies the pixels, so the engine's bitmap can go straight away
+        frame.Dispose();
         if (!_isScrubbing)
             TimelineSlider.Value = Math.Min(_previewEngine.PositionMs, TimelineSlider.Maximum);
         SetTimeReadout(_previewEngine.PositionMs, _previewEngine.DurationMs);
@@ -640,30 +740,10 @@ public partial class MainWindow : Window
         TotalDurationText.Text = FormatTime(durationMs);
     }
 
-    // ----- Custom window chrome: minimize/restore/close glyphs in the toolbar,
-    // wired through the standard SystemCommands so they behave exactly like OS titlebar buttons. -----
-
-    private void MinimizeButton_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
-
-    private void RestoreButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
-        else SystemCommands.MaximizeWindow(this);
-    }
-
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
-
-    private void MainWindow_StateChanged(object? sender, EventArgs e)
-    {
-        RestoreButton.Content = WindowState == WindowState.Maximized ? "\U0001F5D7" : "\U0001F5D6";
-        _lastWindowState = WindowState;
-    }
-
     /// <summary>v7 Q1 task 3 (v8: per-strip meters). Maps -60..0 dBFS RMS onto the 0..1 range
     /// (below -60dB reads as silence) -- a fixed floor is simpler than a full logarithmic meter
     /// ballistics model and good enough for "the meters respond" per the plan's [human] criterion.
-    /// Now drives every visible mixer strip's MeterLevel (bound property) plus the master strip's
-    /// two meter bars, instead of a single "currently mixing layer" bar.</summary>
+    /// Drives every lane's MeterLevel (bound property) plus the master meter bar.</summary>
     private void UpdateMeters()
     {
         const float FloorDb = -60f;
@@ -711,10 +791,10 @@ public partial class MainWindow : Window
             StatusText.Text = $"Switched to a {_session.Video.Layout.Cells.Count}-cell layout to fit your layers.";
     }
 
-    private void VideoSettingsMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void VideoSettingsMenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var window = new VideoSettingsWindow(_session.Video) { Owner = this };
-        if (window.ShowDialog() != true || window.Result == _session.Video) return;
+        var window = new VideoSettingsWindow(_session.Video);
+        if (await window.ShowDialog<bool?>(this) != true || window.Result == _session.Video) return;
 
         _session.Video = window.Result;
         RefreshPreviewLive();
@@ -722,11 +802,11 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
     }
 
-    private void ChooseLayoutMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void ChooseLayoutMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         int required = _layers.Layers.Count == 0 ? 1 : _layers.Layers.Max(l => l.CellIndex) + 1;
-        var picker = new LayoutPickerWindow(_session.Video.LayoutId, required) { Owner = this };
-        if (picker.ShowDialog() != true || picker.SelectedLayoutId is null) return;
+        var picker = new LayoutPickerWindow(_session.Video.LayoutId, required);
+        if (await picker.ShowDialog<bool?>(this) != true || picker.SelectedLayoutId is null) return;
         if (picker.SelectedLayoutId == _session.Video.LayoutId) return;
 
         if (!_session.TrySetLayout(picker.SelectedLayoutId, out var error))
@@ -739,9 +819,9 @@ public partial class MainWindow : Window
         PushUndoSnapshot();
     }
 
-    private void RecordChoice_Click(object sender, RoutedEventArgs e)
+    private void RecordChoice_Click(object? sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row) return;
         OpenRecordSetupForRow(row);
     }
 
@@ -749,25 +829,26 @@ public partial class MainWindow : Window
     /// _mediaDir with no visibility into how much disk they're using. Read-only report -- no
     /// deletion here, since deleting recorded media is irreversible (needs the
     /// user's explicit say, not an automatic cleanup on close).</summary>
-    private void RecordingsFolderSizeMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void RecordingsFolderSizeMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         if (!Directory.Exists(_mediaDir))
         {
-            MessageBox.Show(this, "No recordings folder yet.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
+            await Dialogs.ShowMessageAsync(this, "No recordings folder yet.", "Recordings Folder");
             return;
         }
 
         var files = Directory.GetFiles(_mediaDir, "*", SearchOption.AllDirectories);
         long totalBytes = files.Sum(f => new FileInfo(f).Length);
         double mb = totalBytes / (1024.0 * 1024.0);
-        MessageBox.Show(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder", MessageBoxButton.OK, MessageBoxImage.Information);
+        await Dialogs.ShowMessageAsync(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder");
     }
 
     /// <summary>The ONLY place RecordSetupWindow is constructed (retake spec D4), so bug audit #8's
     /// export gate covers every way into Recording setup. Returns null when the gate refuses
     /// (StatusText already set); otherwise the closed dialog and whether a take was accepted.
-    /// Invariant (bug audit #8): no await / dispatcher pumping between the gate and ShowDialog.</summary>
-    private (RecordSetupWindow Dialog, bool Recorded)? ShowRecordSetupDialog(LayerRowViewModel? retakeRow)
+    /// The gate is checked immediately before the dialog opens, and the dialog is modal over this
+    /// window, so nothing can start an export in between (bug audit #8).</summary>
+    private async Task<(RecordSetupWindow Dialog, bool Recorded)?> ShowRecordSetupDialogAsync(LayerRowViewModel? retakeRow)
     {
         if (!ExportMenuItem.IsEnabled)
         {
@@ -776,9 +857,9 @@ public partial class MainWindow : Window
         }
 
         var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm,
-                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature) { Owner = this };
+                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature);
         if (retakeRow is not null) dialog.Title = $"Re-record {retakeRow.DisplayName}";
-        bool recorded = dialog.ShowDialog() == true;
+        bool recorded = await dialog.ShowDialog<bool?>(this) == true;
         _session.MetronomeBpm = dialog.Bpm;
         _session.MetronomeTimeSignature = dialog.TimeSignature;
         ShowTimeSignature();
@@ -788,16 +869,16 @@ public partial class MainWindow : Window
     /// <summary>Opens the capture-setup dialog for a NEW layer. If a take is recorded, attaches it to
     /// the row that resolveRow returns. resolveRow runs ONLY on success, AFTER the dialog closes, so a
     /// cancelled or calibrate-only session never creates or claims a row (bug audit #7).</summary>
-    private void OpenRecordSetup(Func<LayerRowViewModel?> resolveRow)
+    private async Task OpenRecordSetupAsync(Func<LayerRowViewModel?> resolveRow)
     {
-        var shown = ShowRecordSetupDialog(retakeRow: null);
+        var shown = await ShowRecordSetupDialogAsync(retakeRow: null);
         if (shown is null) return;
         var (dialog, recorded) = shown.Value;
 
         if (recorded && dialog.CreatedLayer is not null)
         {
             var row = resolveRow();
-            if (row is null) return;   // unreachable in practice: the dialog refuses to record at the cap (RecordSetupWindow.xaml.cs:130)
+            if (row is null) return;   // unreachable in practice: the dialog refuses to record at the cap (RecordSetupWindow)
 
             // CellIndex binds to the row's own position (audit B8), not LayerCollection's
             // insertion order -- e.g. row 2 recording before row 1 must still land in grid cell 2.
@@ -813,28 +894,28 @@ public partial class MainWindow : Window
     }
 
     /// <summary>A strip's own Rec button: records into that strip.</summary>
-    private void OpenRecordSetupForRow(LayerRowViewModel row) => OpenRecordSetup(() => row);
+    private void OpenRecordSetupForRow(LayerRowViewModel row) => _ = OpenRecordSetupAsync(() => row);
 
     /// <summary>Toolbar ⏺ and Tools > Recording setup...: records into the lowest free layer slot,
     /// reusing an existing empty strip before appending one (bug audit #7).</summary>
-    private void RecordingSetupMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void RecordingSetupMenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        int? targetCell = LowestFreeCell();   // read BEFORE ShowDialog -- see bug audit #7 step 3
+        int? targetCell = LowestFreeCell();   // read BEFORE the dialog opens -- see bug audit #7 step 3
         if (targetCell is null)
         {
             StatusText.Text = $"Layer cap reached ({LayerCollection.MaxLayers}).";
             return;
         }
-        OpenRecordSetup(() => RowForCell(targetCell.Value));
+        await OpenRecordSetupAsync(() => RowForCell(targetCell.Value));
     }
 
     /// <summary>Tools > Calibrate latency...: opens the same dialog for its Calibrate button. It never
     /// creates or claims a row and is not blocked by the layer cap, because calibration is not a
     /// layer. If the user records from here anyway, the take goes to the lowest free slot, as with ⏺.</summary>
-    private void CalibrateLatencyMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void CalibrateLatencyMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         int? targetCell = LowestFreeCell();   // same ordering rule; null (a full project) is fine here
-        OpenRecordSetup(() => targetCell is int cell ? RowForCell(cell) : null);
+        await OpenRecordSetupAsync(() => targetCell is int cell ? RowForCell(cell) : null);
     }
 
     // ----- Retake a layer in place (retake spec) -----
@@ -846,30 +927,30 @@ public partial class MainWindow : Window
 
     /// <summary>A populated strip's ↻ button: a two-item menu built in code (spec D6 -- a XAML
     /// ContextMenu inside a DataTemplate has its own DataContext/visual-tree pitfalls).</summary>
-    private void RetakeButton_Click(object sender, RoutedEventArgs e)
+    private void RetakeButton_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.DataContext is not LayerRowViewModel row || !IsLiveRow(row)) return;
 
         var reRecord = new MenuItem { Header = "Re-record..." };
-        reRecord.Click += (_, _) => RetakeRecord(row);
+        reRecord.Click += (_, _) => _ = RetakeRecordAsync(row);
         var replace = new MenuItem { Header = "Replace with file..." };
-        replace.Click += (_, _) => RetakeReplaceWithFile(row);
+        replace.Click += (_, _) => _ = RetakeReplaceWithFileAsync(row);
 
-        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        var menu = new ContextMenu { Placement = PlacementMode.Bottom };
         menu.Items.Add(reRecord);
         menu.Items.Add(replace);
-        menu.IsOpen = true;
+        menu.Open(button);
     }
 
     /// <summary>Re-record this layer in place: guide = the OTHER layers, not blocked by the cap, same
     /// LayerId/cell/name/FX; one undo step. Goes through the single #8-gated helper (spec D4).
-    /// Never calls LowestFreeCell/RowForCell/Add (spec (d)); no await anywhere (spec (c)).</summary>
-    private void RetakeRecord(LayerRowViewModel row)
+    /// Never calls LowestFreeCell/RowForCell/Add (spec (d)).</summary>
+    private async Task RetakeRecordAsync(LayerRowViewModel row)
     {
         if (!IsLiveRow(row)) return;
-        var target = row.Layer!;                                          // fixed BEFORE ShowDialog (spec (d))
+        var target = row.Layer!;                                          // fixed BEFORE the dialog (spec (d))
 
-        var shown = ShowRecordSetupDialog(row);
+        var shown = await ShowRecordSetupDialogAsync(row);
         if (shown is null) return;                                        // #8 gate refused; status already set
         var (dialog, recorded) = shown.Value;
         if (!recorded || dialog.RetakeResult is not { } take) return;     // cancelled / closed: nothing changes
@@ -881,7 +962,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Invariant (spec (e)): no await / MessageBox / dialog from here to PushUndoSnapshot().
+        // Invariant (spec (e)): no await / message box / dialog from here to PushUndoSnapshot().
         target.ReplaceSource(LayerKind.RecordedAV, take.SourcePath, take.CalibratedOffsetMs);
         row.NotifySourceReplaced();                                       // NOT row.Layer = ... (spec D5)
         RefreshPreviewLive();
@@ -891,19 +972,19 @@ public partial class MainWindow : Window
 
     /// <summary>Replace this layer's source with a file, in place: same kind rule as Upload, trims and
     /// offsets reset, LayerId/cell/name/FX kept; one undo step. No export gate, like Upload (spec D7).</summary>
-    private void RetakeReplaceWithFile(LayerRowViewModel row)
+    private async Task RetakeReplaceWithFileAsync(LayerRowViewModel row)
     {
         if (!IsLiveRow(row)) return;
 
-        var dialog = new OpenFileDialog { Filter = MediaFileFilter, Title = $"Replace {row.DisplayName} with file" };
-        if (dialog.ShowDialog() != true) return;
+        string? fileName = await Dialogs.PickFileAsync(this, $"Replace {row.DisplayName} with file", Dialogs.MediaFiles);
+        if (fileName is null) return;
         if (!IsLiveRow(row)) return;                                      // defensive (spec D8)
 
-        // Invariant (spec (e)): no await / MessageBox / dialog from here to PushUndoSnapshot().
-        row.Layer!.ReplaceSource(UploadedKindFor(dialog.FileName), dialog.FileName, calibratedOffsetMs: 0);
+        // Invariant (spec (e)): no await / message box / dialog from here to PushUndoSnapshot().
+        row.Layer!.ReplaceSource(UploadedKindFor(fileName), fileName, calibratedOffsetMs: 0);
         row.NotifySourceReplaced();                                       // NOT row.Layer = ... (spec D5)
         RefreshPreviewLive();
-        StatusText.Text = $"Replaced {row.DisplayName} with {Path.GetFileName(dialog.FileName)}.";
+        StatusText.Text = $"Replaced {row.DisplayName} with {Path.GetFileName(fileName)}.";
         PushUndoSnapshot();
         AutoAlignUploaded(new[] { row });
     }
@@ -937,27 +1018,27 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(row.Name)) row.Name = $"Layer {row.SlotNumber}";
     }
 
-    private void UploadChoice_Click(object sender, RoutedEventArgs e)
+    private async void UploadChoice_Click(object? sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row) return;
 
-        var dialog = new OpenFileDialog { Filter = MediaFileFilter };
-        if (dialog.ShowDialog() != true) return;
+        string? fileName = await Dialogs.PickFileAsync(this, "Upload", Dialogs.MediaFiles);
+        if (fileName is null) return;
 
-        AttachUploadedFile(row, dialog.FileName);
+        AttachUploadedFile(row, fileName);
         EnsureLayoutFitsLayers();
         UpdateLaneHeaderCount();
         RefreshPreviewLive();
-        StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(dialog.FileName)}";
+        StatusText.Text = $"Uploaded {row.DisplayName}: {Path.GetFileName(fileName)}";
         PushUndoSnapshot();
         AutoAlignUploaded(new[] { row });
     }
 
-    /// <summary>Add > Import files as layers... and the mixer's "+ Import files..." button: one
-    /// multi-select dialog; files (sorted by name, spec D3) fill free slots lowest-first up to the
-    /// layer cap, each attached exactly like a per-strip Upload; the whole batch is ONE undo step
-    /// (spec D2). Overflow is reported in StatusText, never a dialog.</summary>
-    private void ImportFilesMenuItem_Click(object sender, RoutedEventArgs e)
+    /// <summary>Layers > Import files as layers...: one multi-select dialog; files (sorted by name,
+    /// spec D3) fill free slots lowest-first up to the layer cap, each attached exactly like a
+    /// per-strip Upload; the whole batch is ONE undo step (spec D2). Overflow is reported in
+    /// StatusText, never a dialog.</summary>
+    private async void ImportFilesMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         if (_layers.Layers.Count >= LayerCollection.MaxLayers)
         {
@@ -965,15 +1046,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new OpenFileDialog { Filter = MediaFileFilter, Multiselect = true, Title = "Import files as layers" };
-        if (dialog.ShowDialog() != true) return;
+        var fileNames = await Dialogs.PickFilesAsync(this, "Import files as layers", Dialogs.MediaFiles, multiple: true);
+        if (fileNames.Count == 0) return;
 
         // Occupancy is read AFTER the dialog closes, not before it opens.
-        var (assignments, skipped) = LayerImportPlanner.Plan(_layers.Layers.Select(l => l.CellIndex), dialog.FileNames);
+        var (assignments, skipped) = LayerImportPlanner.Plan(_layers.Layers.Select(l => l.CellIndex), fileNames);
 
-        // Invariant: from here to PushUndoSnapshot() there must be no await, MessageBox, dialog or other
-        // dispatcher pumping -- _hostedStatePollTimer can push an undo snapshot on any pump, which would
-        // record a half-imported project as its own undo step (breaks spec D2).
+        // Invariant: from here to PushUndoSnapshot() there must be no await, message box, dialog or
+        // other dispatcher pumping -- a half-imported project would otherwise be recorded as its own
+        // undo step (breaks spec D2).
         foreach (var (cellIndex, filePath) in assignments)
             AttachUploadedFile(_tracks[cellIndex], filePath);
 
@@ -1028,9 +1109,9 @@ public partial class MainWindow : Window
     // ----- Lane selection -----
     // Clicking a lane row switches which layer's FX chain the channel panel shows.
 
-    private void LaneRow_MouseDown(object sender, MouseButtonEventArgs e)
+    private void LaneRow_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row) return;
         SelectLane(row);
     }
 
@@ -1083,11 +1164,11 @@ public partial class MainWindow : Window
 
     private readonly FxPackageService _packages = new();
 
-    private void PackagesButton_Click(object sender, RoutedEventArgs e)
+    private void PackagesButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_selectedLayer is not { Layer: not null } row) return;
 
-        var menu = new ContextMenu { PlacementTarget = PackagesButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var menu = new ContextMenu { Placement = PlacementMode.Bottom };
         var packages = _packages.List();
 
         foreach (var package in packages.Where(p => p.IsBuiltIn))
@@ -1100,7 +1181,7 @@ public partial class MainWindow : Window
 
         menu.Items.Add(new Separator());
         var save = new MenuItem { Header = "Save this layer's effects as a package..." };
-        save.Click += (_, _) => SaveCurrentAsPackage(row);
+        save.Click += (_, _) => _ = SaveCurrentAsPackageAsync(row);
         menu.Items.Add(save);
 
         var mine = packages.Where(p => !p.IsBuiltIn).ToList();
@@ -1110,13 +1191,13 @@ public partial class MainWindow : Window
             foreach (var package in mine)
             {
                 var item = new MenuItem { Header = package.Name };
-                item.Click += (_, _) => DeletePackage(package);
+                item.Click += (_, _) => _ = DeletePackageAsync(package);
                 delete.Items.Add(item);
             }
             menu.Items.Add(delete);
         }
 
-        menu.IsOpen = true;
+        menu.Open(PackagesButton);
     }
 
     private MenuItem PackageMenuItem(FxPackage package, LayerRowViewModel row)
@@ -1130,10 +1211,10 @@ public partial class MainWindow : Window
         return item;
     }
 
-    private void SaveCurrentAsPackage(LayerRowViewModel row)
+    private async Task SaveCurrentAsPackageAsync(LayerRowViewModel row)
     {
-        var dialog = new SavePackageWindow(_packages) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        var dialog = new SavePackageWindow(_packages);
+        if (await dialog.ShowDialog<bool?>(this) != true) return;
 
         var package = row.ToPackage(dialog.PackageName);
         if (package is null) return;
@@ -1148,10 +1229,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DeletePackage(FxPackage package)
+    private async Task DeletePackageAsync(FxPackage package)
     {
-        if (MessageBox.Show(this, $"Delete the package \"{package.Name}\"?", "Delete package",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (await Dialogs.ShowMessageAsync(this, $"Delete the package \"{package.Name}\"?", "Delete package", MessageButtons.YesNo) != MessageResult.Yes) return;
         try
         {
             if (_packages.Delete(package.Name)) StatusText.Text = $"Deleted package \"{package.Name}\".";
@@ -1165,21 +1245,21 @@ public partial class MainWindow : Window
     // ----- Lane name rename-in-place: inline TextBox in the lane row, committed only
     // on a real change via CommitNameIfChanged, matching the CommitSlider/CommitCheckBox pattern. -----
 
-    private void LaneNameTextBox_GotFocus(object sender, RoutedEventArgs e) => ((TextBox)sender).SelectAll();
+    private void LaneNameTextBox_GotFocus(object? sender, RoutedEventArgs e) => ((TextBox)sender!).SelectAll();
 
-    private void LaneNameTextBox_LostFocus(object sender, RoutedEventArgs e)
+    private void LaneNameTextBox_LostFocus(object? sender, RoutedEventArgs e)
     {
         if (sender is not TextBox textBox || textBox.DataContext is not LayerRowViewModel row) return;
-        if (row.CommitNameIfChanged(textBox.Text))
+        if (row.CommitNameIfChanged(textBox.Text ?? ""))
             PushUndoSnapshot();
-        textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();   // reflect the trimmed/reverted value
+        textBox.Text = row.Name;   // reflect the trimmed/reverted value
     }
 
-    private void LaneNameTextBox_KeyDown(object sender, KeyEventArgs e)
+    private void LaneNameTextBox_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {
-            Keyboard.ClearFocus();
+            Focus();
             e.Handled = true;
         }
     }
@@ -1187,32 +1267,31 @@ public partial class MainWindow : Window
     // ----- Delete layer: undoable, no cell compaction -- the row stays
     // in its slot, now empty, exactly like a row that was never recorded/uploaded into. -----
 
-    private void ChannelMoreButton_Click(object sender, RoutedEventArgs e)
+    private void ChannelMoreButton_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button button) return;
         var row = _selectedLayer;
 
         var deleteItem = new MenuItem { Header = "Delete layer", IsEnabled = row is not null && IsLiveRow(row) };
-        deleteItem.Click += (_, _) => ConfirmAndDeleteLayer(row);
+        deleteItem.Click += (_, _) => _ = ConfirmAndDeleteLayerAsync(row);
 
-        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        var menu = new ContextMenu { Placement = PlacementMode.Bottom };
         menu.Items.Add(deleteItem);
-        menu.IsOpen = true;
+        menu.Open(button);
     }
 
-    private void DeleteLayerMenuItem_Click(object sender, RoutedEventArgs e) => ConfirmAndDeleteLayer(_selectedLayer);
+    private async void DeleteLayerMenuItem_Click(object? sender, RoutedEventArgs e) => await ConfirmAndDeleteLayerAsync(_selectedLayer);
 
     /// <summary>Asks before deleting (the slot is still undoable via Ctrl+Z, but a destructive
     /// action that removes a recorded/uploaded layer from the grid still warrants a confirmation).
     /// DeleteLayer itself stays a separate, dialog-free method so the actual delete logic is
-    /// testable without a MessageBox blocking the test thread.</summary>
-    private void ConfirmAndDeleteLayer(LayerRowViewModel? row)
+    /// testable without a message box blocking the test.</summary>
+    private async Task ConfirmAndDeleteLayerAsync(LayerRowViewModel? row)
     {
         if (row is null || !IsLiveRow(row)) return;
 
-        var answer = MessageBox.Show(this, $"Delete layer {row.SlotNumber}? You can undo this.", "Delete Layer",
-            MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) return;
+        var answer = await Dialogs.ShowMessageAsync(this, $"Delete layer {row.SlotNumber}? You can undo this.", "Delete Layer", MessageButtons.YesNo);
+        if (answer != MessageResult.Yes) return;
 
         DeleteLayer(row);
     }
@@ -1247,9 +1326,9 @@ public partial class MainWindow : Window
 
     /// <summary>Freezing bakes the layer's whole chain into a buffer, or plays it live again, so
     /// it always needs a full refresh.</summary>
-    private void FreezeToggle_Click(object sender, RoutedEventArgs e)
+    private void FreezeToggle_Click(object? sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is not LayerRowViewModel row || row.Layer is null) return;
+        if (((StyledElement)sender!).DataContext is not LayerRowViewModel row || row.Layer is null) return;
 
         row.Frozen = !row.Frozen;
         DebounceRefreshPreview();
@@ -1287,9 +1366,7 @@ public partial class MainWindow : Window
         if (_layers.Layers.Count == 0)
         {
             await AwaitPreviewCommand(_previewEngine.SetLayersAsync(_layers.Layers));
-            _compositedFrame?.Dispose();
-            _compositedFrame = null;
-            CompositeCanvas.InvalidateVisual();
+            CompositeCanvas.SetFrame(null);
             return;
         }
 
@@ -1299,7 +1376,7 @@ public partial class MainWindow : Window
     /// <summary>PlayButton is a single toggling 48px circle, not separate
     /// Play/Stop buttons -- branches on IsPlaying first so Space (which just clicks this once, see
     /// MainWindow_PreviewKeyDown) toggles correctly either way.</summary>
-    private async void PlayButton_Click(object sender, RoutedEventArgs e)
+    private async void PlayButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_previewEngine.IsPlaying)
         {
@@ -1357,25 +1434,39 @@ public partial class MainWindow : Window
     /// <summary>Toolbar's Record button (image shows it distinct from Play/Stop): opens the same
     /// capture-setup dialog as Tools > Recording setup... for the next empty layer slot (bug audit
     /// #7: reuses an empty strip before appending).</summary>
-    private void RecordButton_Click(object sender, RoutedEventArgs e) => RecordingSetupMenuItem_Click(sender, e);
+    private void RecordButton_Click(object? sender, RoutedEventArgs e) => RecordingSetupMenuItem_Click(sender, e);
 
-    private void RestartButton_Click(object sender, RoutedEventArgs e) => RunPreviewCommand(_previewEngine.RestartAsync());
+    private void RestartButton_Click(object? sender, RoutedEventArgs e) => RunPreviewCommand(_previewEngine.RestartAsync());
 
-    private void TimelineSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _isScrubbing = true;
-
-    private void TimelineSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    private void TimelineSlider_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        _isScrubbing = false;
-        RunPreviewCommand(_previewEngine.SeekAsync(((Slider)sender).Value));
+        if (!e.GetCurrentPoint(TimelineSlider).Properties.IsLeftButtonPressed) return;
+        _isScrubbing = true;
+
+        // Clicking the track (not the thumb) jumps straight to that point, so the seek issued on
+        // release goes where the user clicked instead of wherever the thumb already was.
+        bool onThumb = e.Source is Visual source && (source is Thumb || source.FindAncestorOfType<Thumb>() is not null);
+        if (!onThumb && TimelineSlider.Bounds.Width > 0)
+        {
+            double fraction = Math.Clamp(e.GetPosition(TimelineSlider).X / TimelineSlider.Bounds.Width, 0, 1);
+            TimelineSlider.Value = TimelineSlider.Minimum + fraction * (TimelineSlider.Maximum - TimelineSlider.Minimum);
+        }
     }
 
-    private void TimelineSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void TimelineSlider_PointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isScrubbing) return;
+        _isScrubbing = false;
+        RunPreviewCommand(_previewEngine.SeekAsync(TimelineSlider.Value));
+    }
+
+    private void TimelineSlider_ValueChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         if (_isScrubbing)
-            SetTimeReadout(((Slider)sender).Value, _previewEngine.DurationMs);
+            SetTimeReadout(TimelineSlider.Value, _previewEngine.DurationMs);
     }
 
-    private void ShowLayerLabelsMenuItem_Click(object sender, RoutedEventArgs e)
+    private void ShowLayerLabelsMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         _previewEngine.ShowLayerLabels = ShowLayerLabelsMenuItem.IsChecked;
         // Re-render whatever's currently visible so toggling the overlay is reflected immediately,
@@ -1397,7 +1488,8 @@ public partial class MainWindow : Window
         RedrawRulerCanvas();
     }
 
-    private void RulerCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => RedrawRulerCanvas();
+    private IBrush ThemeBrush(string key) =>
+        this.TryFindResource(key, ActualThemeVariant, out var found) && found is IBrush brush ? brush : Brushes.Gray;
 
     /// <summary>Draws the ruler's time-tick labels (0:00, 0:30, 1:00 ... scaled to the project
     /// duration) plus the song in/out markers, and updates the readout text beside them. Rebuilt
@@ -1407,7 +1499,7 @@ public partial class MainWindow : Window
     {
         RulerCanvas.Children.Clear();
         double durationMs = _previewEngine.DurationMs;
-        double widthPx = RulerCanvas.ActualWidth;
+        double widthPx = RulerCanvas.Bounds.Width;
 
         foreach (double tickMs in ClipTimelineMath.ComputeTickTimesMs(durationMs, widthPx))
         {
@@ -1416,7 +1508,7 @@ public partial class MainWindow : Window
             {
                 Text = ClipTimelineMath.FormatTickLabel(tickMs),
                 FontSize = 10,
-                Foreground = (System.Windows.Media.Brush)FindResource("MutedTextBrush"),
+                Foreground = ThemeBrush("MutedTextBrush"),
             };
             Canvas.SetLeft(label, x);
             Canvas.SetTop(label, 2);
@@ -1436,21 +1528,22 @@ public partial class MainWindow : Window
         if (markerMs is not double ms) return;
 
         var (x, _) = ClipTimelineMath.ToPixelRange(ms, ms, durationMs, widthPx);
-        var line = new System.Windows.Shapes.Line
+        var line = new Avalonia.Controls.Shapes.Line
         {
-            X1 = x, X2 = x, Y1 = 0, Y2 = 20,
-            Stroke = (System.Windows.Media.Brush)FindResource("StrongBorderBrush"),
+            StartPoint = new Point(x, 0),
+            EndPoint = new Point(x, 20),
+            Stroke = ThemeBrush("StrongBorderBrush"),
             StrokeThickness = 2,
-            ToolTip = $"Song {label}: {FormatTime(ms)}",
         };
+        ToolTip.SetTip(line, $"Song {label}: {FormatTime(ms)}");
         RulerCanvas.Children.Add(line);
     }
 
     // ----- Song in/out (project-wide export range, set from the playhead) -----
 
-    private void SetSongInMenuItem_Click(object sender, RoutedEventArgs e) => SetSongIn();
-    private void SetSongOutMenuItem_Click(object sender, RoutedEventArgs e) => SetSongOut();
-    private void ClearSongRangeMenuItem_Click(object sender, RoutedEventArgs e) => ClearSongRange();
+    private void SetSongInMenuItem_Click(object? sender, RoutedEventArgs e) => SetSongIn();
+    private void SetSongOutMenuItem_Click(object? sender, RoutedEventArgs e) => SetSongOut();
+    private void ClearSongRangeMenuItem_Click(object? sender, RoutedEventArgs e) => ClearSongRange();
 
     /// <summary>Set In at the current playhead; nudged below the existing Out (if any) so In always
     /// stays before Out rather than producing an empty or inverted range.</summary>
@@ -1496,46 +1589,33 @@ public partial class MainWindow : Window
         return $"{totalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds / 100}";
     }
 
-    private void CompositeCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
-    {
-        var canvas = e.Surface.Canvas;
-        canvas.Clear(SKColors.Black);
-        if (_compositedFrame is not null)
-            canvas.DrawBitmap(_compositedFrame, new SKRect(0, 0, e.Info.Width, e.Info.Height));
-    }
-
     // ----- Project save/load/export -----
 
-    private void SaveMenuItem_Click(object sender, RoutedEventArgs e) => SaveProject(forceDialog: false);
+    private async void SaveMenuItem_Click(object? sender, RoutedEventArgs e) => await SaveProjectAsync(forceDialog: false);
     /// <summary>File > Save As...</summary>
-    private void SaveProjectButton_Click(object sender, RoutedEventArgs e) => SaveProject(forceDialog: true);
-    private void SaveCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => SaveProject(forceDialog: false);
-    private void SaveAsCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e) => SaveProject(forceDialog: true);
+    private async void SaveProjectButton_Click(object? sender, RoutedEventArgs e) => await SaveProjectAsync(forceDialog: true);
 
     /// <summary>Save (forceDialog=false: straight to CurrentFilePath, dialog only if untitled) or
     /// Save As (forceDialog=true: always the dialog). Returns true only if the file was actually
     /// written -- the discard prompt relies on that to abort on a cancelled dialog or failed write.</summary>
     // TODO(polish): flush focused TextBox before save/close (a trim or BPM edit still mid-focus
     // isn't committed by Ctrl+S/Alt+F4 -- see spec's Known limitations).
-    private bool SaveProject(bool forceDialog)
+    private async Task<bool> SaveProjectAsync(bool forceDialog)
     {
         string? filePath = forceDialog ? null : _session.CurrentFilePath;
         if (filePath is null)
         {
-            var dialog = new SaveFileDialog { Filter = "A-Capella project|*.a-capella.json", DefaultExt = ProjectSession.ProjectFileSuffix };
-            if (_session.CurrentFilePath is not null)
-            {
-                dialog.InitialDirectory = Path.GetDirectoryName(_session.CurrentFilePath);
-                dialog.FileName = Path.GetFileName(_session.CurrentFilePath);
-            }
-            if (dialog.ShowDialog() != true) return false;
+            string? chosen = await Dialogs.PickSavePathAsync(this, "Save project", Dialogs.ProjectFiles, ProjectSession.ProjectFileSuffix,
+                suggestedFileName: _session.CurrentFilePath is not null ? Path.GetFileName(_session.CurrentFilePath) : null,
+                initialDirectory: _session.CurrentFilePath is not null ? Path.GetDirectoryName(_session.CurrentFilePath) : null);
+            if (chosen is null) return false;
 
             // L7: enforce the suffix explicitly instead of relying on the dialog's own extension
             // logic (DefaultExt doesn't reliably stop a double-append for multi-segment extensions).
             // Dialog results only -- a project opened as plain *.json is saved back under its own name (D5).
-            filePath = dialog.FileName.EndsWith(ProjectSession.ProjectFileSuffix, StringComparison.OrdinalIgnoreCase)
-                ? dialog.FileName
-                : dialog.FileName + ProjectSession.ProjectFileSuffix;
+            filePath = chosen.EndsWith(ProjectSession.ProjectFileSuffix, StringComparison.OrdinalIgnoreCase)
+                ? chosen
+                : chosen + ProjectSession.ProjectFileSuffix;
         }
 
         try
@@ -1555,23 +1635,22 @@ public partial class MainWindow : Window
     /// save first (may show the Save As dialog), No = discard, Cancel = abort. Returns true if the
     /// caller may go ahead and replace/close the project. Must run BEFORE any preview stop or
     /// teardown so that Cancel leaves everything running.</summary>
-    private bool ConfirmDiscardUnsavedChanges()
+    private async Task<bool> ConfirmDiscardUnsavedChangesAsync()
     {
         if (!_session.IsDirty) return true;
 
-        var answer = MessageBox.Show(this, $"Save changes to {_session.DisplayName}?", "A-Capella",
-            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        var answer = await Dialogs.ShowMessageAsync(this, $"Save changes to {_session.DisplayName}?", "A-Capella", MessageButtons.YesNoCancel);
         return answer switch
         {
-            MessageBoxResult.Yes => SaveProject(forceDialog: false),
-            MessageBoxResult.No => true,
+            MessageResult.Yes => await SaveProjectAsync(forceDialog: false),
+            MessageResult.No => true,
             _ => false,   // Cancel, or the message box's own close button
         };
     }
 
     /// <summary>Driven by ProjectSession.SaveStateChanged. Direct writes, matching the rest of this
-    /// window (no INotifyPropertyChanged on MainWindow). Title shows in taskbar/Alt+Tab only
-    /// (WindowStyle=None), hence the toolbar copy.</summary>
+    /// window (no INotifyPropertyChanged on MainWindow). The title shows in the dock/Alt+Tab and in
+    /// the toolbar copy.</summary>
     private void UpdateWindowTitle()
     {
         string label = _session.IsDirty ? $"{_session.DisplayName} •" : _session.DisplayName;
@@ -1579,7 +1658,7 @@ public partial class MainWindow : Window
         ProjectTitleText.Text = label;
     }
 
-    private async void OpenProjectButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenProjectButton_Click(object? sender, RoutedEventArgs e)
     {
         if (!ExportMenuItem.IsEnabled)
         {
@@ -1587,26 +1666,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ConfirmDiscardUnsavedChanges()) return;
+        if (!await ConfirmDiscardUnsavedChangesAsync()) return;
 
-        var dialog = new OpenFileDialog { Filter = "A-Capella project|*.a-capella.json;*.json" };
-        if (dialog.ShowDialog() != true) return;
+        string? fileName = await Dialogs.PickFileAsync(this, "Open project", Dialogs.ProjectFiles);
+        if (fileName is null) return;
 
         try
         {
             // Bug audit #5: ProjectSession.Open() now releases every live hosted-plugin instance
             // before restoring. If preview playback is still running, HostedPluginSampleProvider
-            // objects wired into its chain hold raw IHostedPlugin references that the WASAPI
+            // objects wired into its chain hold raw IHostedPlugin references that the audio
             // render thread calls ProcessBlock on -- releasing out from under that is a
             // use-after-free on native memory. Stop playback first, same shape as StopButton_Click.
             await AwaitPreviewCommand(_previewEngine.StopAsync());
 
             ApplyRestore(() =>
             {
-                _session.Open(dialog.FileName);
+                _session.Open(fileName);
                 return true;
             });
-            StatusText.Text = $"Project opened: {Path.GetFileName(dialog.FileName)} ({_layers.Layers.Count} layer(s)).";
+            StatusText.Text = $"Project opened: {Path.GetFileName(fileName)} ({_layers.Layers.Count} layer(s)).";
         }
         catch (Exception ex)
         {
@@ -1614,7 +1693,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ExportButton_Click(object sender, RoutedEventArgs e)
+    private async void ExportButton_Click(object? sender, RoutedEventArgs e)
     {
         if (!ExportMenuItem.IsEnabled)                   // defensive; the menu item is disabled anyway
         {
@@ -1628,8 +1707,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new SaveFileDialog { Filter = "MP4 video|*.mp4", DefaultExt = ".mp4" };
-        if (dialog.ShowDialog() != true) return;
+        string? exportPath = await Dialogs.PickSavePathAsync(this, "Export MP4", Dialogs.Mp4Files, ".mp4");
+        if (exportPath is null) return;
+        if (!exportPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) exportPath += ".mp4";
 
         // Bug audit #8, subtlety 2: checked AFTER the Save dialog returns, not before it.
         // PlayButton is disabled only while PlayButton_Click is between SetLayersAsync and PlayAsync.
@@ -1649,32 +1729,32 @@ public partial class MainWindow : Window
         // captures the current SynchronizationContext at construction, so every Report() call from
         // the background export thread below marshals back here with no explicit Dispatcher.Invoke.
         ExportProgressBar.Value = 0;
-        ExportProgressBar.Visibility = Visibility.Visible;
+        ExportProgressBar.IsVisible = true;
         var progress = new Progress<double>(fraction =>
         {
             ExportProgressBar.Value = fraction;
             StatusText.Text = $"Exporting... {fraction:P0}";
         });
 
-        Task.Run(() =>
+        _ = Task.Run(() =>
         {
             try
             {
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
-                exportEngine.Export(snapshotLayers, dialog.FileName, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
+                exportEngine.Export(snapshotLayers, exportPath, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
                     rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs, video: snapshotVideo, masterLimiter: snapshotMasterLimiter);
-                Dispatcher.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(dialog.FileName)}");
+                Dispatcher.UIThread.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(exportPath)}");
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => StatusText.Text = $"Export failed: {ex.Message}");
+                Dispatcher.UIThread.Invoke(() => StatusText.Text = $"Export failed: {ex.Message}");
             }
             finally
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.UIThread.Invoke(() =>
                 {
                     ExportMenuItem.IsEnabled = true;
-                    ExportProgressBar.Visibility = Visibility.Collapsed;
+                    ExportProgressBar.IsVisible = false;
                 });
             }
         });
@@ -1682,7 +1762,7 @@ public partial class MainWindow : Window
 
     // ----- Menu bar: File > New, Help > About (v5 P1 task 1) -----
 
-    private async void NewProjectMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void NewProjectMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         if (!ExportMenuItem.IsEnabled)
         {
@@ -1690,7 +1770,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ConfirmDiscardUnsavedChanges()) return;
+        if (!await ConfirmDiscardUnsavedChangesAsync()) return;
 
         // Bug audit #5: same use-after-free hazard as OpenProjectButton_Click -- ProjectSession.New()
         // now releases every live hosted-plugin instance, so preview playback must be stopped first.
@@ -1704,9 +1784,8 @@ public partial class MainWindow : Window
         StatusText.Text = "New project.";
     }
 
-    private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    private async void AboutMenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        MessageBox.Show(this, "A-Capella\nMulti-layer vocal recording and mixing.", "About A-Capella",
-            MessageBoxButton.OK, MessageBoxImage.Information);
+        await Dialogs.ShowMessageAsync(this, "A-Capella\nMulti-layer vocal recording and mixing.", "About A-Capella");
     }
 }

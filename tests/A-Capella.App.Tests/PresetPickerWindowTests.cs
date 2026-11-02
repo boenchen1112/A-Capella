@@ -1,6 +1,7 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia.Controls;
+using Avalonia.Headless.XUnit;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Project;
 using Xunit;
@@ -12,16 +13,6 @@ namespace A_Capella.App.Tests;
 [Collection("SharedHostedService")]
 public class PresetPickerWindowTests
 {
-    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
-    {
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is T match) yield return match;
-            foreach (var d in Descendants<T>(child)) yield return d;
-        }
-    }
-
     private static MenuItem FirstPreset(ItemsControl menu)
     {
         foreach (var item in menu.Items.OfType<MenuItem>())
@@ -30,10 +21,13 @@ public class PresetPickerWindowTests
         throw new InvalidOperationException("no presets");
     }
 
-    [StaFact]
+    private static void SkipWithoutPresets() =>
+        Assert.SkipWhen(EffectSlotViewModel.AllChoices("FabFilter Pro-C 3").Count <= 1, "FabFilter Pro-C 3 factory presets aren't installed.");
+
+    [AvaloniaFact]
     public void PickingFromTheOpenedMenu_SetsThePresetOnTheLayer()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
+        SkipWithoutPresets();
         var window = new MainWindow();
         try
         {
@@ -44,7 +38,8 @@ public class PresetPickerWindowTests
             window.Show();
             window.UpdateLayout();
 
-            var picker = Descendants<PresetPicker>(window.FxPanel).First();
+            var picker = window.FxPanel.GetVisualDescendants().OfType<PresetPicker>()
+                .First(p => p.Choices!.Count > 1 && p.Choices[1].Ref?.Plugin == "FabFilter Pro-C 3");
             Assert.True(picker.Choices!.Count > 1, "no presets were listed");
 
             var menu = picker.CreateMenu();
@@ -57,22 +52,14 @@ public class PresetPickerWindowTests
         finally { window.Close(); }
     }
 
-    [StaFact]
-    public void CategoryItems_CanOpenASubmenuOfPresets_InTheThemedMenu()
+    [AvaloniaFact]
+    public void CategoryItems_HoldTheirPresetsAsSubmenus()
     {
-        TestAppHost.EnsureApplicationResourcesLoaded();
-        var window = new MainWindow();
-        try
-        {
-            window.Show();
-            var picker = new PresetPicker { Choices = EffectSlotViewModel.AllChoices("FabFilter Pro-C 3") };
-            var menu = picker.CreateMenu();
-            var category = menu.Items.OfType<MenuItem>().First(m => m.Items.Count > 0);
-            window.Resources.Add("pp", menu);
-            menu.IsOpen = true;
-            category.ApplyTemplate();
-            Assert.NotNull(category.Template.FindName("Popup", category));
-        }
-        finally { window.Close(); }
+        SkipWithoutPresets();
+        var picker = new PresetPicker { Choices = EffectSlotViewModel.AllChoices("FabFilter Pro-C 3") };
+        var menu = picker.CreateMenu();
+        var category = menu.Items.OfType<MenuItem>().First(m => m.Items.Count > 0);
+        Assert.NotNull(category.Header);
+        Assert.NotEmpty(category.Items);
     }
 }

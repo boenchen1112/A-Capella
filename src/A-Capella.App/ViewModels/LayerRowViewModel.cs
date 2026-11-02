@@ -152,11 +152,9 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
         int generation = ++_durationProbeGeneration;
         string path = layer.SourcePath;
-        // Marshals back onto the UI thread via the app's Dispatcher when one exists (the running
-        // app); runs the continuation inline otherwise (headless unit tests have no WPF Dispatcher
-        // and don't need thread affinity for a plain property set). Deliberately not
-        // TaskScheduler.FromCurrentSynchronizationContext(): that throws outside a WPF message loop,
-        // which a plain [StaFact] test (no Window shown/pumped) doesn't install.
+        // Marshals back onto the UI thread via the app's Dispatcher. Deliberately not
+        // TaskScheduler.FromCurrentSynchronizationContext(): that throws outside a UI message loop,
+        // which a plain unit test (no Window shown/pumped) doesn't install.
         Task.Run(() => MediaProbe.GetDurationSeconds(path)).ContinueWith(t =>
         {
             void Apply()
@@ -166,9 +164,9 @@ public class LayerRowViewModel : INotifyPropertyChanged
                     SourceDurationMs = t.Result * 1000.0;
             }
 
-            var dispatcher = System.Windows.Application.Current?.Dispatcher;
-            if (dispatcher is not null && !dispatcher.CheckAccess())
-                dispatcher.Invoke(Apply);
+            var dispatcher = Avalonia.Threading.Dispatcher.UIThread;
+            if (!dispatcher.CheckAccess())
+                dispatcher.Post(Apply);
             else
                 Apply();
         }, TaskScheduler.Default);
@@ -217,12 +215,12 @@ public class LayerRowViewModel : INotifyPropertyChanged
 
     /// <summary>Grid-identification color chip (v5 P2 task 3), keyed by CellIndex so a layer keeps
     /// its color as long as it stays in the same grid cell.</summary>
-    public System.Windows.Media.Brush CellColor
+    public Avalonia.Media.IBrush CellColor
     {
         get
         {
             var color = A_Capella.Engine.Composite.LayerColorPalette.GetColor(_layer?.CellIndex ?? SlotNumber - 1);
-            return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(color.Red, color.Green, color.Blue));
+            return new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(color.Red, color.Green, color.Blue));
         }
     }
 

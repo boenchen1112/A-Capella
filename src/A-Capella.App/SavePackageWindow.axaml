@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="A_Capella.App.SavePackageWindow"
+        Title="Save as package" Width="380" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="16">
+        <TextBlock Text="Name this combination of effects" Margin="0,0,0,6"/>
+        <TextBox x:Name="NameBox" MaxLength="60" KeyDown="NameBox_KeyDown"/>
+        <TextBlock x:Name="ErrorText" Foreground="{DynamicResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Padding="14,5" Margin="0,0,8,0"/>
+            <Button Content="Save" IsDefault="True" Click="Save_Click" Padding="14,5" Classes="strong"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -80,9 +80,9 @@ public class MasterLimiterTests
     }
 
     [Fact]
-    public void AutoTune_IsReservedForTheMac_AndHasNoWindowsPlugin()
+    public void AutoTune_IsHostedOnTheMacOnly()
     {
-        Assert.False(HostedPluginCatalog.KnownPluginPaths.ContainsKey(HostedPluginCatalog.AutoTunePluginLabel));
+        Assert.Equal(OperatingSystem.IsMacOS(), HostedPluginCatalog.KnownPluginPaths.ContainsKey(HostedPluginCatalog.AutoTunePluginLabel));
         Assert.Equal(OperatingSystem.IsMacOS(), HostedPluginCatalog.AutoTuneSupported);
     }
 

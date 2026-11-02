@@ -1,0 +1,378 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:A_Capella.App"
+        xmlns:vm="clr-namespace:A_Capella.App.ViewModels"
+        xmlns:conv="clr-namespace:A_Capella.App.Converters"
+        x:Class="A_Capella.App.MainWindow"
+        Title="A-Capella" Height="900" Width="1440" MinWidth="960" MinHeight="600"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="44"
+        Background="{DynamicResource GroundBrush}">
+    <!-- Custom chrome: the title bar band extends into the system caption area (macOS keeps its
+         traffic lights at the left; Windows draws its caption buttons at the right), so the menu,
+         project name and undo/redo sit in the same 44px band. -->
+    <Window.Resources>
+        <conv:UnitToHeightConverter x:Key="UnitToHeight"/>
+
+        <!-- One lane row: 248px name/meter section + a relative clip track showing the full-source
+             (faint) span and the trimmed (solid) span as proportional bars, with drag handles at
+             both ends of the solid span (LaneClipTrack). Dragging a handle sets TrimStartMs/TrimEndMs
+             live; the channel panel's In/Out text boxes read and write the same two properties, so
+             either path stays in sync with the other. -->
+        <DataTemplate x:Key="LaneRowTemplate" x:DataType="vm:LayerRowViewModel">
+            <Grid Height="62" Background="Transparent" PointerPressed="LaneRow_PointerPressed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="248"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.ColumnSpan="2" VerticalAlignment="Bottom" Height="1" Background="{DynamicResource SubtleLineBrush}"/>
+                <Border Grid.ColumnSpan="2" BorderThickness="2" CornerRadius="2" IsHitTestVisible="False"
+                        Classes="laneborder" Classes.selected="{Binding IsSelected}"/>
+
+                <Border Grid.Column="0" BorderThickness="4,0,0,0" BorderBrush="{Binding CellColor}" Padding="10,0,0,0">
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                            <ToggleButton Classes="lane" Content="M" IsChecked="{Binding Mute, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,4,0"/>
+                            <ToggleButton Classes="lane" Content="S" IsChecked="{Binding Solo, Mode=TwoWay}" Click="CommitCheckBox_Click" Margin="0,0,8,0"/>
+                            <Grid Width="6" Height="36">
+                                <Border Background="{DynamicResource ControlBrush}" CornerRadius="3"/>
+                                <Border Background="{DynamicResource MeterGreenBrush}" CornerRadius="3" VerticalAlignment="Bottom"
+                                        Height="{Binding MeterLevel, Converter={StaticResource UnitToHeight}, ConverterParameter=36}"/>
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center">
+                            <DockPanel LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Right" Text="❄ FROZEN" FontSize="10" Foreground="{DynamicResource SoloAmberBrush}"
+                                           IsVisible="{Binding Frozen}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                <TextBox Text="{Binding Name, Mode=OneWay}" Classes="inline"
+                                         FontFamily="{DynamicResource PlexSansMedium}" FontSize="13"
+                                         GotFocus="LaneNameTextBox_GotFocus" LostFocus="LaneNameTextBox_LostFocus" KeyDown="LaneNameTextBox_KeyDown"/>
+                            </DockPanel>
+                            <TextBlock Text="{Binding SourceLabel}" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+
+                <local:LaneClipTrack Grid.Column="1"
+                                     TrimDragStarted="TrimHandle_DragStarted"
+                                     TrimDragDelta="TrimHandle_DragDelta"
+                                     TrimDragCompleted="TrimHandle_DragCompleted"/>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="Border.laneborder">
+            <Setter Property="BorderBrush" Value="Transparent"/>
+        </Style>
+        <Style Selector="Border.laneborder.selected">
+            <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+        </Style>
+    </Window.Styles>
+
+    <DockPanel LastChildFill="True">
+        <!-- ===================== Title bar (caption band) ===================== -->
+        <Border x:Name="TitleBar" DockPanel.Dock="Top" Height="44" Background="{DynamicResource GroundBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+            <Grid x:Name="TitleGrid" Margin="10,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="0"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="0"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- 2x2 logo mark, matching the mock's four layer-accent squares. -->
+                    <UniformGrid Rows="2" Columns="2" Width="18" Height="18" Margin="0,0,10,0">
+                        <Border Background="{DynamicResource LayerAccent1Brush}" Margin="0.5"/>
+                        <Border Background="{DynamicResource LayerAccent2Brush}" Margin="0.5"/>
+                        <Border Background="{DynamicResource LayerAccent3Brush}" Margin="0.5"/>
+                        <Border Background="{DynamicResource LayerAccent4Brush}" Margin="0.5"/>
+                    </UniformGrid>
+
+                    <Menu Background="Transparent" FontSize="13" VerticalAlignment="Center">
+                        <MenuItem Header="File">
+                            <MenuItem Header="New" Click="NewProjectMenuItem_Click"/>
+                            <MenuItem Header="Open..." Click="OpenProjectButton_Click"/>
+                            <MenuItem x:Name="SaveMenuItem" Header="Save" Click="SaveMenuItem_Click"/>
+                            <MenuItem x:Name="SaveAsMenuItem" Header="Save As..." Click="SaveProjectButton_Click"/>
+                            <Separator/>
+                            <MenuItem x:Name="ExportMenuItem" Header="Export MP4..." Click="ExportButton_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Edit">
+                            <MenuItem x:Name="UndoMenuItem" Header="Undo" Click="UndoMenuItem_Click"/>
+                            <MenuItem x:Name="RedoMenuItem" Header="Redo" Click="RedoMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Layers">
+                            <MenuItem Header="Import files as layers..." Click="ImportFilesMenuItem_Click"/>
+                            <MenuItem Header="Delete selected layer" Click="DeleteLayerMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Layout">
+                            <MenuItem Header="Choose layout..." Click="ChooseLayoutMenuItem_Click"/>
+                            <MenuItem Header="Video settings..." Click="VideoSettingsMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Song">
+                            <MenuItem Header="Set Song In" Click="SetSongInMenuItem_Click" InputGesture="I"/>
+                            <MenuItem Header="Set Song Out" Click="SetSongOutMenuItem_Click" InputGesture="O"/>
+                            <MenuItem Header="Clear Song In/Out" Click="ClearSongRangeMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="View">
+                            <MenuItem x:Name="ShowLayerLabelsMenuItem" Header="Show layer labels" ToggleType="CheckBox" IsChecked="True" Click="ShowLayerLabelsMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Tools">
+                            <MenuItem Header="Recording setup..." Click="RecordingSetupMenuItem_Click"/>
+                            <MenuItem Header="Calibrate latency..." Click="CalibrateLatencyMenuItem_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Recordings folder size..." Click="RecordingsFolderSizeMenuItem_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Help">
+                            <MenuItem Header="About" Click="AboutMenuItem_Click"/>
+                        </MenuItem>
+                    </Menu>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                    <TextBlock x:Name="ProjectTitleText" FontFamily="{DynamicResource PlexSansMedium}" FontSize="13" Foreground="{DynamicResource TextBrush}"
+                               MaxWidth="320" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="UndoButton" Content="↩" Click="UndoMenuItem_Click" Classes="flat" Width="30" Height="30"/>
+                    <Button x:Name="RedoButton" Content="↪" Click="RedoMenuItem_Click" Classes="flat" Width="30" Height="30" Margin="0,0,10,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===================== Transport bar ===================== -->
+        <Border DockPanel.Dock="Top" Height="64" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+            <DockPanel Margin="16,0" LastChildFill="False">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="RestartButton" Content="⏮" Click="RestartButton_Click" Classes="flat" Margin="0,0,4,0"/>
+                    <Button x:Name="SeekBackButton" Content="−5s" Click="SeekBackButton_Click" Classes="flat" Width="44" Margin="0,0,8,0"/>
+                    <Button x:Name="PlayButton" Content="▶" Click="PlayButton_Click" Classes="circle" FontSize="18" Margin="0,0,8,0"/>
+                    <Button x:Name="SeekForwardButton" Content="+5s" Click="SeekForwardButton_Click" Classes="flat" Width="44" Margin="0,0,10,0"/>
+                    <Button x:Name="RecordButton" Click="RecordButton_Click" Classes="record" Padding="12,8" Margin="0,0,16,0">
+                        <TextBlock x:Name="RecordButtonText" Text="● Record layer 1" Foreground="{DynamicResource RecordTintTextBrush}"/>
+                    </Button>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="CurrentTimeText" Text="0:00.0" FontFamily="{DynamicResource PlexMonoRegular}" FontSize="13" Foreground="{DynamicResource TextBrush}"/>
+                        <TextBlock Text=" / " FontFamily="{DynamicResource PlexMonoRegular}" FontSize="13" Foreground="{DynamicResource MutedTextBrush}"/>
+                        <TextBlock x:Name="TotalDurationText" Text="0:00.0" FontFamily="{DynamicResource PlexMonoRegular}" FontSize="13" Foreground="{DynamicResource MutedTextBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="10,4" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="BPM" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBox x:Name="MetronomeBpmTextBox" Text="130.000" Width="80" Background="Transparent" BorderThickness="0"
+                                     Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"
+                                     LostFocus="MetronomeBpmTextBox_LostFocus"/>
+                            <ComboBox x:Name="TimeSignatureCombo" Width="72" MinHeight="30" Margin="8,0,0,0" VerticalAlignment="Center"
+                                      SelectionChanged="TimeSignatureCombo_SelectionChanged"
+                                      ToolTip.Tip="Metronome time signature. The first beat of each bar is accented."/>
+                        </StackPanel>
+                    </Border>
+
+                    <ToggleButton x:Name="MonitorToggle" Content="Monitor" Classes="pill" IsChecked="True"
+                                  IsCheckedChanged="MonitorToggle_Changed" Margin="0,0,16,0"/>
+
+                    <TextBlock Text="Limiter" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <local:PresetPicker x:Name="MasterLimiterCombo" Width="130" VerticalAlignment="Center" Margin="0,0,16,0"
+                              SelectedChoiceChanged="MasterLimiterCombo_SelectionChanged"
+                              ToolTip.Tip="The one limiter on the whole mix (FabFilter Pro-L 2)."/>
+                    <TextBlock Text="Master" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ProgressBar x:Name="ToolbarPeakMeter" Minimum="0" Maximum="1" Value="0" Width="80" Height="8" MinHeight="0" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <Slider x:Name="MasterVolumeSlider" Minimum="-60" Maximum="12" Value="0" Width="100" VerticalAlignment="Center"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ===================== Status bar ===================== -->
+        <Border DockPanel.Dock="Bottom" Height="28" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="12,0">
+            <DockPanel LastChildFill="True">
+                <TextBlock x:Name="PerfText" DockPanel.Dock="Right" Text="CPU 0% · 0 MB" FontFamily="{DynamicResource PlexMonoRegular}" FontSize="11"
+                           Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                <ProgressBar x:Name="ExportProgressBar" DockPanel.Dock="Right" Width="140" Height="12" MinHeight="0" Margin="8,0" Minimum="0" Maximum="1"
+                             IsVisible="False" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"
+                           Text="Space play / stop · ← → seek 5 s · Home back to start"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ===================== Body: preview+lanes | channel panel ===================== -->
+        <Grid Background="{DynamicResource GroundBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="400"/>
+                <ColumnDefinition Width="400"/>
+            </Grid.ColumnDefinitions>
+
+            <DockPanel Grid.Column="0" Margin="16">
+                <!-- Preview: Viewbox lets the composited frame shrink to fit, always at the 16:9
+                     export aspect ratio (PreviewCanvasAspectRatioTests). -->
+                <Viewbox DockPanel.Dock="Top" Stretch="Uniform" StretchDirection="DownOnly" MaxHeight="405" Margin="0,0,0,12">
+                    <Grid Width="640" Height="360">
+                        <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
+                            <local:FrameView x:Name="CompositeCanvas" Width="640" Height="360"/>
+                        </Border>
+                        <!-- Empty-cell overlay: the Engine already bakes a placeholder into the
+                             composited bitmap for an audio-only layer, but a fully-empty slot
+                             renders as plain black; this gives it the mock's "Layer N is empty"
+                             affordance, reusing each row's own Record/Upload commands. -->
+                        <ItemsControl x:Name="EmptyCellOverlay">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="2" Columns="2" Width="640" Height="360"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:LayerRowViewModel">
+                                    <Grid Background="#90131518" IsVisible="{Binding !HasSource}">
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName, StringFormat='{}{0} is empty'}" Foreground="{DynamicResource MutedTextBrush}"
+                                                       FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <Button Content="Record" Classes="strong" Click="RecordChoice_Click" Padding="10,5" Margin="0,0,6,0"/>
+                                                <Button Content="Upload" Click="UploadChoice_Click" Padding="10,5"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+                </Viewbox>
+
+                <!-- Lanes panel -->
+                <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8">
+                    <DockPanel LastChildFill="True">
+                        <Grid DockPanel.Dock="Top" Height="34" Background="{DynamicResource RaisedBrush}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="248"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="LaneHeaderCountText" Grid.Column="0" Text="Layers · 0 of 4" FontSize="11"
+                                       Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <!-- Song-position ruler: click/drag to seek (TimelineSliderClickToSeekTests). -->
+                            <Slider x:Name="TimelineSlider" Grid.Column="1" Minimum="0" Maximum="1000" Value="0" VerticalAlignment="Center"/>
+                        </Grid>
+                        <!-- Time-tick ruler (0:00, 0:30, 1:00 ... scaled to the project duration) plus
+                             the song in/out markers, both drawn in code (RedrawRulerCanvas) since
+                             their positions depend on the live timeline duration and track width. -->
+                        <Grid DockPanel.Dock="Top" Height="20" Background="{DynamicResource RaisedBrush}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="248"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="SongRangeReadoutText" Grid.Column="0" FontSize="10"
+                                       Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <Canvas x:Name="RulerCanvas" Grid.Column="1" IsHitTestVisible="False"/>
+                        </Grid>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="TrackList" ItemTemplate="{StaticResource LaneRowTemplate}"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </DockPanel>
+
+            <!-- Channel panel: the selected layer's name/retake/delete header, Volume/Pan/Trim, and
+                 its FX chain. -->
+            <Border Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,0,0,0">
+                <DockPanel x:Name="ChannelPanel" LastChildFill="True">
+                    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,12">
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right" x:Name="ChannelMoreButton" Content="⋯" Click="ChannelMoreButton_Click" Classes="flat" Width="30" Height="30"/>
+                            <Button DockPanel.Dock="Right" Content="↻" Click="RetakeButton_Click" Classes="strong" Padding="10,5" Margin="0,0,6,0"/>
+                            <!-- OneWay: FreezeToggle_Click must run its sync-state/close-editors work
+                                 BEFORE Frozen flips, so this can't use the usual TwoWay+Click pattern
+                                 (see the handler's doc comment). -->
+                            <ToggleButton DockPanel.Dock="Right" Content="Freeze" Classes="segment"
+                                          IsChecked="{Binding Frozen, Mode=OneWay}" Click="FreezeToggle_Click" Padding="10,5" Margin="0,0,6,0"/>
+                            <Border DockPanel.Dock="Left" Width="10" Height="10" CornerRadius="2" Background="{Binding CellColor}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="FxHeaderText" Text="FX — Master" FontFamily="{DynamicResource PlexSansSemiBold}" FontSize="14" VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Grid DockPanel.Dock="Top" Margin="16,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" IsEnabled="{Binding IsNotFrozen}">
+                            <TextBlock Text="Volume" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <Slider Classes="commit" Minimum="-60" Maximum="12" Value="{Binding GainDb, Mode=TwoWay}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8" IsEnabled="{Binding IsNotFrozen}">
+                            <TextBlock Text="Pan" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <Slider Classes="commit" Minimum="-1" Maximum="1" Value="{Binding Pan, Mode=TwoWay}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Trim in (ms)" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="TrimInTextBox" Tag="In" Text="{Binding TrimStartMs, Mode=OneWay}" LostFocus="TrimTextBox_LostFocus" KeyDown="TrimTextBox_KeyDown"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Trim out (ms)" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="TrimOutTextBox" Tag="Out" Text="{Binding TrimEndText, Mode=OneWay}" LostFocus="TrimTextBox_LostFocus" KeyDown="TrimTextBox_KeyDown"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Picture" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <CheckBox Content="Mirror" IsChecked="{Binding Mirror, Mode=TwoWay}" Click="CommitCheckBox_Click"
+                                      ToolTip.Tip="Flip this layer's picture left-to-right."/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Timing nudge" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,4"/>
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Left" Content="−" Click="NudgeEarlierButton_Click" Classes="flat" Width="26" Height="24"
+                                        ToolTip.Tip="Play this layer earlier (hold Shift for 1 ms steps, otherwise 10 ms)."/>
+                                <Button DockPanel.Dock="Right" Content="+" Click="NudgeLaterButton_Click" Classes="flat" Width="26" Height="24"
+                                        ToolTip.Tip="Play this layer later (hold Shift for 1 ms steps, otherwise 10 ms)."/>
+                                <TextBlock Text="{Binding ManualOffsetDisplay}" FontFamily="{DynamicResource PlexMonoRegular}" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand"
+                                           PointerPressed="NudgeLabel_PointerPressed" ToolTip.Tip="Click to reset to 0."/>
+                            </DockPanel>
+                            <Button Content="Auto-align" Click="AutoAlignButton_Click" Margin="0,6,0,0" Padding="8,3"
+                                    ToolTip.Tip="Line this layer up with layer 1 automatically (uses Melodyne's note timing when installed)."/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,10,16,4">
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right" x:Name="PackagesButton" Content="Packages ▾" Click="PackagesButton_Click" Classes="strong" Padding="10,4"
+                                    ToolTip.Tip="Apply a saved set of effects to this layer, or save this layer's effects as a package."/>
+                            <StackPanel>
+                                <TextBlock Text="Effects" FontFamily="{DynamicResource PlexSansSemiBold}" FontSize="13"/>
+                                <TextBlock Text="Pick a preset for each effect. Signal flows top to bottom." FontSize="11" Foreground="{DynamicResource MutedTextBrush}"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <!-- Scoped to just the effect rows (MixingScreenTests.FxPanel_HasNoSliderBoundToGainDb):
+                             the Volume slider above (bound to GainDb) must stay outside this element. -->
+                        <ItemsControl x:Name="FxPanel" Margin="16,8" ItemsSource="{Binding Effects}" IsEnabled="{Binding IsNotFrozen}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource RaisedBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,8" Padding="12">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontFamily="{DynamicResource PlexSansMedium}"/>
+                                            <TextBlock Text="{Binding PluginLabel}" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,6"/>
+                                            <local:PresetPicker HorizontalAlignment="Stretch" Choices="{Binding Choices}" SelectedChoice="{Binding SelectedChoice, Mode=TwoWay}"/>
+                                            <TextBlock Text="{Binding Status}" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                       IsVisible="{Binding HasStatus}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,5 +1,7 @@
-using System.Windows;
-using System.Windows.Controls;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Presets;
 
@@ -12,14 +14,25 @@ namespace A_Capella.App;
 /// </summary>
 public sealed class PresetPicker : Button
 {
-    public static readonly DependencyProperty ChoicesProperty = DependencyProperty.Register(
-        nameof(Choices), typeof(IReadOnlyList<PresetChoice>), typeof(PresetPicker), new PropertyMetadata(null));
+    public static readonly StyledProperty<IReadOnlyList<PresetChoice>?> ChoicesProperty =
+        AvaloniaProperty.Register<PresetPicker, IReadOnlyList<PresetChoice>?>(nameof(Choices));
 
-    public static readonly DependencyProperty SelectedChoiceProperty = DependencyProperty.Register(
-        nameof(SelectedChoice), typeof(PresetChoice), typeof(PresetPicker),
-        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, OnSelectedChoiceChanged));
+    public static readonly StyledProperty<PresetChoice?> SelectedChoiceProperty =
+        AvaloniaProperty.Register<PresetPicker, PresetChoice?>(nameof(SelectedChoice), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
 
-    private readonly TextBlock _label = new() { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _label = new() { TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+
+    // Styled like a plain Button.
+    protected override Type StyleKeyOverride => typeof(Button);
+
+    static PresetPicker()
+    {
+        SelectedChoiceProperty.Changed.AddClassHandler<PresetPicker>((picker, _) =>
+        {
+            picker.ShowLabel();
+            picker.SelectedChoiceChanged?.Invoke(picker, EventArgs.Empty);
+        });
+    }
 
     public PresetPicker()
     {
@@ -34,38 +47,41 @@ public sealed class PresetPicker : Button
 
     public IReadOnlyList<PresetChoice>? Choices
     {
-        get => (IReadOnlyList<PresetChoice>?)GetValue(ChoicesProperty);
+        get => GetValue(ChoicesProperty);
         set => SetValue(ChoicesProperty, value);
     }
 
     public PresetChoice? SelectedChoice
     {
-        get => (PresetChoice?)GetValue(SelectedChoiceProperty);
+        get => GetValue(SelectedChoiceProperty);
         set => SetValue(SelectedChoiceProperty, value);
     }
 
     /// <summary>Raised when the selection changes, whether the user picked or the code set it.</summary>
     public event EventHandler? SelectedChoiceChanged;
 
-    private static void OnSelectedChoiceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        var picker = (PresetPicker)d;
-        picker.ShowLabel();
-        picker.SelectedChoiceChanged?.Invoke(picker, EventArgs.Empty);
-    }
-
     private void ShowLabel() => _label.Text = SelectedChoice?.Label ?? "Off";
 
-    private void OpenMenu() => CreateMenu().IsOpen = true;
+    private void OpenMenu() => CreateMenu().Open(this);
 
     /// <summary>The menu the button opens, wired so picking an entry sets SelectedChoice.</summary>
     public ContextMenu CreateMenu()
     {
         var menu = BuildMenu(Choices ?? Array.Empty<PresetChoice>(), SelectedChoice, choice => SelectedChoice = choice);
-        menu.PlacementTarget = this;
-        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-        menu.MinWidth = ActualWidth;
+        menu.Placement = PlacementMode.Bottom;
+        menu.MinWidth = Bounds.Width;
         return menu;
+    }
+
+    private static MenuItem NewItem(string header, bool isChecked)
+    {
+        var item = new MenuItem { Header = header };
+        if (isChecked)
+        {
+            item.ToggleType = MenuItemToggleType.CheckBox;
+            item.IsChecked = true;
+        }
+        return item;
     }
 
     /// <summary>The menu for a list of choices: Off first, then categories as nested submenus.</summary>
@@ -88,7 +104,8 @@ public sealed class PresetPicker : Button
 
         foreach (var choice in choices)
         {
-            var entry = new MenuItem { Header = choice.Label, IsChecked = Equals(choice.Ref, selected?.Ref) };
+            bool isSelected = Equals(choice.Ref, selected?.Ref);
+            var entry = NewItem(choice.Label, isSelected);
             var picked = choice;
             entry.Click += (_, _) => pick(picked);
 
@@ -104,7 +121,13 @@ public sealed class PresetPicker : Button
                 var submenu = Submenu(choice.Ref.Category.Split('/'));
                 submenu.Items.Add(entry);
                 // Tick the path down to the chosen preset so the open menu shows where it lives.
-                if (entry.IsChecked) for (var p = choice.Ref.Category.Split('/'); p.Length > 0; p = p[..^1]) Submenu(p).IsChecked = true;
+                if (isSelected)
+                    for (var p = choice.Ref.Category.Split('/'); p.Length > 0; p = p[..^1])
+                    {
+                        var parent = Submenu(p);
+                        parent.ToggleType = MenuItemToggleType.CheckBox;
+                        parent.IsChecked = true;
+                    }
             }
         }
         return menu;

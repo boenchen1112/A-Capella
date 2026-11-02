@@ -10,7 +10,7 @@ public class FxSlotTests
 {
     private const int SampleRate = 44100;
 
-    public static IEnumerable<object[]> SlotStages() => FxSlots.All.Select(s => new object[] { s.Stage });
+    public static IEnumerable<object[]> SlotStages() => FxSlots.All.Where(s => s != FxSlots.Pitch).Select(s => new object[] { s.Stage });
 
     private static FxSlot Slot(string stage) => FxSlots.All.Single(s => s.Stage == stage);
 
@@ -40,7 +40,10 @@ public class FxSlotTests
     [Fact]
     public void Rack_IsInChainOrder_WithDistinctStagesAndPlugins()
     {
-        Assert.Equal(new[] { "Compressor", "Eq", "DeEsser", "Reverb" }, FxSlots.All.Select(s => s.Stage));
+        var expected = OperatingSystem.IsMacOS()
+            ? new[] { "Pitch", "Compressor", "Eq", "DeEsser", "Reverb" }
+            : new[] { "Compressor", "Eq", "DeEsser", "Reverb" };
+        Assert.Equal(expected, FxSlots.All.Select(s => s.Stage));
         Assert.Equal(FxSlots.All.Count, FxSlots.All.Select(s => s.PluginLabel).Distinct().Count());
         Assert.All(FxSlots.All, s => Assert.True(HostedPluginCatalog.KnownPluginPaths.ContainsKey(s.PluginLabel), s.PluginLabel));
     }

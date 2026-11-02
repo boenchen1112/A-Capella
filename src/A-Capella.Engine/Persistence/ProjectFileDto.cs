@@ -82,6 +82,7 @@ public class MixParametersDto
     public bool Solo { get; set; }
     public float Pan { get; set; }
     // Each effect is a choice of FabFilter factory preset; null = off.
+    public Presets.PresetRef? PitchPreset { get; set; }
     public Presets.PresetRef? CompressorPreset { get; set; }
     public Presets.PresetRef? EqPreset { get; set; }
     public Presets.PresetRef? DeEsserPreset { get; set; }

@@ -1,3 +1,4 @@
+using Avalonia.Headless.XUnit;
 using A_Capella.App.ViewModels;
 using A_Capella.Engine.Mix;
 using A_Capella.Engine.Presets;
@@ -12,7 +13,7 @@ public class LayerRowViewModelRedesignTests
     private static LayerRowViewModel RowWithLayer(LayerKind kind = LayerKind.RecordedAV) =>
         new(1) { Layer = new LayerCollection().Add(kind, "does-not-exist.mkv") };   // nonexistent path: SourceDurationMs stays 0 deterministically, no ffprobe dependency
 
-    [StaFact]
+    [AvaloniaFact]
     public void CommitNameIfChanged_ReturnsFalse_WhenTheTrimmedValueIsUnchanged()
     {
         var row = RowWithLayer();
@@ -21,7 +22,7 @@ public class LayerRowViewModelRedesignTests
         Assert.False(row.CommitNameIfChanged("  Melody  "));  // same after trimming: still no-op
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void CommitNameIfChanged_ReturnsTrue_AndAppliesTheTrimmedValue_WhenChanged()
     {
         var row = RowWithLayer();
@@ -30,7 +31,7 @@ public class LayerRowViewModelRedesignTests
         Assert.Equal("Harmony", row.Name);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void EffectiveTrimEndMs_FallsBackToSourceDuration_WhenNoExplicitTrimOutIsSet()
     {
         var row = RowWithLayer();
@@ -41,7 +42,7 @@ public class LayerRowViewModelRedesignTests
         Assert.Equal(5000, row.EffectiveTrimEndMs);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void SourceLabel_ReportsKindAndEnabledEffectCount_WithoutADuration()
     {
         var row = RowWithLayer(LayerKind.UploadedVideo);
@@ -52,7 +53,7 @@ public class LayerRowViewModelRedesignTests
         Assert.Equal("Uploaded · 2 effects", row.SourceLabel);
     }
 
-    [StaFact]
+    [AvaloniaFact]
     public void SourceLabel_ForAnEmptyRow_IsEmpty()
     {
         var row = new LayerRowViewModel(1);

@@ -105,6 +105,15 @@ public sealed class HostedPluginService : IDisposable
             slot.DefaultState ??= instance.GetState();
             if (slot.Applied == preset) return instance;
 
+            if (preset.Plugin == HostedPluginCatalog.AutoTunePluginLabel)
+            {
+                // Auto-Tune has no preset files: start from its untouched state, then set the preset's parameters.
+                if (slot.Applied is not null) instance.SetState(slot.DefaultState);
+                if (!Presets.AutoTunePresets.Apply(instance, preset)) return null;
+                slot.Applied = preset;
+                return instance;
+            }
+
             var state = _presets.Build(preset, slot.DefaultState);
             if (state is null) return null;
             instance.SetState(state);

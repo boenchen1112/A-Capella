@@ -1,4 +1,4 @@
-using NAudio.CoreAudioApi;
+using A_Capella.Engine.Audio;
 using NAudio.Wave;
 
 namespace A_Capella.Engine.GuideTrack;
@@ -13,16 +13,22 @@ namespace A_Capella.Engine.GuideTrack;
 /// </summary>
 public class GuideTrackPlayer : IDisposable
 {
-    private WasapiOut? _output;
+    private IAudioOutput? _output;
 
     public void Play(string outputDeviceId, ISampleProvider guideAudio)
     {
-        using var enumerator = new MMDeviceEnumerator();
-        var outputDevice = enumerator.GetDevice(outputDeviceId);
-
-        _output = new WasapiOut(outputDevice, AudioClientShareMode.Shared, false, 50);
-        _output.Init(guideAudio);
-        _output.Play();
+        var output = AudioBackend.CreateOutput(outputDeviceId);
+        try
+        {
+            output.Init(guideAudio);
+            output.Play();
+        }
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
+        _output = output;
     }
 
     public void Stop()
