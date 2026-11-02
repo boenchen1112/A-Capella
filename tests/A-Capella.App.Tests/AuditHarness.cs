@@ -167,7 +167,7 @@ internal sealed class AuditEnv : IDisposable
         try
         {
             // A saved project closes without the unsaved-changes prompt.
-            Settle(100);
+            Settle(900);
             if (Session.IsDirty) Session.Save(Path_("closing.a-capella.json"));
             Window.ExportMenuItem.IsEnabled = true;
             Window.Close();
@@ -259,4 +259,16 @@ internal static class TestMedia
         var m = System.Text.RegularExpressions.Regex.Match(err, @"max_volume:\s*(-?[\d.]+) dB");
         return m.Success ? double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : double.NaN;
     }
+}
+
+internal static class AuditWindowExtensions
+{
+    public static void Call_NudgeReset(this MainWindow window, A_Capella.App.ViewModels.LayerRowViewModel row)
+    {
+        var m = typeof(MainWindow).GetMethod("NudgeLabel_PointerPressed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        m.Invoke(window, new object?[] { new Avalonia.Controls.Button { DataContext = row }, null });
+    }
+
+    public static void Call_Apply(this MainWindow window, A_Capella.App.ViewModels.LayerRowViewModel row, A_Capella.Engine.Presets.FxPackage package)
+        => row.ApplyPackage(package);
 }
