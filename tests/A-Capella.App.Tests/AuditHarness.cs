@@ -128,11 +128,13 @@ internal sealed class AuditEnv : IDisposable
         }
     }
 
-    private bool ExportFinished() => Window.ExportMenuItem.IsEnabled && Status.StartsWith("Exporting") is var _ && !Window.ExportProgressBar.IsVisible;
+    private bool ExportStarted(string output) => !Window.ExportMenuItem.IsEnabled || Status.StartsWith("Exporting") || File.Exists(output);
+
+    private bool ExportFinished() => Window.ExportMenuItem.IsEnabled && !Window.ExportProgressBar.IsVisible;
 
     public void WaitForExport(string output, int timeoutMs = 30000)
     {
-        try { WaitFor(() => ExportFinished(), "export", timeoutMs); Settle(300); }
+        try { WaitFor(() => ExportStarted(output), "export to start", 10000); WaitFor(() => ExportFinished(), "export", timeoutMs); Settle(300); }
         catch (TimeoutException) { throw new TimeoutException("Export did not finish; status was: " + Status + "; file exists=" + File.Exists(output) + " size=" + (File.Exists(output) ? new FileInfo(output).Length : -1) + "; jobs pending=" + Dispatcher.UIThread.CheckAccess()); }
     }
 

@@ -123,7 +123,7 @@ public class ExportEngine : IDisposable
                 var cellRects = layout.GetCellRects(width, height, gutterFraction, orderedLayers.Select(l => l.CellIndex).ToList());
                 int totalFrames = (int)Math.Ceiling(durationSeconds * fps);
 
-                using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath);
+                using var encodeProcess = StartEncodeProcess(outputPath, width, height, fps, tempWavPath, masterLimiter is not null);
                 var stdin = encodeProcess.StandardInput.BaseStream;
                 var stderrTail = FfmpegProcessUtil.DrainStderrKeepingTail(encodeProcess);
 
@@ -177,7 +177,23 @@ public class ExportEngine : IDisposable
         stdin.Write(buffer, 0, byteCount);
     }
 
-    private Process StartEncodeProcess(string outputPath, int width, int height, int fps, string audioWavPath)
+    internal static List<string> EncodeArguments(string outputPath, int width, int height, int fps, string audioWavPath, bool limited)
+    {
+        var args = new List<string>
+        {
+            "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", $"{width}x{height}", "-r", fps.ToString(),
+            "-i", "-", "-i", audioWavPath, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        };
+        // AAC can decode above the limited mix's peak; leave -1 dB of headroom so the file stays under full scale.
+        if (limited)
+        {
+            args.Add("-af"); args.Add("alimiter=limit=0.891:level=disabled");
+        }
+        args.AddRange(new[] { "-c:a", "aac", "-b:a", "192k", "-shortest", outputPath });
+        return args;
+    }
+
+    private Process StartEncodeProcess(string outputPath, int width, int height, int fps, string audioWavPath, bool limited)
     {
         var dir = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(dir))
@@ -191,21 +207,8 @@ public class ExportEngine : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-y");
-        psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("rawvideo");
-        psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("rgba");
-        psi.ArgumentList.Add("-s"); psi.ArgumentList.Add($"{width}x{height}");
-        psi.ArgumentList.Add("-r"); psi.ArgumentList.Add(fps.ToString());
-        psi.ArgumentList.Add("-i"); psi.ArgumentList.Add("-");
-        psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(audioWavPath);
-        psi.ArgumentList.Add("-c:v"); psi.ArgumentList.Add("libx264");
-        psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("yuv420p");
-        // AAC can decode above the limited mix's peak; leave -1 dB of headroom so the file stays under full scale.
-        psi.ArgumentList.Add("-af"); psi.ArgumentList.Add("alimiter=limit=0.891:level=disabled");
-        psi.ArgumentList.Add("-c:a"); psi.ArgumentList.Add("aac");
-        psi.ArgumentList.Add("-b:a"); psi.ArgumentList.Add("192k");
-        psi.ArgumentList.Add("-shortest");
-        psi.ArgumentList.Add(outputPath);
+        foreach (var arg in EncodeArguments(outputPath, width, height, fps, audioWavPath, limited))
+            psi.ArgumentList.Add(arg);
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg encode process.");
     }
