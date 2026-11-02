@@ -12,9 +12,20 @@ public enum MessageResult { Ok, Yes, No, Cancel }
 /// all asynchronous, so every caller awaits these.</summary>
 public static class Dialogs
 {
+    // Replaceable entry points so automated tests can answer dialogs without a user.
+    internal static Func<Window?, string, string, MessageButtons, Task<MessageResult>>? MessageHandler;
+    internal static Func<Window, string, bool, Task<IReadOnlyList<string>>>? PickFilesHandler;
+    internal static Func<Window, string, Task<string?>>? PickSavePathHandler;
+    internal static Func<Window, Window, Task<bool?>>? ModalHandler;
+
+    /// <summary>Shows a dialog window modally over its owner and returns its result.</summary>
+    public static Task<bool?> ShowModalAsync(Window dialog, Window owner) =>
+        ModalHandler is { } handler ? handler(dialog, owner) : dialog.ShowDialog<bool?>(owner);
+
     public static async Task<MessageResult> ShowMessageAsync(Window? owner, string message, string title,
         MessageButtons buttons = MessageButtons.Ok)
     {
+        if (MessageHandler is { } handler) return await handler(owner, message, title, buttons);
         var result = MessageResult.Cancel;
         var window = new Window
         {
@@ -70,6 +81,7 @@ public static class Dialogs
     /// <summary>The paths picked (local file system), or empty if cancelled.</summary>
     public static async Task<IReadOnlyList<string>> PickFilesAsync(Window owner, string title, FilePickerFileType filter, bool multiple = false)
     {
+        if (PickFilesHandler is { } handler) return await handler(owner, title, multiple);
         var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = title,
@@ -86,6 +98,7 @@ public static class Dialogs
     public static async Task<string?> PickSavePathAsync(Window owner, string title, FilePickerFileType filter,
         string defaultExtension, string? suggestedFileName = null, string? initialDirectory = null)
     {
+        if (PickSavePathHandler is { } handler) return await handler(owner, title);
         var options = new FilePickerSaveOptions
         {
             Title = title,

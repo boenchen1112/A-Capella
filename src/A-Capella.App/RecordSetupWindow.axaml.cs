@@ -39,6 +39,7 @@ public partial class RecordSetupWindow : Window
     private List<CaptureDeviceInfo> _audioDevices = new();
     private AudioDeviceInfo _outputDevice;
 
+    private readonly Func<FfmpegCaptureSession> _captureSessionFactory;
     private FfmpegCaptureSession? _activeCapture;
     private GuideTrackPlayer? _guideTrackPlayer;
     private IAudioOutput? _metronomeOutput;
@@ -66,8 +67,9 @@ public partial class RecordSetupWindow : Window
 
     public RecordSetupWindow() : this(new DeviceCatalog(), new SettingsService(), new LayerCollection(), null!, "", 120) { }
 
-    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null, TimeSignature? initialTimeSignature = null)
+    public RecordSetupWindow(DeviceCatalog deviceCatalog, SettingsService settingsService, LayerCollection layers, MixEngine mixEngine, string mediaDir, double initialBpm, int? retakeLayerId = null, TimeSignature? initialTimeSignature = null, Func<FfmpegCaptureSession>? captureSessionFactory = null)
     {
+        _captureSessionFactory = captureSessionFactory ?? (() => new FfmpegCaptureSession());
         InitializeComponent();
         _deviceCatalog = deviceCatalog;
         _settingsService = settingsService;
@@ -213,7 +215,7 @@ public partial class RecordSetupWindow : Window
             return;
         }
 
-        _activeCapture = new FfmpegCaptureSession();
+        _activeCapture = _captureSessionFactory();
         double calibratedOffsetMs = 0;
         _pendingGuideReferenceMono = null;
 

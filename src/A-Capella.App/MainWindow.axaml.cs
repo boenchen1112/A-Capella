@@ -28,12 +28,15 @@ public partial class MainWindow : Window
     /// <summary>Command on macOS, Ctrl elsewhere.</summary>
     private static readonly KeyModifiers ShortcutModifier = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
-    private readonly DeviceCatalog _deviceCatalog = new();
-    private readonly SettingsService _settingsService = new();
+    internal DeviceCatalog DeviceCatalogInUse { get; set; } = new();
+    internal SettingsService SettingsInUse { get; set; } = new();
     private readonly ProjectSession _session;
     private LayerCollection _layers => _session.Layers;
     // L1: a directory next to the executable works regardless of how/where the app is launched.
-    private readonly string _mediaDir = Path.Combine(AppContext.BaseDirectory, "media");
+    internal ProjectSession Session => _session;
+    internal PreviewPlaybackEngine PreviewEngine => _previewEngine;
+    internal Func<A_Capella.Engine.Capture.FfmpegCaptureSession>? CaptureSessionFactory { get; set; }
+    internal string MediaDir { get; set; } = Path.Combine(AppContext.BaseDirectory, "media");
 
     // v7 Q0 task 1 (audit A1): exactly one HostedPluginService for the whole app session, shared by
     // MixEngine, PreviewPlaybackEngine, ExportEngine, and (via LayerRowViewModel.SharedHostedService)
@@ -794,7 +797,7 @@ public partial class MainWindow : Window
     private async void VideoSettingsMenuItem_Click(object? sender, RoutedEventArgs e)
     {
         var window = new VideoSettingsWindow(_session.Video);
-        if (await window.ShowDialog<bool?>(this) != true || window.Result == _session.Video) return;
+        if (await Dialogs.ShowModalAsync(window, this) != true || window.Result == _session.Video) return;
 
         _session.Video = window.Result;
         RefreshPreviewLive();
@@ -806,7 +809,7 @@ public partial class MainWindow : Window
     {
         int required = _layers.Layers.Count == 0 ? 1 : _layers.Layers.Max(l => l.CellIndex) + 1;
         var picker = new LayoutPickerWindow(_session.Video.LayoutId, required);
-        if (await picker.ShowDialog<bool?>(this) != true || picker.SelectedLayoutId is null) return;
+        if (await Dialogs.ShowModalAsync(picker, this) != true || picker.SelectedLayoutId is null) return;
         if (picker.SelectedLayoutId == _session.Video.LayoutId) return;
 
         if (!_session.TrySetLayout(picker.SelectedLayoutId, out var error))
@@ -826,21 +829,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>v7 Q3 (media-folder hygiene): recorded take files accumulate silently in
-    /// _mediaDir with no visibility into how much disk they're using. Read-only report -- no
+    /// MediaDir with no visibility into how much disk they're using. Read-only report -- no
     /// deletion here, since deleting recorded media is irreversible (needs the
     /// user's explicit say, not an automatic cleanup on close).</summary>
     private async void RecordingsFolderSizeMenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        if (!Directory.Exists(_mediaDir))
+        if (!Directory.Exists(MediaDir))
         {
             await Dialogs.ShowMessageAsync(this, "No recordings folder yet.", "Recordings Folder");
             return;
         }
 
-        var files = Directory.GetFiles(_mediaDir, "*", SearchOption.AllDirectories);
+        var files = Directory.GetFiles(MediaDir, "*", SearchOption.AllDirectories);
         long totalBytes = files.Sum(f => new FileInfo(f).Length);
         double mb = totalBytes / (1024.0 * 1024.0);
-        await Dialogs.ShowMessageAsync(this, $"{_mediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder");
+        await Dialogs.ShowMessageAsync(this, $"{MediaDir}\n\n{files.Length} file(s), {mb:F1} MB.", "Recordings Folder");
     }
 
     /// <summary>The ONLY place RecordSetupWindow is constructed (retake spec D4), so bug audit #8's
@@ -856,10 +859,10 @@ public partial class MainWindow : Window
             return null;
         }
 
-        var dialog = new RecordSetupWindow(_deviceCatalog, _settingsService, _layers, _mixEngine, _mediaDir, _session.MetronomeBpm,
-                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature);
+        var dialog = new RecordSetupWindow(DeviceCatalogInUse, SettingsInUse, _layers, _mixEngine, MediaDir, _session.MetronomeBpm,
+                                           retakeLayerId: retakeRow?.Layer?.LayerId, initialTimeSignature: _session.MetronomeTimeSignature, captureSessionFactory: CaptureSessionFactory);
         if (retakeRow is not null) dialog.Title = $"Re-record {retakeRow.DisplayName}";
-        bool recorded = await dialog.ShowDialog<bool?>(this) == true;
+        bool recorded = await Dialogs.ShowModalAsync(dialog, this) == true;
         _session.MetronomeBpm = dialog.Bpm;
         _session.MetronomeTimeSignature = dialog.TimeSignature;
         ShowTimeSignature();
@@ -1162,14 +1165,14 @@ public partial class MainWindow : Window
 
     // ----- Packages: a saved set of the four effect presets, applied to a layer in one step -----
 
-    private readonly FxPackageService _packages = new();
+    internal FxPackageService Packages { get; set; } = new();
 
     private void PackagesButton_Click(object? sender, RoutedEventArgs e)
     {
         if (_selectedLayer is not { Layer: not null } row) return;
 
         var menu = new ContextMenu { Placement = PlacementMode.Bottom };
-        var packages = _packages.List();
+        var packages = Packages.List();
 
         foreach (var package in packages.Where(p => p.IsBuiltIn))
             menu.Items.Add(PackageMenuItem(package, row));
@@ -1213,14 +1216,14 @@ public partial class MainWindow : Window
 
     private async Task SaveCurrentAsPackageAsync(LayerRowViewModel row)
     {
-        var dialog = new SavePackageWindow(_packages);
-        if (await dialog.ShowDialog<bool?>(this) != true) return;
+        var dialog = new SavePackageWindow(Packages);
+        if (await Dialogs.ShowModalAsync(dialog, this) != true) return;
 
         var package = row.ToPackage(dialog.PackageName);
         if (package is null) return;
         try
         {
-            _packages.Save(package);
+            Packages.Save(package);
             StatusText.Text = $"Saved package \"{package.Name}\".";
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
@@ -1234,7 +1237,7 @@ public partial class MainWindow : Window
         if (await Dialogs.ShowMessageAsync(this, $"Delete the package \"{package.Name}\"?", "Delete package", MessageButtons.YesNo) != MessageResult.Yes) return;
         try
         {
-            if (_packages.Delete(package.Name)) StatusText.Text = $"Deleted package \"{package.Name}\".";
+            if (Packages.Delete(package.Name)) StatusText.Text = $"Deleted package \"{package.Name}\".";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
