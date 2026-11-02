@@ -200,6 +200,8 @@ public class ExportEngine : IDisposable
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(audioWavPath);
         psi.ArgumentList.Add("-c:v"); psi.ArgumentList.Add("libx264");
         psi.ArgumentList.Add("-pix_fmt"); psi.ArgumentList.Add("yuv420p");
+        // AAC can decode above the limited mix's peak; leave -1 dB of headroom so the file stays under full scale.
+        psi.ArgumentList.Add("-af"); psi.ArgumentList.Add("alimiter=limit=0.891:level=disabled");
         psi.ArgumentList.Add("-c:a"); psi.ArgumentList.Add("aac");
         psi.ArgumentList.Add("-b:a"); psi.ArgumentList.Add("192k");
         psi.ArgumentList.Add("-shortest");

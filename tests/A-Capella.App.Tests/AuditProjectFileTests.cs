@@ -252,7 +252,7 @@ public class AuditProjectFileTests
         Assert.True(TestMedia.PeakDb(output) < 0, "limiter keeps the export under full scale");
     }
 
-    [AvaloniaFact(Skip = "Known bug: the last progress update can land after the completion message, leaving the status bar on 'Exporting... 100%' instead of 'Export complete'")]
+    [AvaloniaFact]
     public void Export_EndsWithTheCompletionMessageInTheStatusBar()
     {
         using var env = new AuditEnv();

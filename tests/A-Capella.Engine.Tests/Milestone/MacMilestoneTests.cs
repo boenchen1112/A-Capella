@@ -78,7 +78,7 @@ public class MacMilestoneTests
     public void ThreeLayerExport_WithPresetsAndMasterLimiter_IsAValidMp4_WithAudioUnderTheCeiling() =>
         ThreeLayerExport(reverbLayer: false);
 
-    [Fact(Skip = "Bug: with a Pro-R 2 reverb layer the exported AAC audio decodes above full scale (about 1.3, +2.6 dBFS) although the limited mix peaks at 0.996; the export encodes the limited mix to AAC without any peak guard.")]
+    [Fact]
     public void ThreeLayerExport_WithAReverbLayer_StaysUnderTheCeiling() =>
         ThreeLayerExport(reverbLayer: true);
 

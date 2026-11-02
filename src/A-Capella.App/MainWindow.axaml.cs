@@ -1733,8 +1733,10 @@ public partial class MainWindow : Window
         // the background export thread below marshals back here with no explicit Dispatcher.Invoke.
         ExportProgressBar.Value = 0;
         ExportProgressBar.IsVisible = true;
+        bool exportFinished = false;                                // UI thread only: late queued progress reports must not overwrite the final status
         var progress = new Progress<double>(fraction =>
         {
+            if (exportFinished) return;
             ExportProgressBar.Value = fraction;
             StatusText.Text = $"Exporting... {fraction:P0}";
         });
@@ -1746,11 +1748,11 @@ public partial class MainWindow : Window
                 using var exportEngine = new ExportEngine(hostedService: _hostedService);
                 exportEngine.Export(snapshotLayers, exportPath, masterVolumeDb: snapshotMasterVolumeDb, progress: progress,
                     rangeStartMs: snapshotSongInMs, rangeOutMs: snapshotSongOutMs, video: snapshotVideo, masterLimiter: snapshotMasterLimiter);
-                Dispatcher.UIThread.Invoke(() => StatusText.Text = $"Export complete: {Path.GetFileName(exportPath)}");
+                Dispatcher.UIThread.Invoke(() => { exportFinished = true; StatusText.Text = $"Export complete: {Path.GetFileName(exportPath)}"; });
             }
             catch (Exception ex)
             {
-                Dispatcher.UIThread.Invoke(() => StatusText.Text = $"Export failed: {ex.Message}");
+                Dispatcher.UIThread.Invoke(() => { exportFinished = true; StatusText.Text = $"Export failed: {ex.Message}"; });
             }
             finally
             {
