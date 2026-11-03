@@ -1,5 +1,9 @@
 # A-Capella
 
+[![A-Capella: many voices, one take (watch the film)](docs/poster.jpg)](docs/a-capella-keynote.mp4)
+
+▶ [Watch the 2-minute film](docs/a-capella-keynote.mp4)
+
 A Windows and macOS desktop app for recording and mixing multi-layer acapella videos: one singer records up to nine layers (melody, harmony, bass, beatbox…), and A-Capella combines them into a single grid video with all layers singing in sync.
 
 ## Features
