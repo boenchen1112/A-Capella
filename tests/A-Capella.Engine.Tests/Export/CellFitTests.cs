@@ -14,7 +14,7 @@ public class CellFitTests
         string fill = CellVideoFilter.Build(100, 50, 30, CellFit.Fill);
 
         Assert.Equal("scale=100:50:force_original_aspect_ratio=decrease,pad=100:50:(ow-iw)/2:(oh-ih)/2:black,fps=30", fit);
-        Assert.Equal("scale=100:50:force_original_aspect_ratio=increase,crop=100:50,fps=30", fill);
+        Assert.Equal("scale=100:50:force_original_aspect_ratio=increase,crop=100:50:(iw-ow)/2:(ih-oh)*0.3,fps=30", fill);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class CellFitTests
         {
             string video = Path.Combine(dir, "portrait.mp4");
             var psi = new ProcessStartInfo { FileName = "ffmpeg", UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
-            foreach (var a in new[] { "-y", "-f", "lavfi", "-i", "color=c=gray:s=72x128:r=10:d=1,drawbox=x=26:y=54:w=20:h=20:color=red:t=fill", "-c:v", "libx264", "-pix_fmt", "yuv420p", video })
+            foreach (var a in new[] { "-y", "-f", "lavfi", "-i", "color=c=gray:s=72x128:r=10:d=1,drawbox=x=26:y=34:w=20:h=20:color=red:t=fill", "-c:v", "libx264", "-pix_fmt", "yuv420p", video })
                 psi.ArgumentList.Add(a);
             using (var p = Process.Start(psi)!) { p.StandardError.ReadToEnd(); p.WaitForExit(); Assert.Equal(0, p.ExitCode); }
 
@@ -93,6 +93,42 @@ public class CellFitTests
             Assert.True(maxX >= 0, "the red square should be visible");
             double ratio = (maxX - minX + 1) / (double)(maxY - minY + 1);
             Assert.InRange(ratio, 0.85, 1.15);
+        }
+        finally
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); break; }
+                catch (IOException) { Thread.Sleep(100); }
+            }
+        }
+    }
+
+    /// <summary>A portrait clip with a red marker near the top, shown in a landscape cell in Fill: the
+    /// marker (a head) must still be inside the cell, not cropped away by a centered crop.</summary>
+    [Fact]
+    public void VideoFrameStreamSource_FillKeepsTheTopOfAPortraitClipInView()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"acapella-head-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string video = Path.Combine(dir, "portrait.mp4");
+            var psi = new ProcessStartInfo { FileName = "ffmpeg", UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
+            foreach (var a in new[] { "-y", "-f", "lavfi", "-i", "color=c=gray:s=72x128:r=10:d=1,drawbox=x=26:y=24:w=20:h=20:color=red:t=fill", "-c:v", "libx264", "-pix_fmt", "yuv420p", video })
+                psi.ArgumentList.Add(a);
+            using (var p = Process.Start(psi)!) { p.StandardError.ReadToEnd(); p.WaitForExit(); Assert.Equal(0, p.ExitCode); }
+
+            using var source = new VideoFrameStreamSource(video, 128, 72, 10, fit: CellFit.Fill);
+            var frame = source.GetNextFrame();
+            bool found = false;
+            for (int y = 0; y < frame.Height && !found; y++)
+                for (int x = 0; x < frame.Width; x++)
+                {
+                    var c = frame.GetPixel(x, y);
+                    if (c.Red > 180 && c.Green < 90 && c.Blue < 90) { found = true; break; }
+                }
+            Assert.True(found, "the marker 19% from the top should stay inside the cell");
         }
         finally
         {
