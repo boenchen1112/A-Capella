@@ -59,6 +59,51 @@ public class CellFitTests
         }
     }
 
+    /// <summary>A portrait clip with a red square in the middle, shown in a landscape cell: in both
+    /// modes the square must stay square, never stretched to the cell's shape.</summary>
+    [Theory]
+    [InlineData(CellFit.Fit)]
+    [InlineData(CellFit.Fill)]
+    public void VideoFrameStreamSource_PortraitClipInLandscapeCell_IsNotDistorted(CellFit fit)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"acapella-portrait-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string video = Path.Combine(dir, "portrait.mp4");
+            var psi = new ProcessStartInfo { FileName = "ffmpeg", UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
+            foreach (var a in new[] { "-y", "-f", "lavfi", "-i", "color=c=gray:s=72x128:r=10:d=1,drawbox=x=26:y=54:w=20:h=20:color=red:t=fill", "-c:v", "libx264", "-pix_fmt", "yuv420p", video })
+                psi.ArgumentList.Add(a);
+            using (var p = Process.Start(psi)!) { p.StandardError.ReadToEnd(); p.WaitForExit(); Assert.Equal(0, p.ExitCode); }
+
+            using var source = new VideoFrameStreamSource(video, 128, 72, 10, fit: fit);
+            var frame = source.GetNextFrame();
+
+            int minX = int.MaxValue, maxX = -1, minY = int.MaxValue, maxY = -1;
+            for (int y = 0; y < frame.Height; y++)
+                for (int x = 0; x < frame.Width; x++)
+                {
+                    var c = frame.GetPixel(x, y);
+                    if (c.Red > 180 && c.Green < 90 && c.Blue < 90)
+                    {
+                        minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+                        minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+                    }
+                }
+            Assert.True(maxX >= 0, "the red square should be visible");
+            double ratio = (maxX - minX + 1) / (double)(maxY - minY + 1);
+            Assert.InRange(ratio, 0.85, 1.15);
+        }
+        finally
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); break; }
+                catch (IOException) { Thread.Sleep(100); }
+            }
+        }
+    }
+
     /// <summary>A solid-red 64x32 clip shown in a 32x32 cell: Fit leaves black bars above and below,
     /// Fill covers every pixel with red.</summary>
     [Theory]
